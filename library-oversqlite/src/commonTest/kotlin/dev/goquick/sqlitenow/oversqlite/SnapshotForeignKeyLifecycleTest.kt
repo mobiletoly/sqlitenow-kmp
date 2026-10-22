@@ -75,6 +75,11 @@ internal class SnapshotForeignKeyLifecycleTest : SurvivorTestSupport() {
             db.execSQL("CREATE TRIGGER damage_d AFTER INSERT ON nodes WHEN NEW.id='Q' BEGIN UPDATE nodes SET name='trigger damage' WHERE id='D'; END")
             server.addRemoteBundleForTest(listOf(row("D","C"),row("C","Q"),row("Q",null),
                 BundleRow("main","nodes",mapOf("id" to "P"),"DELETE",2,null)))
+            val before=baselineQualificationVector(db,listOf("nodes","_sync_upload_journal"))
+            assertIs<FinalStateApplyBlockedException>(client.rebuild().exceptionOrNull())
+            val after=baselineQualificationVector(db,listOf("nodes","_sync_upload_journal"))
+            for(table in listOf("nodes","_sync_row_state","_sync_relationships","_sync_dirty_rows","_sync_outbox_rows","_sync_outbox_bundle","_sync_source_state","_sync_upload_journal")) assertEquals(before.rows(table),after.rows(table),table)
+            db.execSQL("DROP TRIGGER damage_d")
             client.rebuild().getOrThrow()
             assertEquals("S-D",scalarText(db,"SELECT name FROM nodes WHERE id='D'"))
             assertEquals("C",scalarText(db,"SELECT parent_id FROM nodes WHERE id='D'"))

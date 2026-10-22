@@ -120,7 +120,7 @@ class RemoteContractTransportTest {
             oversqliteResponseBodyHardLimit("/sync/push", 200),
         )
         assertEquals(
-            oversqlitePushResponseBodyHardLimit,
+            generationControlBodyLimit,
             oversqliteResponseBodyHardLimit("/sync/push", 409),
         )
         assertEquals(generationControlBodyLimit, oversqliteResponseBodyHardLimit("/sync/pull", 409))

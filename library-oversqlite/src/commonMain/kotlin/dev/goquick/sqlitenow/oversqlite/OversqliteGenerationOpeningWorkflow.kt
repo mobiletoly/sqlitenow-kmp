@@ -70,6 +70,7 @@ internal class OversqliteGenerationOpeningWorkflow(
             return publishCompletedGeneration(record)
         }
         if (record == null || record.outcome == "ready") {
+            finishPreAdmissionUpload(connection,installed)
             val client = prepareOldGenerationClient(connection, installed, open = false)
             var retainedByOpening = false
             try {
@@ -199,7 +200,7 @@ internal class OversqliteGenerationOpeningWorkflow(
                         return cachedStatus
                     }
                     if (failure is OversqliteRemoteContractException &&
-                        failure.httpStatus == 422 && !failure.retryable
+                        failure.httpStatus == 200 && !failure.retryable
                     ) {
                         record = recordNeedsRejection(record, failure)
                         cachedStatus = statusFromRecord(record)
@@ -307,12 +308,25 @@ internal class OversqliteGenerationOpeningWorkflow(
             record.toLocalVersion == selected.toLocalVersion.toLong()
     }
 
+    private suspend fun finishPreAdmissionUpload(connection: SafeSQLiteConnection,installed: InstalledOpeningIdentity) {
+        if(loadUploadJournal(connection)==null) return
+        // This client uses the installed contract and ordinary lifecycle guards.
+        // New-intent/migration authority begins only after the original obligation.
+        val client=prepareOldGenerationClient(connection,installed,open=false,journalOnly=true)
+        try {
+            client.open().getOrThrow()
+            client.attach(OversqliteAttachmentStateStore(connection).loadState().attachedUserId).getOrThrow()
+            client.finishExistingUploadForOpening().getOrThrow()
+        } finally {client.closeFromCoordinatedOwner()}
+    }
+
     internal suspend fun prepareOldGenerationClient(
         connection: SafeSQLiteConnection,
         installed: InstalledOpeningIdentity,
         open: Boolean = true,
+        journalOnly: Boolean = false,
     ): DefaultOversqliteClient {
-        oldClient?.let { return it }
+        if(!journalOnly) oldClient?.let { return it }
         val generation = try {
             OversqliteContractStore(connection).readGeneration(installed.generationId)
         } catch (failure: IllegalArgumentException) {
@@ -333,7 +347,7 @@ internal class OversqliteGenerationOpeningWorkflow(
             httpClient,
             DeferConflictResolver,
             clientLeaseGroup,
-            mutationAuthorityFactory(connection),
+            if(journalOnly) null else mutationAuthorityFactory(connection),
         )
         if (open) {
             client.open().getOrThrow()
@@ -613,7 +627,7 @@ internal class OversqliteGenerationOpeningWorkflow(
             openingPreservationCheckForTest?.invoke("record_rejection", connection)
             requirePreservation(connection, current)
             val outbox = OversqliteOutboxStateStore(connection).loadBundleState()
-            require(outbox.state == outboxStatePrepared && outbox.sourceId == current.oldSourceId &&
+            require(outbox.state == outboxStateRejected && outbox.sourceId == current.oldSourceId &&
                 outbox.sourceBundleId > 0L && outbox.canonicalRequestHash.isNotBlank()
             ) { "definitive rejection does not identify a frozen old-generation request" }
             val intentRevision = connection.scalarLong(
@@ -662,6 +676,7 @@ internal class OversqliteGenerationOpeningWorkflow(
         record: OversqliteOpeningRecord,
     ): Boolean {
         if (connection.scalarLong("SELECT count(*) FROM _sync_dirty_rows") != 0L) return false
+        if (connection.scalarLong("SELECT count(*) FROM _sync_upload_journal") != 0L) return false
         if (connection.scalarLong("SELECT count(*) FROM _sync_outbox_rows") != 0L) return false
         if (connection.scalarLong("SELECT count(*) FROM _sync_outbox_bundle WHERE singleton_key=1 AND state='none'") != 1L) return false
         if (connection.scalarLong("SELECT count(*) FROM _sync_conflict_state WHERE singleton_key=1 AND decision_state='none'") != 1L) return false
@@ -917,6 +932,7 @@ internal class OversqliteGenerationOpeningWorkflow(
             val current = checkNotNull(openingStore.readOrNull())
             require(current == expected) { "replacement tuple changed before U6 receipt" }
             connection.execSQL("DELETE FROM _sync_snapshot_stage")
+            client.retainGenerationSnapshot(snapshot, current.newSourceId)
             val next = current.copy(
                 phase = "rebuild_running", outcome = "", revision = current.revision + 1L,
                 replacementState = "confirmed", snapshotId = snapshot.snapshotId,
@@ -938,13 +954,11 @@ internal class OversqliteGenerationOpeningWorkflow(
         val connection = session.withConnection { it }
         val client = prepareTargetGenerationClient(connection, initial.attachedUserId)
         var record = initial
-        val snapshot = SnapshotSession(
-            snapshotId = record.snapshotId,
-            snapshotBundleSeq = record.snapshotBundleSeq,
-            rowCount = record.snapshotRowCount,
-            logicalByteCount = record.snapshotByteCount,
-            expiresAt = "",
-        )
+        val snapshot = client.retainedGenerationSnapshot(record.newSourceId)
+        require(snapshot.snapshotId == record.snapshotId && snapshot.snapshotBundleSeq == record.snapshotBundleSeq &&
+            snapshot.rowCount == record.snapshotRowCount && snapshot.logicalByteCount == record.snapshotByteCount) {
+            "coordinated snapshot seal differs from the durable receipt"
+        }
         val stagedRows = record.stagedRowCount ?: 0L
         val stagedBytes = record.stagedByteCount ?: 0L
         val stagedState = connection.withPreparedStatement(
@@ -1044,6 +1058,7 @@ internal class OversqliteGenerationOpeningWorkflow(
                 current.replacementState == "confirmed" && current.newSourceId == expected.newSourceId
             ) { "coordinated opening journal changed while replacing an expired target snapshot" }
             connection.execSQL("DELETE FROM _sync_snapshot_stage")
+            client.retainGenerationSnapshot(session, current.newSourceId)
             current.copy(
                 revision = current.revision + 1L,
                 snapshotId = session.snapshotId,

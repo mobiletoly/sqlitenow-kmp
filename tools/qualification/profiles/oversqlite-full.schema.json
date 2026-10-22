@@ -1,0 +1,219 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:sqlitenow:qualification:oversqlite-full:2",
+  "title": "Approved short-entry Oversqlite authority; execution gated",
+  "type": "object",
+  "required": [
+    "$schema",
+    "schema_version",
+    "profile_id",
+    "stage",
+    "status",
+    "approval",
+    "execution_gate",
+    "roots",
+    "authority_inputs",
+    "reviewed_inputs",
+    "schedule",
+    "inherited_policy"
+  ],
+  "properties": {
+    "$schema": {
+      "const": "./oversqlite-full.schema.json"
+    },
+    "schema_version": {
+      "const": 2
+    },
+    "profile_id": {
+      "const": "oversqlite-full"
+    },
+    "stage": {
+      "const": "E41-short-entry-amendment"
+    },
+    "status": {
+      "const": "adopted-authority-execution-gated"
+    },
+    "approval": {
+      "type": "object"
+    },
+    "execution_gate": {
+      "type": "object",
+      "required": [
+        "enabled",
+        "authorized_adoption_checks",
+        "reason"
+      ],
+      "properties": {
+        "enabled": {
+          "const": false
+        },
+        "authorized_adoption_checks": {
+          "const": [
+            "fast-go",
+            "metadata",
+            "fast-jvm-all-families"
+          ]
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "roots": {
+      "type": "object"
+    },
+    "authority_inputs": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$"
+      }
+    },
+    "reviewed_inputs": {
+      "type": "object"
+    },
+    "schedule": {
+      "type": "object",
+      "required": [
+        "schema",
+        "status",
+        "execution_authorized",
+        "execution_requirements",
+        "parent_profile_sha256",
+        "normal_budget",
+        "entries",
+        "command_aliases",
+        "logical_roots",
+        "preparation",
+        "native_contracts",
+        "load_amendment",
+        "overlap_dispositions",
+        "exceptions",
+        "scope_amendments_proposed",
+        "preservation",
+        "feasibility"
+      ],
+      "properties": {
+        "schema": {
+          "const": "oversqlite-short-schedule-1"
+        },
+        "status": {
+          "type": "string"
+        },
+        "execution_authorized": {
+          "const": false
+        },
+        "execution_requirements": {
+          "type": "array"
+        },
+        "parent_profile_sha256": {
+          "type": "string"
+        },
+        "normal_budget": {
+          "type": "object"
+        },
+        "entries": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": {
+            "type": "object",
+            "required": [
+              "id",
+              "kind",
+              "argv",
+              "cwd",
+              "environment",
+              "wall_seconds",
+              "native_seconds",
+              "cleanup_seconds",
+              "execution_authorized"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "kind": {
+                "type": "string"
+              },
+              "argv": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "type": "string"
+                }
+              },
+              "cwd": {
+                "type": "string"
+              },
+              "environment": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              "wall_seconds": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "exclusiveMinimum": 0,
+                "maximum": 300
+              },
+              "native_seconds": {
+                "type": "number",
+                "exclusiveMinimum": 0,
+                "maximum": 300
+              },
+              "cleanup_seconds": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 30
+              },
+              "execution_authorized": {
+                "const": false
+              }
+            },
+            "additionalProperties": true
+          }
+        },
+        "command_aliases": {
+          "type": "object"
+        },
+        "logical_roots": {
+          "type": "object"
+        },
+        "preparation": {
+          "type": "object"
+        },
+        "native_contracts": {
+          "type": "object"
+        },
+        "load_amendment": {
+          "type": "object"
+        },
+        "overlap_dispositions": {
+          "type": "array"
+        },
+        "exceptions": {
+          "const": []
+        },
+        "scope_amendments_proposed": {
+          "type": "array"
+        },
+        "preservation": {
+          "type": "object"
+        },
+        "feasibility": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "inherited_policy": {
+      "type": "object"
+    }
+  },
+  "additionalProperties": false
+}

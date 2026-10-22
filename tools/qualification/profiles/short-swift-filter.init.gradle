@@ -1,0 +1,62 @@
+import groovy.json.JsonOutput
+import org.gradle.api.tasks.AbstractExecTask
+
+// Qualification-only observation of the selected existing SwiftPM task.
+// Its dependencies, executable, working directory and environment stay owned
+// by the normal build. Only the approved live task receives a test filter.
+def properties = gradle.startParameter.projectProperties
+def selected = properties['qualification.swiftTask']
+def report = properties['qualification.swiftXunit']
+def filter = properties['qualification.swiftFilter']
+def liveTask = ':swift:fixtures:package:sync:swiftRealserverSmoke'
+def allowed = [
+    ':swift:runtime:core:swiftTest',
+    ':swift:runtime:sync:swiftTest',
+    ':swift:fixtures:package:core:swiftTest',
+    ':swift:fixtures:package:sync:swiftTest',
+    ':swiftStaticSyncSupportTest',
+    liveTask,
+]
+
+gradle.projectsEvaluated {
+    // Init scripts also visit included compiler/plugin builds.
+    if (!rootProject.file('tools/qualification/profiles/short-swift-filter.init.gradle').isFile()) return
+    if (!(selected in allowed)) {
+        throw new GradleException('Select one declared qualification Swift task')
+    }
+    if ((filter != null && (selected != liveTask || filter != 'SyncFixtureRealserverTests')) ||
+            (selected == liveTask && filter != 'SyncFixtureRealserverTests')) {
+        throw new GradleException('Only the reviewed generated live Swift filter is allowed')
+    }
+    def destination = report == null ? null : new File(report)
+    if (destination == null || !destination.isAbsolute() || destination.exists() ||
+            !destination.parentFile.isDirectory()) {
+        throw new GradleException('Swift xUnit capture requires a new absolute output file')
+    }
+    def split = selected.lastIndexOf(':')
+    def projectPath = split == 0 ? ':' : selected.substring(0, split)
+    def owner = rootProject.findProject(projectPath)
+    def task = owner?.tasks?.findByName(selected.substring(split + 1))
+    if (!(task instanceof AbstractExecTask)) {
+        throw new GradleException('Selected Swift task is not its existing Exec owner')
+    }
+    task.outputs.upToDateWhen { false }
+    task.doFirst {
+        def command = task.commandLine.collect { it.toString() }
+        if (command.size() < 2 || new File(command[0]).name != 'swift' || command[1] != 'test' ||
+                command.contains('--filter') || command.contains('--skip') ||
+                command.contains('--xunit-output') || command.contains('--skip-build')) {
+            throw new GradleException('Unexpected existing SwiftPM test command')
+        }
+        if (destination.exists()) throw new GradleException('Swift capture output already exists')
+        task.args('--xunit-output', destination.absolutePath)
+        if (filter != null) task.args('--filter', filter)
+        new File(destination.parentFile, 'swift-command.json').text = JsonOutput.toJson([
+            task: task.path,
+            argv: task.commandLine.collect { it.toString() },
+            cwd: task.workingDir.absolutePath,
+            xunit: destination.absolutePath,
+            filter: filter,
+        ])
+    }
+}

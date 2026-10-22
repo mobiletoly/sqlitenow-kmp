@@ -18,16 +18,27 @@ internal fun JsonObject.text(column: String): String? =
 internal fun JsonObject.payload(column: String): JsonElement? = text(column)?.let(Json::parseToJsonElement)
 
 internal suspend fun baselineQualificationVector(db: SafeSQLiteConnection, business: List<String> = listOf("users", "posts")): BaselineQualificationVector {
-    val names = business + listOf("_sync_row_state", "_sync_dirty_rows", "_sync_relationships", "_sync_outbox_rows", "_sync_outbox_bundle", "_sync_source_state", "_sync_attachment_state", "_sync_operation_state", "_sync_conflict_state")
+    val names = business + listOf("_sync_row_state", "_sync_dirty_rows", "_sync_relationships", "_sync_outbox_rows", "_sync_outbox_bundle", "_sync_source_state", "_sync_attachment_state", "_sync_operation_state", "_sync_conflict_state", "_sync_provenance_contexts", "_sync_provenance_state")
     val result = linkedMapOf<String, List<JsonObject>>()
     for (name in names) {
-        val columns = db.queryList("PRAGMA table_info(\"$name\")") { it.getText(1) }
+        val columns = db.queryList("PRAGMA table_xinfo(\"$name\")") { it.getText(1) }
         assertTrue(columns.isNotEmpty(), "complete vector requires $name")
         val projections = columns.joinToString(",") { c ->
             "'$c',json_object('storage',typeof(\"$c\"),'value',CASE WHEN typeof(\"$c\")='blob' THEN lower(hex(\"$c\")) WHEN \"$c\" IS NULL THEN NULL ELSE CAST(\"$c\" AS TEXT) END)"
         }
         val rows = db.queryList("SELECT json_object($projections) FROM \"$name\" ORDER BY ${columns.joinToString(",") { "\"$it\"" }}") { Json.parseToJsonElement(it.getText(0)).jsonObject }
-        result[name] = rows
+        result[name] = rows.map { row ->
+            val extras = mutableMapOf<String, JsonElement>()
+            for (column in listOf("server_provenance", "base_provenance")) {
+                if (column !in row) continue
+                val id = row.payload(column)!!.jsonObject.getValue("context_id").jsonPrimitive.long
+                val context = db.withPreparedStatement("SELECT json_object('context_id',context_id,'database_id',database_id,'service_id',service_id,'account_scope',json_object('binding',account_binding,'account_id',account_id),'generation_id',generation_id,'generation_fingerprint',generation_fingerprint,'admission',admission,'local_version',local_version,'physical_shape',physical_shape,'origin_source_id',origin_source_id) FROM _sync_provenance_contexts WHERE context_id=?") { st ->
+                    st.bindLong(1, id); check(st.step()); st.getText(0)
+                }
+                extras[column + "_context"] = buildJsonObject { put("storage", "text"); put("value", context) }
+            }
+            JsonObject(row + extras)
+        }
     }
     return BaselineQualificationVector(result)
 }
@@ -41,16 +52,22 @@ internal fun assertTextPayload(actual: JsonElement?, expected: Map<String, Strin
 }
 
 internal fun assertBaselineProvenance(row: JsonObject, column: String, version: Long, account: String = "user-1") {
-    val p = row.payload(column)!!.jsonObject
+    val observation = row.payload(column)!!.jsonObject
+    val p = row.payload(column + "_context")!!.jsonObject
+    assertEquals(setOf("context_id", "origin", "bundle_sequence"), observation.keys)
+    assertEquals(p.getValue("context_id"), observation.getValue("context_id"))
+    assertEquals(observation.getValue("context_id").jsonPrimitive.content,
+        row.text(if (column == "server_provenance") "server_context_id" else "base_context_id"))
     assertEquals("fixture",p.getValue("database_id").jsonPrimitive.content)
     assertEquals("main",p.getValue("service_id").jsonPrimitive.content)
     assertEquals("1",p.getValue("generation_id").jsonPrimitive.content)
-    assertEquals(version.toString(),p.getValue("authoritative_version").jsonPrimitive.content)
+    assertEquals(version.toString(),row.text(if (column == "server_provenance") "row_version" else "base_row_version"))
     assertEquals(account,p.getValue("account_scope").jsonObject.getValue("account_id").jsonPrimitive.content)
     assertEquals("attached",p.getValue("account_scope").jsonObject.getValue("binding").jsonPrimitive.content)
     assertTrue(p.getValue("generation_fingerprint").jsonPrimitive.content.isNotEmpty())
     assertTrue(p.getValue("physical_shape").jsonPrimitive.content.isNotEmpty())
-    assertTrue(p.getValue("origin").jsonPrimitive.content in setOf("pull","settlement","snapshot","explicit_conflict","never_published","local_adoption"))
+    assertTrue(p.getValue("origin_source_id").jsonPrimitive.content.isNotEmpty())
+    assertTrue(observation.getValue("origin").jsonPrimitive.content in setOf("pull","settlement","snapshot","explicit_conflict","never_published","local_adoption"))
 }
 
 internal fun assertBaselineCounters(vector: BaselineQualificationVector, source: String, next: Long, checkpoint: Long) {

@@ -15,6 +15,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
@@ -113,17 +114,14 @@ class OversqliteRemoteApiPathResolutionTest {
             assertEquals("/api/sync/push", request.url.encodedPath)
             assertEquals("source-a", request.headers["Oversync-Source-ID"])
             respond(
-                buildJsonObject {
-                    put("bundle_seq", JsonPrimitive(1))
-                    put("bundle_hash", JsonPrimitive("a".repeat(64)))
-                    put("rows", OversqliteCompactCodec.encodeBundleRows(
-                        generation,
-                        listOf(BundleRow(
-                            "main", "users", mapOf("id" to "u1"), "INSERT", 1,
-                            buildJsonObject { put("id", JsonPrimitive("u1")); put("name", JsonPrimitive("Ada")) },
-                        )),
-                    ))
-                }.toString(),
+                run {
+                    val rows=listOf(BundleRow("main","users",mapOf("id" to "u1"),"INSERT",1,
+                        buildJsonObject {put("id",JsonPrimitive("u1"));put("name",JsonPrimitive("Ada"))}))
+                    val value=TerminalPushOutcome("source-a",generation.id,generation.fingerprint,1,"b".repeat(64),null,
+                        "committed","",committed=CommittedPushEffect(1,computeCommittedBundleHashForTest(rows),1,
+                            OversqliteCompactCodec.encodeBundleRows(generation,rows)))
+                    Json.encodeToString(value.copy(outcomeHash=hashPushOutcome(value,generation)))
+                },
                 headers = headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()),
             )
         }) { defaultRequest { url("https://sync.test/api/") } }

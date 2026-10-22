@@ -7,7 +7,7 @@ internal val authoritativeRowStateDdl = """CREATE TABLE IF NOT EXISTS _sync_row_
  row_version INTEGER NOT NULL DEFAULT 0,
  server_kind TEXT NOT NULL CHECK(server_kind IN ('live','deleted','absent','unpublished','unknown')),
  server_payload TEXT,
- server_provenance TEXT NOT NULL CHECK(json_valid(server_provenance) AND json_type(server_provenance)='object'),
+ ${provenanceObservationColumns("server_provenance", "server_context_id")},
  relationships_known INTEGER NOT NULL CHECK(relationships_known IN (0,1) AND relationships_known=(server_kind!='unknown')),
  server_revision INTEGER NOT NULL DEFAULT 0 CHECK(typeof(server_revision)='integer' AND server_revision>=0),
  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
@@ -25,19 +25,8 @@ internal val relationshipProjectionDdl = """CREATE TABLE IF NOT EXISTS _sync_rel
  PRIMARY KEY(view,child_schema,child_table,child_key,fk_column)
 )""".trimIndent()
 
-internal fun baselineProvenanceSql(origin: String, version: String, sequence: String): String = """json_object(
- 'database_id',(SELECT database_id FROM _sync_contract_identity WHERE singleton_key=1),
- 'service_id',(SELECT service_id FROM _sync_contract_identity WHERE singleton_key=1),
- 'account_scope',json_object(
- 'binding',CASE WHEN (SELECT kind FROM _sync_operation_state WHERE singleton_key=1)='remote_replace' THEN 'attached' ELSE (SELECT binding_state FROM _sync_attachment_state WHERE singleton_key=1) END,
- 'account_id',CASE WHEN (SELECT kind FROM _sync_operation_state WHERE singleton_key=1)='remote_replace' THEN (SELECT target_user_id FROM _sync_operation_state WHERE singleton_key=1) ELSE (SELECT attached_user_id FROM _sync_attachment_state WHERE singleton_key=1) END),
- 'generation_id',(SELECT generation_id FROM _sync_contract_identity WHERE singleton_key=1),
- 'generation_fingerprint',(SELECT fingerprint FROM _sync_contract_identity WHERE singleton_key=1),
- 'admission',CASE WHEN (SELECT fingerprint FROM _sync_contract_identity WHERE singleton_key=1)='' THEN 'unadmitted' ELSE 'admitted' END,
- 'local_version',(SELECT local_version FROM _sync_contract_identity WHERE singleton_key=1),
- 'physical_shape',(SELECT physical_shape FROM _sync_contract_identity WHERE singleton_key=1),
- 'origin_source_id',(SELECT current_source_id FROM _sync_attachment_state WHERE singleton_key=1),
- 'origin',$origin,'bundle_sequence',$sequence,'authoritative_version',$version)""".trimIndent()
+internal fun baselineProvenanceSql(origin: String, sequence: String, context: String = "(SELECT active_context_id FROM _sync_provenance_state WHERE singleton_key=1)"): String =
+    "json_object('origin',$origin,'bundle_sequence',$sequence,'context_id',$context)"
 
 internal fun projectionDeleteSql(view: String, row: String): String =
     "DELETE FROM _sync_relationships WHERE view='$view' AND child_schema=$row.schema_name AND child_table=$row.table_name AND child_key=$row.key_json;"
@@ -52,6 +41,9 @@ internal fun relationshipProjectionInsertSql(view: String, payload: String, revi
 """.trimIndent()
 
 internal val baselineIndexDdl = mapOf(
+ "_sync_row_state_context_idx" to "CREATE INDEX IF NOT EXISTS _sync_row_state_context_idx ON _sync_row_state(server_context_id)",
+ "_sync_dirty_rows_context_idx" to "CREATE INDEX IF NOT EXISTS _sync_dirty_rows_context_idx ON _sync_dirty_rows(base_context_id)",
+ "_sync_outbox_rows_context_idx" to "CREATE INDEX IF NOT EXISTS _sync_outbox_rows_context_idx ON _sync_outbox_rows(base_context_id)",
  "_sync_relationships_parent_idx" to "CREATE INDEX IF NOT EXISTS _sync_relationships_parent_idx ON _sync_relationships(view,parent_schema,parent_table,parent_key,child_schema,child_table,child_key,fk_column)",
  "_sync_row_state_unknown_idx" to "CREATE INDEX IF NOT EXISTS _sync_row_state_unknown_idx ON _sync_row_state(relationships_known,table_name,key_json)",
  "_sync_dirty_rows_order_idx" to "CREATE INDEX IF NOT EXISTS _sync_dirty_rows_order_idx ON _sync_dirty_rows(dirty_ordinal,schema_name,table_name,key_json)",
@@ -73,10 +65,7 @@ internal fun expectedConflictRevisionTriggerSql(operation: String): String {
 }
 
 internal suspend fun bindLocalBaselineContext(db: dev.goquick.sqlitenow.core.SafeSQLiteConnection) {
- for ((table,column) in listOf("_sync_row_state" to "server_provenance","_sync_dirty_rows" to "base_provenance")) {
-  db.execSQL("UPDATE $table SET $column=json_set($column,'$.account_scope',json_object('binding','attached','account_id',(SELECT attached_user_id FROM _sync_attachment_state WHERE singleton_key=1))) WHERE json_extract($column,'$.account_scope.binding')='anonymous' AND (SELECT binding_state FROM _sync_attachment_state WHERE singleton_key=1)='attached'")
-  db.execSQL("UPDATE $table SET $column=json_set($column,'$.generation_fingerprint',(SELECT fingerprint FROM _sync_contract_identity WHERE singleton_key=1),'$.admission','admitted') WHERE json_extract($column,'$.admission')='unadmitted' AND (SELECT fingerprint FROM _sync_contract_identity WHERE singleton_key=1)!=''")
- }
+    OversqliteProvenanceContextStore(db).refreshActiveAndBind()
 }
 
 // The desired projection has no independent authority; this checks its retained owner.

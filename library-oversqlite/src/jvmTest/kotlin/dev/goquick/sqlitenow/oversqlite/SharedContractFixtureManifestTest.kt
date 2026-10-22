@@ -1,6 +1,8 @@
 package dev.goquick.sqlitenow.oversqlite
 
 import java.nio.file.Files
+import java.nio.file.Path
+import kotlin.test.AfterTest
 import java.security.MessageDigest
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonArray
@@ -17,6 +19,19 @@ import kotlin.test.assertFails
 import kotlin.test.assertTrue
 
 class SharedContractFixtureManifestTest {
+    private val ownedCorpora = mutableListOf<Path>()
+
+    @AfterTest
+    fun removeOwnedCorpora() {
+        for (root in ownedCorpora) {
+            Files.walk(root).use { paths ->
+                paths.sorted(Comparator.reverseOrder()).forEach { Files.delete(it) }
+            }
+            check(!root.exists()) { "owned corpus cleanup failed" }
+            println("CORPUS_CLEANUP $root removed")
+        }
+    }
+
     @Test
     fun sharedCorpusRequiresItsCompleteManifestBeforeFixtureReads() {
         assertTrue(oversqliteContractFixture("README.md").isRegularFile())
@@ -31,13 +46,15 @@ class SharedContractFixtureManifestTest {
             .map { it.jsonPrimitive.content }
         val current = currentEntries.toSet()
         val registered = mapOf(
+            "local-apply/unique-final-state.json" to "SharedFinalStateUniqueFixtureTest",
             "local-apply/a1.json" to "SharedLocalApplyFixtureTest",
             "protocol-handshake/connect.json" to "SharedProtocolHandshakeFixtureTest",
             "protocol-http/requests.json" to "SharedProtocolHttpRequestFixtureTest",
-            "pull-snapshot/basic.json" to "SharedPullSnapshotFixtureTest",
-            "push/basic-insert.json" to "SharedPushFixtureTest",
             "watch/basic.json" to "SharedBundleChangeWatchFixtureTest",
-            "wire/" to "SharedWireContractFixtureTest",
+            "wire/compact-rows.json" to "SharedWireContractFixtureTest",
+ "wire/compression.json" to "SharedWireContractFixtureTest",
+ "wire/limits.json" to "SharedWireContractFixtureTest",
+ "recovery/protocol.json" to "SharedRecoveryProtocolFixtureTest",
         )
         assertEquals(currentEntries.size, current.size, "current fixture classifications must not contain duplicates")
         assertEquals(registered.keys, current)
@@ -73,6 +90,7 @@ class SharedContractFixtureManifestTest {
 
     private fun writeCorpus(records: List<String>, files: Map<String, String>) =
         Files.createTempDirectory("oversqlite-contract-corpus").also { root ->
+            ownedCorpora.add(root)
             files.forEach { (name, body) ->
                 val path = root.resolve(name)
                 path.parent.createDirectories()

@@ -402,6 +402,10 @@ internal open class PlatformCrossTargetTestSupport {
         private val liveRows = linkedMapOf<String, LiveRow>()
         private val bundles = mutableListOf<StoredBundle>()
         private val committedBySourceBundle = linkedMapOf<String, StoredBundle>()
+        private val terminalOutcomes = linkedMapOf<String, TerminalPushOutcome>()
+        private val terminalBytes = linkedMapOf<String, String>()
+        private val originalGenerations = linkedMapOf<String, SyncGeneration>()
+        private val latestAck = linkedMapOf<String, Pair<PushOperationBinding, PushOutcomeAckRequest>>()
         private val snapshotSessions = linkedMapOf<String, SnapshotSessionState>()
         private var scopeInitialized = false
         private var initializingSourceId: String? = null
@@ -423,6 +427,7 @@ internal open class PlatformCrossTargetTestSupport {
         var rejectPush: Boolean = false
         var beforePushCommit: (suspend () -> Unit)? = null
         var beforePushResponse: (suspend () -> Unit)? = null
+        var beforeResolveResponse: (suspend () -> Unit)? = null
         // Behavior-defining test fixtures may return a normalized effect union
         // whose wire order differs from the final SQL application order.
         var normalizePushEffects: ((List<BundleRow>) -> List<BundleRow>)? = null
@@ -497,6 +502,12 @@ internal open class PlatformCrossTargetTestSupport {
 
             request.method.value == "POST" && request.url.encodedPath == "/sync/push" ->
                 handlePush(request)
+
+            request.method.value == "POST" && request.url.encodedPath == "/sync/push-outcomes/resolve" ->
+                handleResolve(request)
+
+            request.method.value == "POST" && request.url.encodedPath == "/sync/push-outcomes/ack" ->
+                handleAck(request)
 
             request.method.value == "POST" && request.url.encodedPath == "/sync/snapshot-sessions" ->
                 handleCreateSnapshotSession(request)
@@ -611,6 +622,17 @@ internal open class PlatformCrossTargetTestSupport {
             generationResponses?.get(generationId)
                 ?: if (generationId == 1L) testGenerationResponse(registeredTableSpecs, usersUpdatedAt) else null
 
+        private fun selectedGeneration(discovery: JsonObject): SyncGeneration {
+            val descriptor = discovery.getValue("schema_generation").jsonObject
+            return decodeStoredGeneration(descriptor.toString(), descriptor.getValue("id").jsonPrimitive.content.toLong())
+                .also { originalGenerations[it.fingerprint] = it }
+        }
+
+        private fun requireProof(request: HttpRequestData, generation: SyncGeneration) {
+            require(request.headers["Oversync-Schema-Generation-ID"] == generation.id)
+            require(request.headers["Oversync-Schema-Generation-Fingerprint"] == generation.fingerprint)
+        }
+
         private suspend fun MockRequestHandleScope.handlePush(
             request: HttpRequestData,
         ): io.ktor.client.request.HttpResponseData {
@@ -632,18 +654,27 @@ internal open class PlatformCrossTargetTestSupport {
                 val generationId = request.headers["Oversync-Schema-Generation-ID"]?.toLongOrNull() ?: 1L
                 val generation = generationResponse(generationId)
                     ?: return errorResponse("schema_generation_not_found", "generation is unavailable", HttpStatusCode.NotFound)
+                val selected = selectedGeneration(generation)
+                requireProof(request, selected)
+                val operation = PushOutcomeResolveRequest(sourceBundleId, canonicalRequestHash, requestInitializationId)
                 val rows = decodeCompactPushRows(generation, push.getValue("rows"))
                 if (computePushRequestHash(rows, generation) != canonicalRequestHash) {
                     return errorResponse("push_invalid", "canonical request hash mismatch")
                 }
                 sourceRetiredOnPush?.let { retired -> return sourceRetiredResponse(retired) }
                 val replayKey = "$sourceId\u0000$sourceBundleId"
-                committedBySourceBundle[replayKey]?.let { existing ->
-                    if (existing.canonicalRequestHash != canonicalRequestHash) {
-                        return errorResponse("push_replay_mismatch", "replay hash mismatch", HttpStatusCode.Conflict)
-                    }
-                    return completePushResponse(existing, generation)
+                latestAck[sourceId]?.let { acknowledged ->
+                    if (sourceBundleId <= acknowledged.second.sourceBundleId)
+                        return errorResponse("push_outcome_acknowledged", "acked", HttpStatusCode.Gone)
                 }
+                terminalOutcomes[replayKey]?.let { existing ->
+                    if (existing.canonicalRequestHash != canonicalRequestHash || existing.initializationId != requestInitializationId ||
+                        existing.generationId != selected.id || existing.generationFingerprint != selected.fingerprint)
+                        return errorResponse("push_outcome_mismatch", "replay binding mismatch", HttpStatusCode.Conflict)
+                    return jsonResponse(checkNotNull(terminalBytes[replayKey]))
+                }
+                if (terminalOutcomes.values.any { it.sourceId == sourceId })
+                    return errorResponse("push_outcome_pending", "prior outcome is unacknowledged", HttpStatusCode.Conflict)
                 beforePushCommit?.invoke()
                 val expectedInitializationId = initializationId
                 if (expectedInitializationId != null && requestInitializationId != expectedInitializationId) {
@@ -671,10 +702,11 @@ internal open class PlatformCrossTargetTestSupport {
                             )
                             }
                         }
-                        return pushConflictResponse(forcedConflict)
+                        nextBundleSeq = maxOf(nextBundleSeq, forcedConflict.serverRowVersion + 1L)
+                        return terminalRejection(sourceId, operation, selected, forcedConflict)
                     }
                     if (currentVersion != row.baseRowVersion) {
-                        return pushConflictResponse(
+                        return terminalRejection(sourceId, operation, selected,
                             PushConflictDetails(
                                 schema = row.schema,
                                 table = row.table,
@@ -709,6 +741,7 @@ internal open class PlatformCrossTargetTestSupport {
                     rows = committedRows,
                     bundleHash = computeCommittedBundleHash(committedRows),
                     canonicalRequestHash = canonicalRequestHash,
+                    initializationId = requestInitializationId,
                 )
                 bundles += stored
                 committedBySourceBundle[replayKey] = stored
@@ -717,7 +750,7 @@ internal open class PlatformCrossTargetTestSupport {
                     initializingSourceId = null
                     initializationId = null
                 }
-                completePushResponse(stored, generation)
+                completePushResponse(stored, selected, generation)
             } catch (t: Throwable) {
                 if (t is CancellationException) throw t
                 errorResponse("invalid_request", t.message ?: "push failed")
@@ -726,14 +759,85 @@ internal open class PlatformCrossTargetTestSupport {
 
         private suspend fun MockRequestHandleScope.completePushResponse(
             bundle: StoredBundle,
-            generation: JsonObject,
+            selected: SyncGeneration,
+            discovery: JsonObject,
         ): io.ktor.client.request.HttpResponseData {
+            val response = publishOutcome(TerminalPushOutcome(
+                bundle.sourceId, selected.id, selected.fingerprint, bundle.sourceBundleId,
+                bundle.canonicalRequestHash, bundle.initializationId, "committed", "",
+                committed = CommittedPushEffect(bundle.bundleSeq, bundle.bundleHash, bundle.rows.size.toLong(), encodeCompactRows(discovery, bundle.rows)),
+            ), selected)
             beforePushResponse?.invoke()
-            return jsonResponse(buildJsonObject {
-            put("bundle_seq", bundle.bundleSeq)
-            put("bundle_hash", bundle.bundleHash)
-            put("rows", encodeCompactRows(generation, bundle.rows))
-            }.toString())
+            return response
+        }
+
+        private suspend fun MockRequestHandleScope.terminalRejection(
+            source: String, operation: PushOutcomeResolveRequest, generation: SyncGeneration, conflict: PushConflictDetails,
+        ): io.ktor.client.request.HttpResponseData {
+            val wire = conflict.copy(op = mapOf("INSERT" to "i", "UPDATE" to "u", "DELETE" to "d").getValue(conflict.op))
+            val response = publishOutcome(TerminalPushOutcome(source, generation.id, generation.fingerprint,
+                operation.sourceBundleId, operation.canonicalRequestHash, operation.initializationId,
+                "rejected", "", rejection = PushOutcomeRejection("push_conflict", wire)), generation)
+            beforePushResponse?.invoke()
+            return response
+        }
+
+        private fun MockRequestHandleScope.publishOutcome(value: TerminalPushOutcome, generation: SyncGeneration): io.ktor.client.request.HttpResponseData {
+            originalGenerations[generation.fingerprint] = generation
+            val outcome = value.copy(outcomeHash = hashPushOutcome(value, generation))
+            val fields = json.encodeToJsonElement(TerminalPushOutcome.serializer(), outcome).jsonObject.toMutableMap()
+            if (outcome.committed == null) fields.remove("committed")
+            if (outcome.rejection == null) fields.remove("rejection")
+            val raw = JsonObject(fields).toString()
+            val key = "${outcome.sourceId}\u0000${outcome.sourceBundleId}"
+            terminalOutcomes[key] = outcome
+            terminalBytes[key] = raw
+            return jsonResponse(raw)
+        }
+
+        private suspend fun MockRequestHandleScope.handleResolve(request: HttpRequestData): io.ktor.client.request.HttpResponseData {
+            val selected = decodeOutcomeResolve(request.recordedBody())
+            val source = request.headers[sourceIdHeaderName].orEmpty()
+            latestAck[source]?.let { if (selected.sourceBundleId <= it.second.sourceBundleId)
+                return errorResponse("push_outcome_acknowledged", "acked", HttpStatusCode.Gone) }
+            val key = "$source\u0000${selected.sourceBundleId}"
+            terminalOutcomes[key]?.let { outcome ->
+                requireProof(request, checkNotNull(originalGenerations[outcome.generationFingerprint]))
+                if (outcome.canonicalRequestHash != selected.canonicalRequestHash || outcome.initializationId != selected.initializationId)
+                    return errorResponse("push_outcome_mismatch", "binding mismatch", HttpStatusCode.Conflict)
+                beforeResolveResponse?.invoke()
+                return jsonResponse(checkNotNull(terminalBytes[key]))
+            }
+            if (terminalOutcomes.values.any { it.sourceId == source })
+                return errorResponse("push_outcome_pending", "prior outcome is unacknowledged", HttpStatusCode.Conflict)
+            val generation = originalGenerations[request.headers["Oversync-Schema-Generation-Fingerprint"]]
+                ?: selectedGeneration(checkNotNull(generationResponse(checkNotNull(request.headers["Oversync-Schema-Generation-ID"]).toLong())))
+            requireProof(request, generation)
+            val response = publishOutcome(TerminalPushOutcome(source, generation.id, generation.fingerprint,
+                selected.sourceBundleId, selected.canonicalRequestHash, selected.initializationId, "cancelled", ""), generation)
+            beforeResolveResponse?.invoke()
+            return response
+        }
+
+        private suspend fun MockRequestHandleScope.handleAck(request: HttpRequestData): io.ktor.client.request.HttpResponseData {
+            val selected = decodeOutcomeAck(request.recordedBody())
+            val source = request.headers[sourceIdHeaderName].orEmpty()
+            val key = "$source\u0000${selected.sourceBundleId}"
+            val outcome = terminalOutcomes[key]
+            if (outcome != null) {
+                requireProof(request, checkNotNull(originalGenerations[outcome.generationFingerprint]))
+                require(outcome.canonicalRequestHash == selected.canonicalRequestHash && outcome.outcomeHash == selected.outcomeHash)
+                latestAck[source] = PushOperationBinding(source, outcome.generationId, outcome.generationFingerprint,
+                    outcome.sourceBundleId, outcome.canonicalRequestHash, outcome.initializationId) to selected
+                terminalOutcomes.remove(key)
+                terminalBytes.remove(key)
+            } else {
+                val acknowledged = checkNotNull(latestAck[source])
+                require(acknowledged.second == selected)
+                require(request.headers["Oversync-Schema-Generation-ID"] == acknowledged.first.generationId)
+                require(request.headers["Oversync-Schema-Generation-Fingerprint"] == acknowledged.first.generationFingerprint)
+            }
+            return respond("", HttpStatusCode.NoContent)
         }
 
         private suspend fun MockRequestHandleScope.handleCreateSnapshotSession(
@@ -755,30 +859,31 @@ internal open class PlatformCrossTargetTestSupport {
                 return sourceRetiredResponse(retired)
             }
             val generationId = request.headers["Oversync-Schema-Generation-ID"]?.toLongOrNull() ?: 1L
+            val generation = generationResponse(generationId)
+                ?: return errorResponse("schema_generation_not_found", "generation is unavailable", HttpStatusCode.NotFound)
+            val selected = selectedGeneration(generation)
+            requireProof(request, selected)
             val snapshotRows = currentSnapshotRows(generationId)
             val snapshotId = "snapshot-${nextSnapshotId++}"
             val stableBundleSeq = bundles.lastOrNull()?.bundleSeq ?: if (scopeInitialized) 0L else 0L
+            if (createRequest?.recovery?.minimumBundleSeq?.let { it > stableBundleSeq } == true)
+                return errorResponse("recovery_floor_ahead", "minimum boundary is ahead", HttpStatusCode.Conflict)
+            val effectiveSource = createRequest?.sourceReplacement?.newSourceId ?: request.headers[sourceIdHeaderName].orEmpty()
             snapshotSessions[snapshotId] = SnapshotSessionState(
-                snapshotId = snapshotId,
-                snapshotBundleSeq = stableBundleSeq,
-                sourceId = createRequest?.sourceReplacement?.newSourceId
-                    ?: request.headers[sourceIdHeaderName].orEmpty(),
-                rows = snapshotRows,
+                snapshotId, stableBundleSeq, effectiveSource, snapshotRows, selected,
             )
-            val generation = generationResponse(generationId)
-                ?: return errorResponse("schema_generation_not_found", "generation is unavailable", HttpStatusCode.NotFound)
-            jsonResponse(
-                json.encodeToString(
-                    SnapshotSession.serializer(),
-                    SnapshotSession(
-                        snapshotId = snapshotId,
-                        snapshotBundleSeq = stableBundleSeq,
-                        rowCount = snapshotRows.size.toLong(),
-                        logicalByteCount = snapshotLogicalByteCount(generation, snapshotRows),
-                        expiresAt = "2099-01-01T00:00:00Z",
-                    ),
-                ),
-            )
+            val bytes = snapshotLogicalByteCount(generation, snapshotRows)
+            val hash = SnapshotHashWriter(effectiveSource, selected, snapshotId, stableBundleSeq, createRequest?.recovery)
+            for (row in snapshotRows) {
+                val index = selected.tables.indexOfFirst { it.schema == row.schema && it.table == row.table }
+                val keys = JsonArray(selected.tables[index].syncKeyColumns.map { JsonPrimitive(row.key.getValue(it)) })
+                hash.add(index, keys, row.rowVersion, row.payload.jsonObject)
+            }
+            val sealed = SnapshotSession(snapshotId, stableBundleSeq, snapshotRows.size.toLong(), bytes,
+                "2099-01-01T00:00:00Z", hash.finish(snapshotRows.size.toLong(), bytes), createRequest?.recovery)
+            val fields = json.encodeToJsonElement(SnapshotSession.serializer(), sealed).jsonObject.toMutableMap()
+            if (sealed.recovery == null) fields.remove("recovery")
+            jsonResponse(JsonObject(fields).toString())
         } catch (t: Throwable) {
             errorResponse("invalid_request", t.message ?: "snapshot create failed")
         }
@@ -788,7 +893,8 @@ internal open class PlatformCrossTargetTestSupport {
                 snapshotChunkRequestCount++
                 val snapshotId = request.url.encodedPath.removePrefix("/sync/snapshot-sessions/")
                 val session = snapshotSessions[snapshotId]
-                    ?: return errorResponse("snapshot_not_found", "unknown snapshot", HttpStatusCode.NotFound)
+                    ?: return errorResponse("snapshot_session_not_found", "unknown snapshot", HttpStatusCode.NotFound)
+                requireProof(request, session.generation)
                 require(session.sourceId == request.headers[sourceIdHeaderName]) {
                     "snapshot chunks require effective source"
                 }
@@ -1125,6 +1231,7 @@ internal open class PlatformCrossTargetTestSupport {
             val rows: List<BundleRow>,
             val bundleHash: String,
             val canonicalRequestHash: String,
+            val initializationId: String? = null,
         )
 
         private data class SnapshotSessionState(
@@ -1132,6 +1239,7 @@ internal open class PlatformCrossTargetTestSupport {
             val snapshotBundleSeq: Long,
             val sourceId: String,
             val rows: List<SnapshotRow>,
+            val generation: SyncGeneration,
         )
     }
 }

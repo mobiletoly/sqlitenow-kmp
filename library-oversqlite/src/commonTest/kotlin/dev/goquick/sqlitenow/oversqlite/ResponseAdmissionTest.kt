@@ -105,7 +105,8 @@ internal class ResponseAdmissionTest : SurvivorTestSupport() {
             try {
                 resumed.openAndConnect("user-1").getOrThrow()
                 resumed.pushPending().getOrThrow()
-                assertEquals(server.pushBodies[1], server.pushBodies[2])
+                assertEquals(2,server.pushRequestCount,"retained outcome resolves without resending frozen F")
+                        assertEquals(1,server.resolveRequests.size)
                 requireSurvivors(db)
                 assertEquals(3L, scalarLong(db, "SELECT next_source_bundle_id FROM _sync_source_state"))
                 assertEquals(2L, scalarLong(db, "SELECT last_bundle_seq_seen FROM _sync_attachment_state"))

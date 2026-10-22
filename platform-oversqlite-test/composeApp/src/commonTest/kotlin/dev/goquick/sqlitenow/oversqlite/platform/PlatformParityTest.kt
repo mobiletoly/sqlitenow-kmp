@@ -3,6 +3,7 @@ package dev.goquick.sqlitenow.oversqlite.platform
 import dev.goquick.sqlitenow.oversqlite.*
 import dev.goquick.sqlitenow.oversqlite.platformsupport.openAndConnect
 
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
@@ -875,7 +876,7 @@ internal class PlatformParityTest : PlatformCrossTargetTestSupport() {
     }
 
     @Test
-    fun sourceRetired_pushCreateRotatesSourceAndPreservesReservedReplacementAcrossRebuild() = runTest {
+    fun sourceRetired_precommitPreservesFrozenIntentAndBlocksSnapshot() = runTest {
         if (!platformSuiteEnabled()) return@runTest
         val server = MockSyncServer()
         val activeDb = newCoordinatedDb()
@@ -910,7 +911,73 @@ internal class PlatformParityTest : PlatformCrossTargetTestSupport() {
             assertEquals("platform-rotated-device", scalarText(activeDb, "SELECT replacement_source_id FROM _sync_operation_state"))
             assertEquals(sourceBefore, scalarText(activeDb, "SELECT current_source_id FROM _sync_attachment_state"))
 
-            server.sourceRetiredOnPush = null
+            val frozen = retainedDatabaseVector(activeDb.connection())
+            val requests = server.requestCounts.toMap()
+            repeat(2) {
+                assertFailsWith<PendingPushReplayException> { activeClient.rebuild().getOrThrow() }
+                assertEquals(frozen, retainedDatabaseVector(activeDb.connection()))
+                assertEquals(requests, server.requestCounts, "dirty source recovery must not dispatch snapshot or outcome controls")
+            }
+        } finally {
+            activeHttp.close()
+            verifyHttp.close()
+            activeDb.close()
+            verifyDb.close()
+            cleanupOwnedWorkerStorage()
+        }
+    }
+
+    @Test
+    fun sourceRecovery_committedReplyLossSettlesBeforeReservedRotation() = runTest {
+        if (!platformSuiteEnabled()) return@runTest
+        val server = MockSyncServer()
+        val activeDb = newCoordinatedDb()
+        val verifyDb = newCoordinatedDb()
+        val activeHttp = server.newHttpClient()
+        val verifyHttp = server.newHttpClient()
+        try {
+            createUsersAndPostsTables(activeDb)
+            createUsersAndPostsTables(verifyDb)
+
+            val activeClient = newClient(activeDb, activeHttp)
+            val verifyClient = newClient(verifyDb, verifyHttp)
+
+            activeClient.openAndConnect(userId = "user-1").getOrThrow()
+            verifyClient.openAndConnect(userId = "user-1").getOrThrow()
+            activeClient.rebuild().getOrThrow()
+            verifyClient.rebuild().getOrThrow()
+
+            val sourceBefore = scalarText(activeDb, "SELECT current_source_id FROM _sync_attachment_state")
+            insertUser(activeDb, "u1", "Platform Rotated")
+            server.beforePushResponse = {
+                server.beforePushResponse = null
+                val db = activeDb.connection()
+                OversqliteSourceStateStore(db).ensureSource("platform-rotated-device")
+                OversqliteAttachmentStateStore(db).setRebuildRequired(true)
+                OversqliteOperationStateStore(db).persistState(OversqliteOperationState(
+                    kind = operationKindSourceRecovery,
+                    reason = SourceRecoveryReason.SOURCE_RETIRED.toPersistedOperationReason(),
+                    replacementSourceId = "platform-rotated-device",
+                ))
+                throw CancellationException("committed response lost before reserved-source recovery")
+            }
+            assertFailsWith<CancellationException> { activeClient.pushPending().getOrThrow() }
+            assertEquals("platform-rotated-device", scalarText(activeDb, "SELECT replacement_source_id FROM _sync_operation_state"))
+            assertEquals(sourceBefore, scalarText(activeDb, "SELECT current_source_id FROM _sync_attachment_state"))
+            val frozen = retainedDatabaseVector(activeDb.connection())
+            val requests = server.requestCounts.toMap()
+            assertFailsWith<PendingPushReplayException> { activeClient.rebuild().getOrThrow() }
+            assertEquals(frozen, retainedDatabaseVector(activeDb.connection()))
+            assertEquals(requests, server.requestCounts)
+            val direct = server.pushRequestCount
+            activeClient.pushPending().getOrThrow()
+            assertEquals(direct, server.pushRequestCount, "retained F resolves; it is not retransmitted")
+            assertEquals(1, server.requestCounts["/sync/push-outcomes/resolve"])
+            assertEquals(1, server.requestCounts["/sync/push-outcomes/ack"])
+            assertEquals(0L, scalarLong(activeDb, "SELECT COUNT(*) FROM _sync_upload_journal"))
+            assertEquals(0L, scalarLong(activeDb, "SELECT COUNT(*) FROM _sync_outbox_rows"))
+            assertEquals(outboxStateNone, scalarText(activeDb, "SELECT state FROM _sync_outbox_bundle"))
+            assertEquals(0L, scalarLong(activeDb, "SELECT COUNT(*) FROM _sync_dirty_rows"))
             activeClient.rebuild().getOrThrow()
 
             assertEquals(
@@ -919,9 +986,15 @@ internal class PlatformParityTest : PlatformCrossTargetTestSupport() {
             )
             assertEquals("platform-rotated-device", scalarText(activeDb, "SELECT current_source_id FROM _sync_attachment_state"))
 
+            insertUser(activeDb, "u2", "Replacement Followup")
+            val beforeFollowup = server.pushRequestCount
             activeClient.pushPending().getOrThrow()
+            assertEquals(beforeFollowup + 1, server.pushRequestCount)
+            assertEquals("platform-rotated-device", server.requestSourceIds.last { it.first == "/sync/push" }.second)
             verifyClient.pullToStable().getOrThrow()
             assertEquals("Platform Rotated", scalarText(verifyDb, "SELECT name FROM users WHERE id = 'u1'"))
+            assertEquals("Replacement Followup", scalarText(verifyDb, "SELECT name FROM users WHERE id = 'u2'"))
+            assertEquals(2L, scalarLong(verifyDb, "SELECT COUNT(*) FROM users"))
         } finally {
             activeHttp.close()
             verifyHttp.close()

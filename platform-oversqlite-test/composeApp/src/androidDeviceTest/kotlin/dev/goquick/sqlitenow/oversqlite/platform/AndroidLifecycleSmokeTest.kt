@@ -42,6 +42,14 @@ class AndroidLifecycleSmokeTest {
                   AND name GLOB '_sync_*'
                   AND name NOT IN (
                     '_sync_apply_state',
+                    '_sync_apply_plan',
+                    '_sync_apply_rows',
+                    '_sync_apply_edges',
+                    '_sync_push_plan',
+                    '_sync_push_nodes',
+                    '_sync_push_edges',
+                    '_sync_relationships',
+                    '_sync_upload_journal',
                     '_sync_contract_identity',
                     '_sync_admitted_contracts',
                     '_sync_attachment_state',

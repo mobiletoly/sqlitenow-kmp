@@ -7,16 +7,25 @@ import dev.goquick.sqlitenow.oversqlite.OversqliteOpening
 import dev.goquick.sqlitenow.oversqlite.OversqliteTransferTargets
 import dev.goquick.sqlitenow.oversqlite.OwnedWorkerStorage
 import dev.goquick.sqlitenow.oversqlite.PushOutcome
+import dev.goquick.sqlitenow.oversqlite.compressOversqliteRequestGzip
+import dev.goquick.sqlitenow.oversqlite.decodeOversqliteSingleMemberGzip
+import dev.goquick.sqlitenow.oversqlite.oversqliteFetchManagesResponseCompression
 import dev.goquick.sqlitenow.oversqlite.RemoteSyncOutcome
 import dev.goquick.sqlitenow.oversqlite.platform.generated.RealServerGeneratedDatabase
 import dev.goquick.sqlitenow.oversqlite.platform.generated.TypedRowQuery
 import dev.goquick.sqlitenow.oversqlite.platform.generated.VersionBasedDatabaseMigrations
 import dev.goquick.sqlitenow.oversqlite.platformsupport.assertConnectedOutcome
 import io.ktor.client.HttpClient
+import io.ktor.client.request.HttpSendPipeline
+import io.ktor.http.HttpHeaders
+import io.ktor.http.content.OutgoingContent
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlin.test.Test
+import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
@@ -87,23 +96,43 @@ internal class RealServerGeneratedRichNumericTest : RealServerHarnessSupport() {
         var rebuildToken: String? = null
         var frozenLargeIntegerPayload: String? = null
         try {
-            seedHttp = newRealServerHttpClient(
+            val originalSeedHttp = newRealServerHttpClient(
                 baseUrl = config.baseUrl,
                 tokenProvider = { seedToken },
-                beforeRequest = { path ->
-                    if (path == "/sync/push" && frozenLargeIntegerPayload == null) {
-                        frozenLargeIntegerPayload = scalarText(
-                            seedDb.connection(),
-                            """
-                            SELECT wire_payload
-                            FROM _sync_outbox_rows
-                            WHERE table_name = 'typed_rows'
-                              AND local_payload LIKE '%above-javascript-safe-range%'
-                            """.trimIndent(),
-                        )
-                    }
-                },
             )
+            seedHttp = originalSeedHttp.config {
+                install("GeneratedRichNumericWireObserver") {
+                    sendPipeline.intercept(HttpSendPipeline.Monitoring) {
+                        if (context.url.build().encodedPath == "/sync/push") {
+                            val bytes = (subject as OutgoingContent.ByteArrayContent).bytes()
+                            val raw = if (context.headers[HttpHeaders.ContentEncoding] == "gzip") {
+                                if (oversqliteFetchManagesResponseCompression) {
+                                    // Web response decompression is Fetch-owned. Bind the complete
+                                    // frozen request to the actual outgoing compressed bytes instead.
+                                    val frozen = scalarText(seedDb.connection(),
+                                        "SELECT CAST(request_body AS TEXT) FROM _sync_upload_journal WHERE singleton_key=1",
+                                    ).encodeToByteArray()
+                                    assertTrue(frozen.size <= 1024 * 1024)
+                                    assertContentEquals(bytes, assertNotNull(
+                                        compressOversqliteRequestGzip(frozen, bytes.size),
+                                    ), "the dispatched gzip member represents the complete frozen request")
+                                    frozen
+                                } else decodeOversqliteSingleMemberGzip(bytes, 1024 * 1024)
+                            } else bytes
+                            val groups = json.parseToJsonElement(raw.decodeToString()).jsonObject.getValue("rows").jsonArray
+                            for (group in groups) for (row in group.jsonArray[2].jsonArray) {
+                                val payload = row.jsonArray.getOrNull(3) as? JsonObject ?: continue
+                                if (payload["name"]?.jsonPrimitive?.content == "above-javascript-safe-range") {
+                                    assertEquals(null, frozenLargeIntegerPayload, "the frozen large-integer row is dispatched once")
+                                    frozenLargeIntegerPayload = payload.toString()
+                                }
+                            }
+                        }
+                        proceed()
+                    }
+                }
+            }
+            originalSeedHttp.close()
             pullHttp = newRealServerHttpClient(
                 baseUrl = config.baseUrl,
                 tokenProvider = { pullToken },

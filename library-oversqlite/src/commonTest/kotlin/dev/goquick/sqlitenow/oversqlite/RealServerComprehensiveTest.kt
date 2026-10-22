@@ -241,7 +241,7 @@ internal class RealServerComprehensiveTest : RealServerSupport() {
             val sourceId = bootstrapManagedSourceId(db, config.baseUrl)
             val token = issueDummySigninToken(config.baseUrl, userId, sourceId)
             var pullResponses = 0
-            http = newRealServerHttpClient(config.baseUrl, token) { path ->
+            http = newRealServerHttpClient(config.baseUrl, token, afterResponse = { path ->
                 if (path == "/sync/pull") {
                     pullResponses += 1
                     insertBusinessUserAndPost(
@@ -251,7 +251,7 @@ internal class RealServerComprehensiveTest : RealServerSupport() {
                         suffix = "late-$pullResponses",
                     )
                 }
-            }
+            })
             val client = newRealServerClient(db, http)
 
             client.open().getOrThrow()
@@ -835,11 +835,15 @@ internal class RealServerComprehensiveTest : RealServerSupport() {
                 config.baseUrl,
                 issueDummySigninToken(config.baseUrl, userId, recoverSourceId),
             )
-            val discovery = oldSourceHttp.get("sync/generations/1") {
+            val discoveryResponse = oldSourceHttp.get("sync/generations/1") {
+                header("Oversync-Protocol-Version", "v1")
                 header("Oversync-Source-ID", recoverSourceId)
-            }.body<JsonObject>()
+            }
+            assertEquals(HttpStatusCode.OK, discoveryResponse.status)
+            val discovery = discoveryResponse.body<JsonObject>()
             val generation = discovery.getValue("schema_generation").jsonObject
             val oldSourceResponse = oldSourceHttp.post("sync/snapshot-sessions") {
+                header("Oversync-Protocol-Version", "v1")
                 header("Oversync-Schema-Generation-ID", generation.getValue("id").jsonPrimitive.content)
                 header("Oversync-Schema-Generation-Fingerprint", generation.getValue("fingerprint").jsonPrimitive.content)
                 header("Oversync-Source-ID", recoverSourceId)

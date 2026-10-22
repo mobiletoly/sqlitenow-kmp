@@ -17,6 +17,19 @@ package dev.goquick.sqlitenow.oversqlite
 
 import kotlinx.serialization.json.*
 
+internal fun sealedSnapshotForTest(generation: SyncGeneration, source: String, id: String, boundary: Long,
+    rows: List<SnapshotRow>, recovery: SnapshotRecovery? = null): SnapshotSession {
+    val bytes = OversqliteCompactCodec.snapshotLogicalByteCount(generation,
+        rows.map { BundleRow(it.schema,it.table,it.key,"INSERT",it.rowVersion,it.payload) })
+    val hash = SnapshotHashWriter(source,generation,id,boundary,recovery)
+    for (row in rows) {
+        val index = generation.tables.indexOfFirst { it.schema == row.schema && it.table == row.table }
+        hash.add(index,JsonArray(generation.tables[index].syncKeyColumns.map { JsonPrimitive(row.key.getValue(it)) }),
+            row.rowVersion,row.payload.jsonObject)
+    }
+    return SnapshotSession(id,boundary,rows.size.toLong(),bytes,"2099-01-01T00:00:00Z",hash.finish(rows.size.toLong(),bytes),recovery)
+}
+
 internal fun testWireLimits(): OversqliteWireLimits = OversqliteWireLimits(
     maxPushRows = 100_000,
     maxPushDecodedBytes = 64L * 1024L * 1024L,
@@ -27,6 +40,7 @@ internal fun testWireLimits(): OversqliteWireLimits = OversqliteWireLimits(
     maxSnapshotRows = 10_000_000L,
     maxSnapshotLogicalBytes = 2L * 1024L * 1024L * 1024L,
     maxRowDecodedBytes = 4L * 1024L * 1024L,
+    maxPushOutcomeDecodedBytes = 64L * 1024L * 1024L + 8192L,
 )
 
 internal fun testRegisteredTableSpecs(vararg tables: String): List<RegisteredTableSpec> =

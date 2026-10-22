@@ -19,6 +19,11 @@ import dev.goquick.sqlitenow.core.SafeSQLiteConnection
 
 internal suspend fun initializeOversqliteControlTables(db: SafeSQLiteConnection) {
     db.execSQL("PRAGMA foreign_keys = ON")
+    db.execSQL(provenanceContextDdl)
+    db.execSQL(provenanceStateDdl)
+    db.execSQL(provenanceImmutableTriggerDdl)
+    db.execSQL("INSERT INTO _sync_provenance_state(singleton_key,format_identity) VALUES(1,'complete-context-v1') ON CONFLICT(singleton_key) DO NOTHING")
+    db.execSQL(uploadJournalDdl)
     db.execSQL(pushPlanDdl)
     db.execSQL(pushNodesDdl)
     db.execSQL(pushEdgesDdl)
@@ -46,7 +51,7 @@ internal suspend fun initializeOversqliteControlTables(db: SafeSQLiteConnection)
         oversqliteRetainedTableDdl.getValue("_sync_dirty_rows")
     )
     db.execSQL(relationshipProjectionDdl)
-    baselineIndexDdl.values.forEach { db.execSQL(it) }
+
     db.execSQL(
         oversqliteRetainedTableDdl.getValue("_sync_conflict_state")
     )
@@ -133,5 +138,6 @@ internal suspend fun initializeOversqliteControlTables(db: SafeSQLiteConnection)
     db.execSQL(
         oversqliteRetainedTableDdl.getValue("_sync_managed_tables"),
     )
+    baselineIndexDdl.values.forEach { db.execSQL(it) }
     db.execSQL("UPDATE _sync_apply_state SET apply_mode = 0 WHERE singleton_key = 1")
 }

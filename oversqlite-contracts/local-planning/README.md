@@ -153,3 +153,78 @@ copies as shared. A matching token can release once after cleanup, with cancella
 masked only for that cleanup. Fresh lifetime acquisition may clear the complete
 abandoned transient array after layout validation; creation of an internal client
 or an operation gate cannot clear it.
+
+
+## SQLiteNow complete-context retained format (normative)
+
+The logical A/B provenance described above resolves through the SQLiteNow-only
+`complete-context-v1` physical layout in `provenance-storage.json`. Go retains its
+existing physical layout. The wire, request hashes, typed payloads and logical
+A/B meanings do not change. This format has no migration or compatibility reader.
+Opening an old retained layout must report explicit incompatibility/recreation
+required while preserving the database. `local_version` remains the application
+representation version; the retained format has its own identity.
+
+The fixture contains exact context/state DDL and the shared observation constraint.
+Production owner columns are `server_provenance` / `base_provenance`, now compact
+objects with exactly `context_id` (positive integer), `origin` and nullable
+`bundle_sequence`. They contain no authoritative version; existing `row_version`
+and `base_row_version` own that evidence. `server_context_id` / `base_context_id`
+are STORED generated INTEGER references with ON DELETE RESTRICT and separate
+indexes on each of `_sync_row_state`, `_sync_dirty_rows`, `_sync_outbox_rows`.
+The unchanged owner kind/payload/version constraints preserve live/deleted and
+absent/unpublished/unknown or present/deleted/absent/unavailable discriminators.
+Observation objects reject unknown/duplicate members on affected reads.
+
+The ten context columns are a complete immutable identity. Text uses exact BINARY
+equality and canonical existing physical-shape encoding; the compound UNIQUE
+constraint compares every captured field, without digest-only equality. A context
+is interned once at admission/writer transitions. Triggers read the active integer
+root and copy compact historical observations. Context UPDATE is forbidden by a
+retained immutable trigger. Its active pointer is a root, distinct from attachment
+epochs: equal context reuse never validates work from an old attachment epoch.
+
+Snapshot installation receives an explicit validated target context for included
+and excluded/absence observations: target admitted account/generation/source,
+current physical representation. It installs those references before atomically
+publishing attachment/source state. It never interns the old current source as
+the target. Pending/frozen work still refuses replacement before staging; no
+frozen request is requeued or retargeted by normalization.
+
+Anonymous-to-attached and unadmitted-to-admitted binding may atomically replace
+references only in A and dirty B owned by those existing transitions. Their new
+immutable contexts preserve each captured source. Frozen B stays independent.
+Current owners describe current expectations; affected historical reads resolve
+their captured immutable identity and validate eligibility separately. Missing,
+dangling, corrupt or mismatched evidence follows existing integrity/unavailable
+outcomes; unknown B is never treated as absent.
+
+Direct roots are A, dirty B, frozen B and the active pointer. Push plans retain
+row identities/revisions, not serialized HistoricalBase objects. Upload journals
+retain wire request/binding/outcome bytes; those are not local context references.
+Apply rows retain typed payloads or snapshot references, not HistoricalBase.
+Transient DirtySnapshotRow/DirtyRowCapture, PushOutboundSnapshot and outbox rows
+retain compact references while their dirty/frozen durable owner remains rooted;
+freeze/requeue/settlement transfers roots in the existing owning transaction.
+A reference must not survive both its writer and its last durable root. No opaque
+serialized local-base owner has been found, so no extra retention relation is added.
+
+Cleanup examines at most 32 keyset candidates per slice, ordered by context_id
+above cleanup_cursor. For every candidate, at most four explicit indexed root
+probes plus at most four SQLite FK enforcement probes execute. Deletion and cursor
+advance share one writer transaction. The cursor advances even when every context
+is referenced and wraps to zero after exhaustion. Cancellation rolls back the
+slice; restart resumes the persisted cursor. Concurrent root changes serialize
+under the writer; FK restrictions independently reject dangling deletes. Cleanup
+never scans all owners or relies only on the number of contexts deleted.
+
+Logical retained provenance bytes count context text/integer records once, compact
+observation bytes, generated integer references and pointer/cursor/format state.
+Payload bytes and physical database/WAL/index bytes are separate measurements.
+Primary A/B, frozen outbox and primary edge exemptions remain unchanged. SQL
+primary identity interning does not create a charged retained derived copy.
+Actual host copies/decoded objects and SQL/host derived temporary representations
+retain their existing owning charge formulas and live reservations. Prefer no host
+context decoding in row loops; any bounded writer-scoped validation memo must be
+charged for its live reference entries and must never retain an uncharged complete
+context copy. No process-global cache, work-weight or numeric-limit change is allowed.

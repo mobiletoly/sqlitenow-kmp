@@ -29,7 +29,7 @@ internal class RealServerSnapshotReplacementJvmTest : RealServerSupport() {
     @Test
     fun replacesConfiguredRowsAndRetainsPreparedIntent(): Unit = runBlocking {
         check(System.getenv("GITHUB_ACTIONS") != "true") { "capacity replacement is local-heavy" }
-        require(System.getenv("OVERSQLITE_REALSERVER_HEAVY") == "true")
+        org.junit.Assume.assumeTrue("separate owned heavy capacity authority required; no runtime credit in ordinary owning", System.getenv("OVERSQLITE_REALSERVER_HEAVY") == "true")
         val controlUrl = requireNotNull(System.getenv("OVERSQLITE_CAPACITY_CONTROL_URL"))
         val initialBundle = requireNotNull(System.getenv("OVERSQLITE_CAPACITY_INITIAL_BUNDLE")).toLong()
         val server = requireNotNull(requireRealServerConfig())

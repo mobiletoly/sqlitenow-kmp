@@ -1,6 +1,7 @@
 package dev.goquick.sqlitenow.oversqlite.platform
 
 import dev.goquick.sqlitenow.core.SafeSQLiteConnection
+import androidx.sqlite.SQLiteStatement
 import androidx.sqlite.async.step
 import dev.goquick.sqlitenow.core.sqlite.use
 import dev.goquick.sqlitenow.oversqlite.platformsupport.sha256Hex
@@ -96,5 +97,77 @@ internal suspend fun databaseStateVector(
         db.withExclusiveAccess { db.prepare("SELECT $rowProjection FROM \"$table\"$where ORDER BY ${columns.joinToString(",") { "\"$it\"" }}").use { statement ->
             buildList { while (statement.step()) add(sha256Hex(if (useBlob) statement.getBlob(0) else statement.getText(0).encodeToByteArray())) }
         }}
+    }
+}
+
+// A subset is an observation of these owners only, never a complete preservation
+// witness. Keep the full-vector implementation above unchanged: its consumers
+// retain their existing projection, ordering and failure boundaries.
+internal suspend fun selectedDatabaseStateVector(
+    db: SafeSQLiteConnection,
+    business: List<String>,
+    selectedTables: List<String>,
+    predicates: Map<String, String> = emptyMap(),
+    ignoreDerivedCharges: Boolean = false,
+    includeDurableStages: Boolean = true,
+    diagnostics: DatabaseVectorScanDiagnostics? = null,
+    prepare: suspend (String) -> SQLiteStatement = { db.prepare(it) },
+): Map<String, List<String>> {
+    val primary = business + listOf("_sync_row_state", "_sync_dirty_rows", "_sync_relationships",
+        "_sync_outbox_rows", "_sync_outbox_bundle", "_sync_source_state",
+        "_sync_attachment_state", "_sync_operation_state", "_sync_conflict_state",
+        "_sync_opening_state", "_sync_contract_identity", "_sync_admitted_contracts")
+    val durableStages = listOf("_sync_snapshot_stage", "_sync_apply_state", "_sync_apply_plan", "_sync_apply_rows",
+        "_sync_apply_edges", "_sync_push_plan", "_sync_push_nodes", "_sync_push_edges",
+        "_sync_managed_tables")
+    val available = primary + if (includeDurableStages) durableStages else emptyList()
+    require(selectedTables.isNotEmpty()) { "subset requires at least one table" }
+    require(selectedTables.distinct().size == selectedTables.size) { "subset requires distinct tables" }
+    require(selectedTables.all { it in available }) { "subset table is outside the available roster" }
+    val useBlob = webRuntimeKind() in setOf("jvm", "android", "native")
+    return selectedTables.associateWith { table ->
+        val columns = db.withExclusiveAccess {
+            prepare("PRAGMA table_info(\"$table\")").use { statement ->
+                diagnostics?.metadataQuery(table)
+                buildList { while (statement.step()) add(statement.getText(1)) }
+            }
+        }
+        assertTrue(columns.isNotEmpty(), "subset vector requires $table")
+        val derived = setOf("workspace_context", "reserved_entries", "reserved_bytes", "snapshot_stage_entries",
+            "snapshot_stage_bytes", "snapshot_cleanup_ordinal", "push_stage_entries", "push_stage_bytes", "push_cleanup_ordinal")
+        val compared = if (ignoreDerivedCharges && table == "_sync_operation_state") columns.filter { it !in derived } else columns
+        val projection = compared.joinToString(",") { column ->
+            "'$column',json_object('storage',typeof(\"$column\"),'value',CASE WHEN typeof(\"$column\")='blob' THEN lower(hex(\"$column\")) WHEN \"$column\" IS NULL THEN NULL ELSE CAST(\"$column\" AS TEXT) END)"
+        }
+        val where = predicates[table]?.let { " WHERE $it" }.orEmpty()
+        val rowProjection = if (useBlob) "CAST(json_object($projection) AS BLOB)" else "json_object($projection)"
+        db.withExclusiveAccess {
+            prepare("SELECT $rowProjection FROM \"$table\"$where ORDER BY ${columns.joinToString(",") { "\"$it\"" }}").use { statement ->
+                diagnostics?.rowQuery(table)
+                buildList {
+                    while (statement.step()) {
+                        // Retain only digests; never accumulate backlog payloads.
+                        val bytes = if (useBlob) statement.getBlob(0) else statement.getText(0).encodeToByteArray()
+                        add(sha256Hex(bytes))
+                        diagnostics?.hashedRow(table, bytes.size)
+                    }
+                }
+            }
+        }
+    }
+}
+
+// Optional bounded counters, absent from ordinary replay timing. No SQL or row
+// payloads are retained; at most one counter record per selected owner is held.
+internal class DatabaseVectorScanDiagnostics {
+    data class Scan(var metadataQueries: Long = 0, var rowQueries: Long = 0,
+        var rowsHashed: Long = 0, var bytesHashed: Long = 0)
+    val tables = linkedMapOf<String, Scan>()
+    fun metadataQuery(table: String) { tables.getOrPut(table) { Scan() }.metadataQueries++ }
+    fun rowQuery(table: String) { tables.getOrPut(table) { Scan() }.rowQueries++ }
+    fun hashedRow(table: String, bytes: Int) {
+        val scan = tables.getValue(table)
+        scan.rowsHashed++
+        scan.bytesHashed += bytes
     }
 }

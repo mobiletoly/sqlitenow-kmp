@@ -49,6 +49,11 @@ internal class OversqlitePushWorkflow(
         const val MAX_PUSH_CONFLICT_AUTO_RETRIES = 2
     }
 
+    private val uploadJournal = OversqliteUploadJournal(db,config)
+
+    suspend fun acknowledgePending(state: RuntimeState) = uploadJournal.acknowledge(state,remoteApi)
+    suspend fun frozenMayResume(state: RuntimeState)=uploadJournal.frozenMayResume(state)
+
     private val replayExecutor = OversqlitePushReplayExecutor(
         syncStateStore = syncStateStore,
         bundleApplier = bundleApplier,
@@ -77,8 +82,22 @@ internal class OversqlitePushWorkflow(
         allowCheckpointRecovery: Boolean,
         beforeAttempt: suspend () -> Unit,
     ): PushWorkflowResult {
+        acknowledgePending(state)
         conflictStateStore.load()?.let { throw ConflictNeedsResolutionException(it.pending) }
-        if (attachmentStateStore.loadState().rebuildRequired && !allowCheckpointRecovery) {
+        conflictStateStore.applicationRejection()?.let { rejected ->
+            if(openingMutationAuthority()!=null) throw rejected
+            // An ordinary caller's next invocation is its existing retry action.
+            // Release policy-owned captures under the original guarded identity;
+            // the predecessor's protocol disposition and ack are already durable.
+            db.transaction(TransactionMode.IMMEDIATE) {
+                check(conflictStateStore.applicationRejection()!=null)
+                outboxStateStore.requeueRejectedIntent(config)
+                outboxStateStore.clearBundleAndRows()
+                conflictStateStore.clear()
+            }
+        }
+        if(attachmentStateStore.loadState().initializationReconnectRequired) throw ConnectRequiredException("pushPending(): initialization lease requires reconnect")
+        if (attachmentStateStore.loadState().rebuildRequired && !allowCheckpointRecovery && !frozenMayResume(state)) {
             throw RebuildRequiredException()
         }
         beforeAttempt()
@@ -109,6 +128,14 @@ internal class OversqlitePushWorkflow(
         }
         val result = try {
             commitPushOutboundSnapshot(state, snapshot,token)
+        } catch (_: CancelledUploadOutcomeException) {
+            db.transaction(TransactionMode.IMMEDIATE) {
+                val journal=checkNotNull(loadUploadJournal(db));uploadJournal.guard(state,journal)
+                syncStateStore.requeueSnapshotRows(snapshot)
+                outboxStateStore.clearBundleAndRows(terminalDisposition=true)
+            }
+            acknowledgePending(state)
+            return PushWorkflowResult(PushOutcome.NO_CHANGE,emptySet())
         } catch (e: PushConflictException) {
             val updatedTables = resolvePushConflict(state, snapshot, e, checkNotNull(token))
             db.reportExternalTableChanges(updatedTables)
@@ -162,6 +189,7 @@ internal class OversqlitePushWorkflow(
                 decisionContinuation=decisionContinuation,
             )
         } } finally { decisionContinuation.clear() }
+        acknowledgePending(state)
         db.reportExternalTableChanges(updatedTables)
         log { "oversqlite pushPending finished updatedTables=$updatedTables" }
         return PushWorkflowResult(
@@ -183,13 +211,16 @@ internal class OversqlitePushWorkflow(
 
     suspend fun completePushPlanCleanup() = stageStore.clearPushPlanForLifecycle(onlyInvalid=true)
 
-    suspend fun retryConflict(selected: PendingConflict) {
+    suspend fun retryConflict(state: RuntimeState,selected: PendingConflict) {
+        val captured=loadPersistedOutboxSnapshot(state,outboxStateStore.loadBundleState())
         db.transaction(TransactionMode.IMMEDIATE) {
             val openingRecord = openingMutationAuthority()?.beforeMutation(
                 OversqliteOpeningMutationKind.RETRY_CONFLICT,
             )
             conflictStateStore.requireCurrent(selected)
             requireMatchingPendingOutbox(selected)
+            syncStateStore.requeueSnapshotRows(captured)
+            outboxStateStore.clearBundleAndRows()
             conflictStateStore.clear()
             if (openingRecord != null) {
                 openingMutationAuthority()?.completeConflictDecision(openingRecord)
@@ -246,7 +277,7 @@ internal class OversqlitePushWorkflow(
 
     private suspend fun requireMatchingPendingOutbox(selected: PendingConflict) {
         val outbox = outboxStateStore.loadBundleState()
-        if (outbox.state == outboxStateNone || outbox.sourceId != selected.sourceId ||
+        if (outbox.state != outboxStateRejected || outbox.sourceId != selected.sourceId ||
             outbox.sourceBundleId != selected.sourceBundleId ||
             outbox.canonicalRequestHash != selected.canonicalRequestHash
         ) throw StaleConflictResolutionException()
@@ -290,41 +321,65 @@ internal class OversqlitePushWorkflow(
     }
 
     private suspend fun commitPushOutboundSnapshot(
-        state: RuntimeState,
-        snapshot: PushOutboundSnapshot,
-        reservationToken: String?,
+        state: RuntimeState,snapshot: PushOutboundSnapshot,reservationToken: String?,
     ): PushCommitResult {
         require(snapshot.canonicalRows.isNotEmpty()) { "outbound push snapshot is empty" }
+        val journal=checkNotNull(loadUploadJournal(db)) { "missing frozen upload journal" }
+        uploadJournal.guard(state,journal)
+        val binding=journal.binding.operation
+        val generation=checkNotNull(state.validated.generation)
+        val outbox=outboxStateStore.loadBundleState()
+        check(journal.phase=="frozen" && outbox.state==outboxStatePrepared && outbox.sourceId==binding.sourceId &&
+            outbox.sourceBundleId==binding.sourceBundleId && snapshot.sourceBundleId==binding.sourceBundleId &&
+            outbox.canonicalRequestHash==binding.canonicalRequestHash && outbox.rowCount==snapshot.rows.size.toLong()) { "frozen upload ownership changed" }
+        check(generation.id==binding.generationId && generation.fingerprint==binding.generationFingerprint)
         val workspace=OversqliteWorkspace(db,config)
-        val base=reservationToken?.let { workspace.reserved(it) } ?: WorkspaceCharge()
-        val response = remoteApi.push(
-            sourceId = state.sourceId,
-            sourceBundleId = snapshot.sourceBundleId,
-            canonicalRequestHash = snapshot.canonicalRequestHash,
-            initializationId = state.pendingInitializationId.ifEmpty { null },
-            rows = buildPushRequestRows(snapshot.canonicalRows),
-            maxRequestDecodedBytes = state.admittedContract.limits.maxPushDecodedBytes,
-            maxResponseDecodedBytes = state.admittedContract.limits.maxPushDecodedBytes,
-            onBufferGrowth = { bytes,entries ->
-                stageStore.completeWorkPhase("HTTP buffer admission") {
-                if(reservationToken!=null) workspace.resize(state,reservationToken,workspace.add(applyUnit("push-buffers",0,state.sourceId),base,
-                    WorkspaceCharge(entries,workspace.scale(applyUnit("push-buffers",0,state.sourceId),bytes,64))))
-                stageStore.chargeBufferWork(applyUnit("push-buffers",0,state.sourceId),16)
-                }
-            },
-        )
-        require(canonicalCommittedBundleHash(response.rows) == response.bundleHash) {
-            "push response bundle_hash does not match authoritative rows"
+        val unit=applyUnit("push-buffers",0,state.sourceId)
+        val base=workspace.add(unit,reservationToken?.let { workspace.reserved(it) } ?: WorkspaceCharge(),WorkspaceCharge(1,2*journal.requestBytes))
+        if(reservationToken!=null) workspace.resize(state,reservationToken,base)
+        val frozenBody=uploadJournal.requestBody(state,journal)
+        val admit: suspend(Long,Long)->Unit = {bytes,entries ->
+            stageStore.completeWorkPhase("HTTP buffer admission") {
+                if(reservationToken!=null) workspace.resize(state,reservationToken,workspace.add(unit,base,WorkspaceCharge(entries,workspace.scale(unit,bytes,64))))
+                stageStore.chargeBufferWork(unit,16)
+            }
         }
-        val decoded = decodeCommittedRows(state, response.rows)
-        val committed = CommittedPushBundle(
-            bundleSeq = response.bundleSeq,
-            sourceBundleId = snapshot.sourceBundleId,
-            rowCount = decoded.size.toLong(),
-            bundleHash = response.bundleHash,
-        )
-        return PushCommitResult(committed, decoded)
+        val reply=if(journal.outcomeBytes>0) {
+            admit(2*journal.outcomeBytes+65536,32)
+            remoteApi.decodeUploadOutcome(uploadJournal.outcomeBody(),binding,generation).also {
+                check(it.outcome.outcomeHash==journal.outcomeHash) { "retained outcome hash changed" }
+            }
+        } else remoteApi.dispatchFrozenUpload(binding,generation,frozenBody,snapshot.fresh,
+            state.admittedContract.limits.maxPushDecodedBytes,state.admittedContract.limits.maxPushOutcomeDecodedBytes,admit)
+        val conflict=reply.outcome.rejection?.conflict?.let(::localOutcomeConflict)
+        if(conflict!=null) {
+            validatePushConflictDetails(conflict)
+            requireMatchingConflictRow(snapshot,conflict)
+            validateAuthoritativeConflictRow(state,conflict)
+        }
+        val decoded=decodeCommittedRows(state,reply.rows)
+        if(reply.outcome.committed!=null) replayExecutor.requireCommittedEffectCoverage(snapshot.rows,decoded)
+        if(journal.outcomeBytes==0L) uploadJournal.persistOutcome(state,journal,reply)
+        when(reply.outcome.status) {
+            "cancelled" -> throw CancelledUploadOutcomeException()
+            "rejected" -> {
+                if(conflict!=null) throw PushConflictException("",PushConflictResponse("push_conflict","",conflict),io.ktor.http.HttpStatusCode.OK)
+                val code=checkNotNull(reply.outcome.rejection).code
+                db.transaction(TransactionMode.IMMEDIATE) {
+                    uploadJournal.guard(state,checkNotNull(loadUploadJournal(db)))
+                    conflictStateStore.preserveApplicationRejection(state,snapshot,code)
+                    outboxStateStore.retainRejected()
+                }
+                acknowledgePending(state)
+                throw terminalRejectionException(code,generation.id.toLong())
+            }
+        }
+        val effect=checkNotNull(reply.outcome.committed)
+        return PushCommitResult(CommittedPushBundle(effect.bundleSeq,snapshot.sourceBundleId,effect.rowCount,effect.bundleHash),decoded)
     }
+
+    private fun localOutcomeConflict(wire: PushConflictDetails): PushConflictDetails = wire.copy(
+        op=mapOf("i" to "INSERT","u" to "UPDATE","d" to "DELETE").getValue(wire.op))
 
     private suspend fun buildPushRequestRows(rows: List<OversqliteOutboxRow>): List<PushRequestRow> {
         return rows.map { dirty ->
@@ -376,7 +431,7 @@ internal class OversqlitePushWorkflow(
         reservationToken: String? = null,
     ): PushOutboundSnapshot {
         requireMatchingOutboxSourceId(outboxState.sourceId, state.sourceId)
-        require(outboxState.state == outboxStatePrepared) { "outbox state must be prepared" }
+        require(outboxState.state in setOf(outboxStatePrepared,outboxStateRejected)) { "invalid outbox ownership" }
         if(reservationToken!=null) measurePersistedOutboxCopies(state,reservationToken)
         val outboxRows = outboxStateStore.loadRows()
         for(row in outboxRows) localStore.validateHistoricalBase(row.tableName,row.baseRowVersion,row.base)
@@ -449,9 +504,12 @@ internal class OversqlitePushWorkflow(
         val selectedRows = prepared.rows.take(canonicalRows.size)
         val canonicalRequestHash = canonicalRows.takeIf { it.isNotEmpty() }?.let { computeCanonicalRequestHash(it, checkNotNull(state.validated.generation)) } ?: ""
         val allMovedRows = selectedRows.map { it.toRowRef() }
+        val snapshot=PushOutboundSnapshot(sourceBundleId=prepared.sourceBundleId,rows=selectedRows,canonicalRows=canonicalRows,canonicalRequestHash=canonicalRequestHash,fresh=true)
         db.withStatementCache { statementCache ->
             outboxStateStore.clearBundleAndRows(statementCache)
             if (canonicalRows.isNotEmpty()) {
+                val body=remoteApi.encodePushBody(checkNotNull(state.validated.generation),snapshot.sourceBundleId,snapshot.canonicalRequestHash,state.pendingInitializationId.takeIf { it.isNotEmpty() },buildPushRequestRows(canonicalRows))
+                uploadJournal.freeze(state,snapshot,body)
                 outboxStateStore.persistBundleState(
                     state = OversqliteOutboxBundleState(
                         state = outboxStatePrepared,
@@ -470,12 +528,7 @@ internal class OversqlitePushWorkflow(
             }
         }
         stageStore.invalidateFrozenPushPlan()
-        return PushOutboundSnapshot(
-            sourceBundleId = prepared.sourceBundleId,
-            rows = selectedRows,
-            canonicalRows = canonicalRows,
-            canonicalRequestHash = canonicalRequestHash,
-        )
+        return snapshot
     }
 
     private suspend fun buildCanonicalOutboxRows(
@@ -590,11 +643,13 @@ internal class OversqlitePushWorkflow(
                 OversqliteOpeningMutationKind.RECORD_CONFLICT,
             )
             val stored = conflictStateStore.preserve(state, snapshot, conflict, context.localPayload)
+            outboxStateStore.retainRejected()
             if (openingRecord != null) {
                 openingMutationAuthority()?.recordConflict(openingRecord, stored.pending)
             }
             stored
         }
+        acknowledgePending(state)
         val resolution = resolver.resolve(context)
         if (resolution == MergeResult.DeferConflict) {
             throw ConflictNeedsResolutionException(pending.pending)

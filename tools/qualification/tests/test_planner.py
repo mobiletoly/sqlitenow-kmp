@@ -299,6 +299,25 @@ class MappingTests(FixtureCase):
 
 
 class IdentityTests(FixtureCase):
+    def test_unrequested_ignored_trees_are_not_enumerated(self) -> None:
+        with mock.patch.object(planner, '_ignored_files', side_effect=AssertionError('unrequested ignored scan')):
+            result=self.plan(['sqlite-now:src/a.py'])
+        self.assertTrue(result['lanes'])
+
+    def test_ignored_cache_matching_static_glob_needs_explicit_selection(self) -> None:
+        root=self.parent/'sqlitenow-kmp'
+        (root/'.gitignore').write_text('src/cache.bin\n')
+        run_git(root,'add','.gitignore');run_git(root,'commit','-qm','ignore cache fixture')
+        first=self.plan(['sqlite-now:src/a.py'])
+        (root/'src/cache.bin').write_bytes(b'generated cache')
+        second=self.plan(['sqlite-now:src/a.py'])
+        self.assertEqual(first['lanes'][0]['relevant_input_sha256'],second['lanes'][0]['relevant_input_sha256'])
+        self.manifest['lanes'][0]['ignored_static_inputs']=['src/cache.bin']
+        third=self.plan(['sqlite-now:src/a.py'])
+        (root/'src/cache.bin').write_bytes(b'changed generated cache')
+        fourth=self.plan(['sqlite-now:src/a.py'])
+        self.assertNotEqual(third['lanes'][0]['relevant_input_sha256'],fourth['lanes'][0]['relevant_input_sha256'])
+
     def add_governing_rule(self, path: str) -> None:
         self.manifest["path_rules"].append({
             "id": f"governing-{path.replace('/', '-')}",
@@ -1273,6 +1292,147 @@ class PerformanceTests(FixtureCase):
             self.plan(["sqlite-now:src/a.py"])
             samples.append((time.perf_counter_ns() - started) / 1_000_000)
         self.assertLess(max(samples), 2000)
+
+
+class FullProfileTests(unittest.TestCase):
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.root = Path(self.directory.name)
+        self.go = self.root / 'go'
+        self.kotlin = self.root / 'kotlin'
+        self.go.mkdir(); self.kotlin.mkdir()
+        self.packet = self.go / 'review'
+        self.packet.mkdir()
+        self.authority = self.go / 'AGENTS.md'
+        self.authority.write_text('frozen authority\n')
+        entry = dict(id='native', argv=['/go/scripts/run-with-timeout.pl', '1', '--', 'python3', '-c', 'pass'],
+                     cwd=str(self.kotlin), environment={}, native_seconds=1, cleanup_seconds=1,
+                     wall_seconds=2, execution_authorized=False)
+        self.schedule = dict(entries={'native': entry}, logical_roots={'owning': dict(members=['native'])},
+                             command_aliases={'selected': ['native']}, exceptions=[],
+                             native_contracts={'load-sequence': dict(members=['load-1','load-5','load-10','load-25'])},
+                             load_amendment=dict(new_obligation=dict(users=25, concurrency=25)))
+        self.profile = dict(schema_version=2, profile_id='oversqlite-full', status='adopted-authority-execution-gated',
+                            execution_gate=dict(enabled=False), schedule=self.schedule,
+                            roots=dict(go=str(self.go), kotlin=str(self.kotlin)),
+                            authority_inputs={},
+                            reviewed_inputs=dict(packet='review', files={}), approval={})
+        for name in planner.FULL_PROFILE_AUTHORITIES:
+            repo, relative = name.split('/', 1)
+            file = (self.go if repo == 'go' else self.kotlin) / relative
+            file.parent.mkdir(parents=True, exist_ok=True)
+            file.write_text('frozen authority\n')
+            self.profile['authority_inputs'][name] = planner.sha256_file(file)
+        for users, seconds in ((1,240),(5,240),(10,240),(25,300)):
+            name = 'load-'+str(users)
+            phase = copy.deepcopy(entry)
+            phase.update(id='phase-'+name, argv=['/go/scripts/run-with-timeout.pl',str(seconds),'--','native'], native_seconds=seconds,wall_seconds=seconds,cleanup_seconds=0,internal_only=True,parent_contract=name,users=users,concurrency=users)
+            self.schedule['entries'][phase['id']] = phase
+            self.schedule['native_contracts'][name] = dict(native_stages=[dict(environment={'OVERSQLITE_LOAD_USERS':str(users),'OVERSQLITE_LOAD_CONCURRENCY':str(users)})])
+        self.schedule['command_aliases']['load-sequence'] = ['phase-load-'+str(x) for x in (1,5,10,25)]
+        self.path = self.kotlin / 'full.json'
+        self.write()
+
+    def write(self):
+        proposal = self.packet / 'short-profile.json'
+        proposal.write_text(json.dumps(self.schedule))
+        for name in ('coverage.csv','proposal.md','independent-review.md'):
+            (self.packet/name).write_text('frozen review artifact\n')
+        review = self.packet / 'review-inputs.json'
+        review.write_text(json.dumps(dict(inputs={str(self.packet/name):planner.sha256_file(self.packet/name) for name in ('short-profile.json','coverage.csv','proposal.md')})))
+        outcome = self.packet / 'review-outcome.json'
+        outcome.write_text(json.dumps(dict(status='ready for owner approval',blocking_findings=[],frozen_review_inputs_sha256=planner.sha256_file(review))))
+        self.profile['reviewed_inputs']['files'] = {name:planner.sha256_file(self.packet/name)for name in planner.FULL_PROFILE_REVIEW_FILES}
+        self.profile['approval'].update(approved_schedule_sha256=planner.sha256_file(proposal), review_inputs_sha256=planner.sha256_file(review),coverage_sha256=planner.sha256_file(self.packet/'coverage.csv'),review_outcome_sha256=planner.sha256_file(outcome))
+        self.path.write_text(json.dumps(self.profile))
+
+    def load(self):
+        return planner.load_full_profile(self.path, self.kotlin, self.go)
+
+    def test_exact_approved_profile_load_is_read_only(self):
+        before = set(self.root.rglob('*'))
+        data, digest = self.load()
+        self.assertEqual(data, self.profile)
+        self.assertEqual(digest, planner.sha256_file(self.path))
+        self.assertEqual(before, set(self.root.rglob('*')))
+        self.assertEqual(planner.full_profile_selection(data, ['owning','selected']), ['native'])
+
+    def test_authority_and_review_missing_or_drift_fail_closed(self):
+        for file in (self.authority, self.packet/'short-profile.json', self.packet/'review-inputs.json'):
+            original = file.read_bytes()
+            for contents in (b'changed', None):
+                if contents is None: file.unlink()
+                else: file.write_bytes(contents)
+                with self.assertRaises(planner.QualificationError): self.load()
+                file.write_bytes(original)
+
+    def test_modified_schedule_cannot_borrow_unchanged_owner_approval(self):
+        self.profile['schedule']['entries']['native']['argv'][-1] = 'raise SystemExit(99)'
+        self.path.write_text(json.dumps(self.profile))
+        with self.assertRaises(planner.QualificationError): self.load()
+
+    def test_invalid_dispatch_budgets_and_members_fail_even_in_a_new_seal(self):
+        for change in [dict(wall_seconds=301), dict(native_seconds=True), dict(cleanup_seconds=-1), dict(native_seconds=2), dict(execution_authorized=True), dict(orchestration_only=True),dict(cwd=None),dict(environment=[]),dict(internal_only='true')]:
+            with self.subTest(change=change):
+                old = copy.deepcopy(self.schedule['entries']['native'])
+                self.schedule['entries']['native'].update(change); self.write()
+                with self.assertRaises(planner.QualificationError): self.load()
+                self.schedule['entries']['native'] = old
+        self.schedule['logical_roots']['owning']['members'].append('absent'); self.write()
+        with self.assertRaises(planner.QualificationError): self.load()
+
+    def test_reduced_load_boundary_is_enforced(self):
+        for field in ('users','concurrency'):
+            self.schedule['load_amendment']['new_obligation'][field] = 50; self.write()
+            with self.assertRaises(planner.QualificationError): self.load()
+            self.schedule['load_amendment']['new_obligation'][field] = 25
+        self.schedule['native_contracts']['load-100'] = {}; self.write()
+        with self.assertRaises(planner.QualificationError): self.load()
+
+    def test_no_automatic_activation_or_unknown_selection(self):
+        self.profile['execution_gate']['enabled'] = True; self.write()
+        with self.assertRaises(planner.QualificationError): self.load()
+        for names in ([], ['missing'], ['owning','owning']):
+            with self.assertRaises(planner.QualificationError): planner.full_profile_selection(self.profile, names)
+
+    def test_omitted_reference_pins_and_inconsistent_approval_fail_closed(self):
+        for inventory,key in [('authority_inputs','go/AGENTS.md'),('reviewed_inputs','coverage.csv')]:
+            mapping = self.profile[inventory] if inventory=='authority_inputs' else self.profile[inventory]['files']
+            old = mapping.pop(key)
+            self.path.write_text(json.dumps(self.profile))
+            with self.assertRaises(planner.QualificationError): self.load()
+            mapping[key] = old
+        self.profile['approval']['coverage_sha256'] = '0'*64
+        self.path.write_text(json.dumps(self.profile))
+        with self.assertRaises(planner.QualificationError): self.load()
+
+    def test_load_privacy_and_actual_dimensions_are_checked_independently(self):
+        phase = self.schedule['entries']['phase-load-25']
+        del phase['internal_only']; self.write()
+        with self.assertRaises(planner.QualificationError): self.load()
+        with self.assertRaises(planner.QualificationError): planner.full_profile_selection(self.profile,['phase-load-25'])
+        phase['internal_only'] = True
+        self.schedule['native_contracts']['load-25']['native_stages'][0]['environment']['OVERSQLITE_LOAD_USERS'] = '100'
+        self.write()
+        with self.assertRaises(planner.QualificationError): self.load()
+
+    def test_named_load_builds_are_selectable_but_phases_stay_private(self):
+        build = copy.deepcopy(self.schedule['entries']['native'])
+        build.update(id='load-prepare-2',kind='build')
+        self.schedule['entries']['load-prepare-2'] = build
+        self.schedule['command_aliases']['load-25'] = ['phase-load-25']
+        self.assertEqual(planner.full_profile_selection(self.profile,['load-prepare-2']),['load-prepare-2'])
+        for selector in ('load-25','phase-load-25'):
+            with self.subTest(selector=selector),self.assertRaises(planner.QualificationError):
+                planner.full_profile_selection(self.profile,[selector])
+
+    def test_bindings_are_literal_closed_and_never_recursive(self):
+        self.assertEqual(planner.resolve_profile_value('-Dkey=lease.fixture.url', {'lease.fixture.url': 'http://127.0.0.1:3/a?value=$(literal)'}), '-Dkey=http://127.0.0.1:3/a?value=$(literal)')
+        for bindings in ({}, {'lease.fixture.url':''}, {'lease.fixture.url':'binding.other'}, {'lease.fixture.url':'bad\x00value'}):
+            with self.assertRaises(planner.QualificationError): planner.resolve_profile_value('lease.fixture.url', bindings)
+        entry = copy.deepcopy(self.schedule['entries']['native']); entry['internal_only'] = True
+        with self.assertRaises(planner.QualificationError): planner.resolve_profile_entry(entry, {})
 
 
 if __name__ == "__main__":

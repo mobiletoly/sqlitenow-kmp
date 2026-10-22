@@ -30,7 +30,8 @@ class GoSwaggerConformanceTest {
         assertFalse("features" in discoveryProperties)
         assertFalse("bundle_limits" in discoveryProperties)
         assertFalse("schema_version" in discoveryProperties)
-        assertEquals(listOf("v1"), stringList(property(discovery, "protocol_version")["enum"], "protocol_version.enum"))
+        assertEquals("string", property(discovery, "protocol_version")["type"])
+        assertEquals("v1", property(discovery, "protocol_version")["const"])
         assertRef(property(discovery, "schema_generation"), "SchemaGeneration")
 
         val generation = schema("SchemaGeneration")
@@ -57,6 +58,11 @@ class GoSwaggerConformanceTest {
         requiredLimits.forEach { field ->
             assertEquals(1L, integer(property(limits, field)["minimum"], "WireLimits.$field.minimum"))
         }
+        assertRequired(limits, "max_push_outcome_decoded_bytes")
+        val outcomeLimit = property(limits, "max_push_outcome_decoded_bytes")
+        assertEquals("int64", outcomeLimit["format"])
+        assertEquals(8194L, integer(outcomeLimit["minimum"], "outcome limit minimum"))
+        assertEquals(67117056L, integer(outcomeLimit["maximum"], "outcome limit maximum"))
     }
 
     @Test
@@ -69,7 +75,32 @@ class GoSwaggerConformanceTest {
         }
         assertRef(property(request, "rows"), "NonEmptyCompactRowGroups")
 
-        assertRequired(schema("PushResponse"), "bundle_seq", "bundle_hash", "rows")
+        val response = schema("PushResponse")
+        assertEquals(false, response["additionalProperties"])
+        assertRequired(response, "source_id", "schema_generation_id", "schema_generation_fingerprint",
+            "source_bundle_id", "canonical_request_hash", "initialization_id", "status", "outcome_hash")
+        assertEquals(listOf("committed", "rejected", "cancelled"),
+            stringList(property(response, "status")["enum"], "PushResponse.status.enum"))
+        assertRef(property(response, "initialization_id"), "NullableInitializationToken")
+        assertRef(property(response, "committed"), "CommittedPushEffect")
+        assertRef(property(response, "rejection"), "PushOutcomeRejection")
+        assertRequired(schema("CommittedPushEffect"), "bundle_seq", "bundle_hash", "row_count", "rows")
+        assertRef(property(schema("CommittedPushEffect"), "rows"), "NonEmptyCompactRowGroups")
+        val variants = list(response["oneOf"], "PushResponse.oneOf").map { stringMap(it, "terminal variant") }
+        assertEquals(3, variants.size)
+        val byStatus = variants.associateBy { property(it, "status")["const"] }
+        assertEquals(setOf("committed", "rejected", "cancelled"), byStatus.keys)
+        assertRequired(byStatus.getValue("committed"), "committed")
+        assertRequired(byStatus.getValue("rejected"), "rejection")
+        assertEquals(listOf("rejection"), stringList(
+            stringMap(byStatus.getValue("committed")["not"], "committed exclusion")["required"], "excluded rejection"))
+        assertEquals(listOf("committed"), stringList(
+            stringMap(byStatus.getValue("rejected")["not"], "rejected exclusion")["required"], "excluded committed"))
+        val cancelledExclusions = list(stringMap(byStatus.getValue("cancelled")["not"], "cancelled exclusion")["anyOf"],
+            "cancelled excluded effects").map {
+            stringList(stringMap(it, "excluded effect")["required"], "excluded effect required")
+        }
+        assertEquals(setOf(listOf("committed"), listOf("rejection")), cancelledExclusions.toSet())
 
         val group = schema("CompactRowGroup")
         assertEquals(3L, integer(group["minItems"], "CompactRowGroup.minItems"))
@@ -107,20 +138,26 @@ class GoSwaggerConformanceTest {
             assertFalse(path in paths, "$path must be absent")
         }
 
-        val errorCodes = list(property(schema("ErrorResponse"), "error")["oneOf"], "ErrorResponse.error.oneOf")
+        val errorCodes = list(property(schema("ErrorResponse"), "error")["anyOf"], "ErrorResponse.error.anyOf")
             .map { stringMap(it, "ErrorResponse.error variant") }
             .first { "enum" in it }
             .let { stringList(it["enum"], "ErrorResponse.error.enum") }
         listOf(
             "invalid_request",
             "push_invalid",
-            "push_replay_mismatch",
             "bundle_projection_too_large",
             "committed_bundle_unrepresentable",
             "snapshot_chunk_too_small",
+            "protocol_version_mismatch",
+            "push_outcome_mismatch",
+            "push_outcome_pending",
+            "push_outcome_acknowledged",
+            "push_outcome_too_large",
+            "recovery_floor_ahead",
         ).forEach { code ->
             assertTrue(code in errorCodes, "$code must be a documented typed error")
         }
+        assertFalse("push_replay_mismatch" in errorCodes, "history replay is no longer the outcome authority")
     }
 
     @Test
@@ -134,6 +171,68 @@ class GoSwaggerConformanceTest {
         val replacement = property(snapshotCreate, "source_replacement")
         assertEquals(false, replacement["additionalProperties"])
         assertRequired(replacement, "previous_source_id", "new_source_id", "reason")
+        assertRef(property(snapshotCreate, "recovery"), "SnapshotRecovery")
+        assertEquals(setOf("recovery", "source_replacement"), stringList(
+            stringMap(snapshotCreate["not"], "snapshot request exclusion")["required"], "excluded request combination").toSet())
+        val recovery = schema("SnapshotRecovery")
+        assertEquals(false, recovery["additionalProperties"])
+        assertEquals(setOf("minimum_bundle_seq"), properties(recovery).keys)
+        assertRequired(recovery, "minimum_bundle_seq")
+        assertEquals("int64", property(recovery, "minimum_bundle_seq")["format"])
+        assertEquals(0L, integer(property(recovery, "minimum_bundle_seq")["minimum"], "snapshot floor minimum"))
+        val snapshot = schema("SnapshotSessionResponse")
+        assertEquals(false, snapshot["additionalProperties"])
+        assertRequired(snapshot, "snapshot_id", "snapshot_bundle_seq", "row_count", "logical_byte_count", "expires_at", "snapshot_hash")
+        assertEquals("^[0-9a-f]{64}$", property(snapshot, "snapshot_hash")["pattern"])
+        assertRef(property(snapshot, "recovery"), "SnapshotRecovery")
+    }
+
+    @Test
+    fun outcomeEndpointsAndProtocolHeaderBindTheCurrentLifecycle() {
+        val protocol = parameter("ProtocolVersionHeader")
+        assertEquals("Oversync-Protocol-Version", protocol["name"])
+        assertEquals("header", protocol["in"])
+        assertEquals(true, protocol["required"])
+        assertEquals("v1", stringMap(protocol["schema"], "protocol header schema")["const"])
+        var checked = 0
+        paths.filterKeys { it.startsWith("/sync/") }.forEach { (path, item) ->
+            val pathItem = stringMap(item, path)
+            listOf("get", "post", "put", "patch", "delete", "head", "options", "trace").forEach { method ->
+                pathItem[method]?.let { value ->
+                    val operation = stringMap(value, "$method $path")
+                    val parameters = list(operation["parameters"], "$method $path parameters")
+                        .map { stringMap(it, "operation parameter")["\$ref"] }
+                    assertTrue("#/components/parameters/ProtocolVersionHeader" in parameters, "$method $path requires v1")
+                    checked++
+                }
+            }
+        }
+        assertTrue(checked > 0)
+        listOf("resolve" to "PushOutcomeResolveRequest", "ack" to "PushOutcomeAckRequest").forEach { (endpoint, requestName) ->
+            val operation = stringMap(stringMap(paths["/sync/push-outcomes/$endpoint"], endpoint)["post"], "$endpoint post")
+            assertEquals("#/components/requestBodies/$requestName", stringMap(operation["requestBody"], "request body")["\$ref"])
+            val parameters = list(operation["parameters"], "$endpoint parameters")
+                .map { stringMap(it, "binding header")["\$ref"] }
+            listOf("SourceIDHeader", "SchemaGenerationIDHeader", "SchemaGenerationFingerprintHeader").forEach {
+                assertTrue("#/components/parameters/$it" in parameters)
+            }
+            val request = schema(requestName)
+            assertEquals(false, request["additionalProperties"])
+            val lastField = if (endpoint == "resolve") "initialization_id" else "outcome_hash"
+            assertRequired(request, "source_bundle_id", "canonical_request_hash", lastField)
+            assertEquals(setOf("source_bundle_id", "canonical_request_hash", lastField), properties(request).keys)
+            val responses = stringMap(operation["responses"], "$endpoint responses")
+            if (endpoint == "resolve") {
+                assertRef(property(request, "initialization_id"), "NullableInitializationToken")
+                assertEquals("#/components/responses/PushOK", stringMap(responses["200"], "resolve success")["\$ref"])
+            } else {
+                assertFalse("content" in stringMap(responses["204"], "empty ack success"))
+            }
+        }
+        val nullableToken = list(schema("NullableInitializationToken")["oneOf"], "nullable initialization").map { stringMap(it, "token variant") }
+        assertEquals(2, nullableToken.size)
+        assertTrue(nullableToken.any { it["\$ref"] == "#/components/schemas/CanonicalInitializationToken" })
+        assertTrue(nullableToken.any { it["type"] == "null" })
     }
 
     private val components: Map<String, Any?>

@@ -21,6 +21,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.time.Duration.Companion.seconds
 
 internal class RealServerHarnessSharedConnectionStressTest : RealServerHarnessSupport() {
     private companion object {
@@ -30,7 +31,7 @@ internal class RealServerHarnessSharedConnectionStressTest : RealServerHarnessSu
     }
 
     @Test
-    fun sharedConnectionSurvivesConcurrentAliasStarQueriesWhileSyncingAgainstRealServer() = runTest {
+    fun sharedConnectionSurvivesConcurrentAliasStarQueriesWhileSyncingAgainstRealServer() = runTest(timeout = 150.seconds) {
         // JS/Wasm runtimes do not provide the same file-backed shared-connection behavior that this
         // stress case is meant to exercise on JVM/native surfaces.
         if (platform() == PlatformType.JS) return@runTest

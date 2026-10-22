@@ -1,0 +1,36 @@
+import groovy.json.JsonOutput
+
+// Invocation-only framework alignment with the existing480s backlog body.
+def properties = gradle.startParameter.projectProperties
+def selected = properties['qualification.webTask']
+def destination = properties['qualification.webOutput']
+def allowed = [':library-oversqlite:jsNodeTest', ':library-oversqlite:jsBrowserTest', ':library-oversqlite:wasmJsBrowserTest']
+gradle.projectsEvaluated {
+    if (!rootProject.file('tools/qualification/profiles/library-backlog.init.gradle').isFile()) return
+    if (!(selected in allowed)) throw new GradleException('Select one declared backlog web task')
+    def task = rootProject.project(':library-oversqlite').tasks.getByName(selected.tokenize(':').last())
+    task.doFirst {
+        if ((task.filter.commandLineIncludePatterns as Set) != (['dev.goquick.sqlitenow.oversqlite.SettlementTest.backlogBound'] as Set)) {
+            throw new GradleException('Backlog deadline applies only to the exact single backlog body')
+        }
+        def output = destination == null ? null : new File(destination)
+        if (output == null || !output.isAbsolute() || !output.isDirectory() || new File(output, 'web-command.json').exists()) {
+            throw new GradleException('Web deadline capture requires a new owned output')
+        }
+        if (selected == ':library-oversqlite:jsNodeTest') {
+            task.testFramework.timeout = '480s'
+            if (task.environment['MOCHA_OPTIONS']) throw new GradleException('Inherited Mocha options are not admitted')
+            task.environment('MOCHA_OPTIONS', '--require=' + new File(output, 'node-hook.cjs').absolutePath)
+            task.environment('OVERSQLITE_WEB_DEADLINE_AUDIT', new File(output, 'deadlines.jsonl').absolutePath)
+        } else {
+            def config = new File(output, 'karma')
+            if (!config.isDirectory()) throw new GradleException('Missing frozen merged Karma configuration')
+            task.testFramework.useConfigDirectory(config)
+        }
+        new File(output, 'web-command.json').text = JsonOutput.toJson([
+            task: task.path, policy: 'single-backlog', milliseconds: 480000,
+            selectors: task.filter.commandLineIncludePatterns.sort(), framework: task.testFramework.class.name,
+            nodeTimeout: selected.endsWith('jsNodeTest') ? task.testFramework.timeout : null,
+        ])
+    }
+}

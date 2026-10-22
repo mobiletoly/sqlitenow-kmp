@@ -260,9 +260,8 @@ class QueryEmitterCoverageTest {
             columnLookup = ctx.columnLookup,
             typeMapping = ctx.typeMapping,
             dataStructCodeGenerator = dataStructGenerator,
-            debug = true,
         )
-        val emitter = QueryBindEmitter(parameterBinding, scaffolder, debug = true)
+        val emitter = QueryBindEmitter(parameterBinding, scaffolder)
         val statements = dataStructGenerator.nsWithStatements.getValue("person")
             .filterIsInstance<dev.goquick.sqlitenow.gradle.model.AnnotatedSelectStatement>()
         val selectAll = statements.first { it.src.namedParameters.isEmpty() }
@@ -275,9 +274,9 @@ class QueryEmitterCoverageTest {
 
         assertFalse(noParams.contains("params:"))
         assertFalse(noParams.contains("__paramsLog"))
-        assertTrue(debugBind.contains("val __paramsLog = mutableListOf<String>()"))
-        assertTrue(debugBind.contains("sqliteNowLogger.d"))
-        assertTrue(debugBind.contains("sqliteNowPreview"))
+        assertFalse(debugBind.contains("__paramsLog"))
+        assertFalse(debugBind.contains("sqliteNowLogger"))
+        assertFalse(debugBind.contains("sqliteNowPreview"))
         assertTrue(collectionAdapterBind.contains("Json.encodeToString(params.birthDates.map { birthDateToSqlValue(it) })"))
         assertTrue(collectionAdapterBind.contains("statement.bindText(1, birthDates)"))
     }

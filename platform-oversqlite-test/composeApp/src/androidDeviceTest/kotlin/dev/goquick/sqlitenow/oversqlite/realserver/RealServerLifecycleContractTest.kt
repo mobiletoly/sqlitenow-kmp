@@ -6,7 +6,7 @@ import dev.goquick.sqlitenow.oversqlite.AttachResult
 import dev.goquick.sqlitenow.oversqlite.AuthorityStatus
 import dev.goquick.sqlitenow.oversqlite.DetachOutcome
 import io.ktor.client.HttpClient
-import kotlinx.coroutines.runBlocking
+import dev.goquick.sqlitenow.oversqlite.realserver.runEnabledRealServerTest as runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals

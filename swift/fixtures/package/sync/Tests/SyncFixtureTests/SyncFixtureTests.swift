@@ -7,6 +7,7 @@ final class SyncFixtureTests: XCTestCase {
     func testSyncConfigurationDefaultsAndCustomValues() {
         let defaults = SQLiteNowSyncConfig(generationId: 1, databaseId: "swift-sync-fixture", serviceId: "nethttp-server-example")
         XCTAssertEqual(defaults.generationId, 1)
+        XCTAssertEqual(defaults.maxSyncWorkspaceEntries, 131_072)
         XCTAssertEqual(defaults.transferTargets.maxPushRows, 200)
         XCTAssertEqual(defaults.transferTargets.maxPushDecodedBytes, 1 * 1_024 * 1_024)
         XCTAssertEqual(defaults.transferTargets.maxPullBundles, 1_000)
@@ -37,6 +38,48 @@ final class SyncFixtureTests: XCTestCase {
         XCTAssertEqual(custom.transferTargets.maxSnapshotChunkRows, 14)
         XCTAssertEqual(custom.transientRetryPolicy.maxAttempts, 17)
         XCTAssertEqual(custom.snapshotCapacityRetryPolicy.fallbackDelayMillis, 21)
+    }
+
+    func testBlockedDetachPreservesMissingSyncReportAndReason() {
+        let runtime = SQLiteNowSyncRuntimeSyncThenDetachResult(
+            lastSync: nil,
+            detach: SQLiteNowSyncRuntimeDetachOutcome(outcome: "BLOCKED_UNSYNCED_DATA"),
+            syncRounds: 1,
+            remainingPendingRowCount: 3,
+            blockedReason: "PUSH_ATTEMPT_LIMIT",
+            success: false
+        )
+        let result = SQLiteNowSyncThenDetachResult(runtime)
+        XCTAssertNil(result.lastSync)
+        XCTAssertEqual(result.blockedReason, .pushAttemptLimit)
+        XCTAssertEqual(result.remainingPendingRowCount, 3)
+        XCTAssertFalse(result.success)
+    }
+
+    func testPendingConflictPreservesExactBaselineOnRoundTrip() {
+        let runtime = SQLiteNowSyncRuntimePendingConflict(
+            revision: 29, sourceId: "original-source", sourceBundleId: 7,
+            canonicalRequestHash: String(repeating: "a", count: 64), generationId: 1,
+            generationFingerprint: String(repeating: "b", count: 64),
+            conflict: SQLiteNowSyncRuntimeConflict(
+                schema: "public", table: "docs", keyJson: #"{"doc_id":"doc-1"}"#,
+                localOp: "update", localPayloadJson: #"{"title":"Local"}"#,
+                baseRowVersion: 13, serverRowVersion: 14,
+                serverRowDeleted: false, serverRowJson: #"{"title":"Remote"}"#
+            ),
+            baselineRevision: 9_007_199_254_740_993
+        )
+        let mapped = SQLiteNowPendingConflict(runtime)
+        let restored = mapped.runtimePendingConflict
+        XCTAssertEqual(mapped.baselineRevision, 9_007_199_254_740_993)
+        XCTAssertEqual(restored.baselineRevision, runtime.baselineRevision)
+        XCTAssertEqual(restored.revision, runtime.revision)
+        XCTAssertEqual(restored.sourceId, runtime.sourceId)
+        XCTAssertEqual(restored.sourceBundleId, runtime.sourceBundleId)
+        XCTAssertEqual(restored.canonicalRequestHash, runtime.canonicalRequestHash)
+        XCTAssertEqual(restored.generationId, runtime.generationId)
+        XCTAssertEqual(restored.generationFingerprint, runtime.generationFingerprint)
+        XCTAssertEqual(restored.conflict.keyJson, runtime.conflict.keyJson)
     }
 
     func testSyncConfigurationRejectsInvalidBoundaryValues() async throws {
@@ -86,7 +129,8 @@ final class SyncFixtureTests: XCTestCase {
                 operation: "",
                 remediation: nil,
                 retryable: false,
-                generationId: nil
+                generationId: nil,
+                incompleteReason: nil, dirtyCount: 0, outboundCount: 0, confirmedBundleCount: 0, pushAttempts: 0, localPlanningJson: nil
             )
         )
         XCTAssertEqual(error, .protocol(message: "bad payload"))
@@ -103,7 +147,8 @@ final class SyncFixtureTests: XCTestCase {
                 operation: "generation discovery",
                 remediation: "upgrade_application",
                 retryable: false,
-                generationId: "1"
+                generationId: "1",
+                incompleteReason: nil, dirtyCount: 0, outboundCount: 0, confirmedBundleCount: 0, pushAttempts: 0, localPlanningJson: nil
             )
         )
         XCTAssertEqual(
@@ -131,7 +176,8 @@ final class SyncFixtureTests: XCTestCase {
                 operation: "generation discovery",
                 remediation: "upgrade_application",
                 retryable: false,
-                generationId: "01"
+                generationId: "01",
+                incompleteReason: nil, dirtyCount: 0, outboundCount: 0, confirmedBundleCount: 0, pushAttempts: 0, localPlanningJson: nil
             )
         )
         XCTAssertEqual(

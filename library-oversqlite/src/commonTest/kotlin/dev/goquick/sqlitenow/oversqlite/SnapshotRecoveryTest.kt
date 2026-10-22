@@ -24,7 +24,7 @@ internal class SnapshotRecoveryTest : SurvivorTestSupport() {
             val oldConflict=before.rows("_sync_conflict_state").single()
             val newConflict=after.rows("_sync_conflict_state").single()
             assertEquals(oldConflict - "baseline_revision",newConflict - "baseline_revision","only authoritative snapshot revision advances")
-            assertEquals(oldConflict.text("baseline_revision")!!.toLong()+8,newConflict.text("baseline_revision")!!.toLong(),"four A deletes plus four installs")
+            assertEquals(oldConflict.text("baseline_revision")!!.toLong()+4,newConflict.text("baseline_revision")!!.toLong(),"four authoritative delta row observations")
             assertEquals(0L,scalarLong(db,"SELECT count(*) FROM _sync_dirty_rows"))
             assertEquals(0L,scalarLong(db,"SELECT count(*) FROM _sync_outbox_rows"))
             for (id in listOf("P","Q","C","D")) {
@@ -43,20 +43,27 @@ internal class SnapshotRecoveryTest : SurvivorTestSupport() {
     @Test fun preparedOutbox() = runOwnedWebDatabaseTest {
         withSurvivorFixture { server,db,_,client ->
             db.execSQL("UPDATE nodes SET name='frozen L' WHERE id='P'")
-            server.beforePushCommit={throw CancellationException("freeze original before commit")}
+            server.beforePushResponse={throw CancellationException("freeze original before commit")}
             assertFailsWith<CancellationException> {client.pushPending().getOrThrow()}
             val rows=OversqliteOutboxStateStore(db).loadRows()
             val hash=scalarText(db,"SELECT canonical_request_hash FROM _sync_outbox_bundle")
             markSourceRecoveryRequired(db,SourceRecoveryReason.HISTORY_PRUNED)
-            client.rebuild().getOrThrow()
+            val before=baselineQualificationVector(db,listOf("nodes","_sync_upload_journal"))
+            val creates=server.snapshotSessionCreateRequestCount
+            assertIs<PendingPushReplayException>(client.rebuild().exceptionOrNull())
+            assertEquals(creates,server.snapshotSessionCreateRequestCount)
+            val after=baselineQualificationVector(db,listOf("nodes","_sync_upload_journal"))
+            assertEquals(before,after,"pending F preserves the complete business and protocol vector")
             val recovered=OversqliteOutboxStateStore(db).loadRows()
             assertEquals(rows.map { listOf(it.base,it.wirePayload,it.localPayload,it.keyJson,it.wireKeyJson,it.op,it.baseRowVersion,it.rowOrdinal) },
                 recovered.map { listOf(it.base,it.wirePayload,it.localPayload,it.keyJson,it.wireKeyJson,it.op,it.baseRowVersion,it.rowOrdinal) })
             assertEquals(hash,scalarText(db,"SELECT canonical_request_hash FROM _sync_outbox_bundle"))
-            assertEquals(1L,scalarLong(db,"SELECT source_bundle_id FROM _sync_outbox_bundle"))
+            assertEquals(2L,scalarLong(db,"SELECT source_bundle_id FROM _sync_outbox_bundle"))
             assertEquals("frozen L",scalarText(db,"SELECT name FROM nodes WHERE id='P'"))
             assertEquals("parent",scalarText(db,"SELECT json_extract(server_payload,'$.name.value') FROM _sync_row_state WHERE json_extract(key_json,'$.id')='P'"))
-            client.pushPending().getOrThrow()
+            client.pushPending().getOrThrow() // retained committed C settles and acknowledges
+            client.rebuild().getOrThrow() // clean replacement only
+            assertEquals("frozen L",scalarText(db,"SELECT name FROM nodes WHERE id='P'"))
             assertEquals(0L,scalarLong(db,"SELECT count(*) FROM _sync_outbox_rows"))
             assertEquals(0L,scalarLong(db,"SELECT count(*) FROM pragma_foreign_key_check"))
         }

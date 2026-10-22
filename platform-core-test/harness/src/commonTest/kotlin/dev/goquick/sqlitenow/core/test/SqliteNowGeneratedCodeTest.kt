@@ -5,8 +5,11 @@ import dev.goquick.sqlitenow.core.sqlite.use
 import dev.goquick.sqlitenow.core.test.db.LibraryTestDatabase
 import dev.goquick.sqlitenow.core.test.db.PersonQuery
 import dev.goquick.sqlitenow.core.test.db.PersonRow
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.take
 import kotlinx.coroutines.launch
@@ -182,6 +185,49 @@ class SqliteNowGeneratedCodeTest {
             val insertedRow = updatedRows.first()
             assertEquals("Flowy", insertedRow.myFirstName)
             assertEquals("Listener", insertedRow.myLastName)
+    }
+
+    @Test
+    fun testAsFlowObservesWriteDuringInitialPublication() = runDatabaseTest {
+        database.open()
+        val params = PersonQuery.SelectAll.Params(limit = 10, offset = 0)
+        val controlValues = Channel<List<PersonRow>>(Channel.UNLIMITED)
+        val testedValues = Channel<List<PersonRow>>(Channel.UNLIMITED)
+        val releaseInitial = CompletableDeferred<Unit>()
+        coroutineScope {
+            // Inherit the platform test dispatcher. The non-suspending control callback
+            // returns to observation before the test continuation can perform its write.
+            val control = launch(start = CoroutineStart.UNDISPATCHED) {
+                database.person.selectAll(params).asFlow().collect { controlValues.send(it) }
+            }
+            val tested = launch(start = CoroutineStart.UNDISPATCHED) {
+                database.person.selectAll(params).asFlow().collect { rows ->
+                    testedValues.send(rows)
+                    if (rows.isEmpty()) releaseInitial.await()
+                }
+            }
+            try {
+                assertTrue(withRealTimeout(5_000) { controlValues.receive() }.isEmpty())
+                assertTrue(withRealTimeout(5_000) { testedValues.receive() }.isEmpty())
+                val inserted = database.person.add.one(
+                    PersonQuery.Add.Params(
+                        email = "startup-observation@example.com",
+                        firstName = "Startup",
+                        lastName = "Observer",
+                        phone = null,
+                        birthDate = LocalDate(1995, 12, 25),
+                    ),
+                )
+                val acknowledged = withRealTimeout(5_000) { controlValues.receive() }
+                assertEquals(listOf(inserted.id), acknowledged.map { it.id })
+                releaseInitial.complete(Unit)
+                val updated = withRealTimeout(5_000) { testedValues.receive() }
+                assertEquals(listOf(inserted.id), updated.map { it.id })
+            } finally {
+                control.cancelAndJoin()
+                tested.cancelAndJoin()
+            }
+        }
     }
 
     @Test

@@ -254,19 +254,17 @@ internal class OversqliteSyncStateStore(
     ) {
         for (row in snapshot.rows) {
             if (row == skipRow) continue
-            // Rejected snapshots precede any dirty row captured during their upload.
-            val current = loadDirtyUploadState(row.schemaName, row.tableName, row.keyJson, statementCache)
-            requeueDirtyIntent(
-                schemaName = row.schemaName,
-                tableName = row.tableName,
-                keyJson = row.keyJson,
-                op = if(current.exists) current.op else row.op,
-                baseRowVersion = row.baseRowVersion,
-                payload = if(current.exists) current.payload else row.localPayload,
-                base = row.base,
-                statementCache = statementCache,
-            )
+            requeueOriginalIntent(row.schemaName,row.tableName,row.keyJson,row.op,row.baseRowVersion,row.localPayload,row.base,statementCache)
         }
+    }
+
+    suspend fun requeueOriginalIntent(schemaName: String,tableName: String,keyJson: String,op: String,
+        baseRowVersion: Long,payload: String?,base: HistoricalBase,statementCache: StatementCache?=null) {
+        // Any dirty row is a real application write after freeze, including a
+        // same-value write. Retain its intent while keeping the original base.
+        val current=loadDirtyUploadState(schemaName,tableName,keyJson,statementCache)
+        requeueDirtyIntent(schemaName,tableName,keyJson,if(current.exists)current.op else op,baseRowVersion,
+            if(current.exists)current.payload else payload,base,statementCache)
     }
 
     suspend fun rebaseDirtyIntent(
@@ -288,7 +286,9 @@ internal class OversqliteSyncStateStore(
         rowVersion: Long, payload: String?, origin: String, bundleSeq: Long?,
         statementCache: StatementCache? = null,
         projectionStatementCache: StatementCache? = null,
+        targetContext: Long? = null,
     ) {
+        require(origin != "snapshot" || targetContext != null) { "snapshot installation requires an explicit target context" }
         localStore().validateStoredServerProjection(schemaName, tableName, keyJson, projectionStatementCache)
         if(rowVersion>0) {
             val old = loadBySchemaTableKey("SELECT row_version,server_kind,server_payload FROM _sync_row_state WHERE schema_name=? AND table_name=? AND key_json=?",schemaName,tableName,keyJson,statementCache,{null}) { st ->
@@ -297,7 +297,7 @@ internal class OversqliteSyncStateStore(
             if(old!=null && old.first>=rowVersion) {
                 check(old.first==rowVersion) { "authoritative observation predates retained baseline" }
                 check(old.second==kind && old.third?.let(json::parseToJsonElement)==payload?.let(json::parseToJsonElement)) { "inconsistent authoritative payload at equal version" }
-                return
+                if (origin != "snapshot") return
             }
         }
         db.withPreparedStatement(authoritativeBaselineUpsertSql,statementCache) { st ->
@@ -306,7 +306,7 @@ internal class OversqliteSyncStateStore(
             if(payload==null) st.bindNull(6) else st.bindText(6,payload)
             st.bindText(7, origin)
             if (bundleSeq == null) st.bindNull(8) else st.bindLong(8, bundleSeq)
-            st.bindLong(9, rowVersion)
+            st.bindLong(9, targetContext ?: OversqliteProvenanceContextStore(db).activeId(statementCache))
             st.step()
         }
     }

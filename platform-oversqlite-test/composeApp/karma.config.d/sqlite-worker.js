@@ -1,10 +1,12 @@
 const browserTestTimeoutMillis = 180000;
 const configuredRealServerBaseUrl =
   (process.env.OVERSQLITE_REAL_SERVER_SMOKE_BASE_URL ?? "").trim();
-const realServerConnectSource = configuredRealServerBaseUrl
-  ? new URL(configuredRealServerBaseUrl).origin
-  : null;
-const browserConnectSources = ["'self'", "ws:", realServerConnectSource]
+const configuredCategoriesBaseUrl =
+  (process.env.OVERSQLITE_CATEGORIES_REAL_SERVER_SMOKE_BASE_URL ?? "").trim();
+const realServerConnectSources = [configuredRealServerBaseUrl, configuredCategoriesBaseUrl]
+  .filter(Boolean)
+  .map((url) => new URL(url).origin);
+const browserConnectSources = ["'self'", "ws:", ...realServerConnectSources]
   .filter(Boolean)
   .join(" ");
 

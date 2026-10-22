@@ -80,7 +80,8 @@ internal class WorkspaceAdmissionTest : SurvivorTestSupport() {
     @Test fun atomicResume() = runOwnedWebDatabaseTest {
         withSurvivorFixture { server,db,http,seed ->
             db.execSQL("UPDATE nodes SET name='changed parent' WHERE id='P'")
-            server.beforePushCommit={throw CancellationException("frozen original")}
+            server.normalizePushEffects={effects()}
+            server.beforePushResponse={throw CancellationException("lost committed original")}
             assertFailsWith<CancellationException> {seed.pushPending().getOrThrow()}
             seed.closeFromCoordinatedOwner()
             val limited=newClient(db,http,syncTables=nodeTables,workUnits=1000)

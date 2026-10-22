@@ -546,3 +546,12 @@ class ResolutionBaseUnavailableException(val unit: String="",val sample: List<Pu
     val reason = "resolution_base_unavailable"
     var progress = SyncProgress(); internal set
 }
+
+internal fun terminalRejectionException(code: String,generationId: Long?) = OversqliteRemoteContractException(
+    code=code,httpStatus=200,operation="push",remediation="preserve_local_intent",retryable=false,generationId=generationId,message="upload rejected: $code")
+
+internal class CancelledUploadOutcomeException : RuntimeException("upload durably cancelled")
+
+class UploadRecoveryIncompleteException : RuntimeException("upload recovery dispatch limit reached"), OversqliteCategorizedException {
+    override val category = OversqliteErrorCategory.STATE
+}

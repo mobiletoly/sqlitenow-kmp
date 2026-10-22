@@ -90,7 +90,7 @@ internal fun decodeGenerationDiscovery(raw: String, selectedId: Long): AdmittedO
     require(limitsObject.keys == setOf(
         "max_push_rows", "max_push_decoded_bytes", "max_pull_bundles", "max_pull_decoded_bytes",
         "max_snapshot_rows_per_chunk", "max_snapshot_decoded_bytes_per_chunk", "max_snapshot_rows",
-        "max_snapshot_logical_bytes", "max_row_decoded_bytes",
+        "max_snapshot_logical_bytes", "max_row_decoded_bytes", "max_push_outcome_decoded_bytes",
     )) { "invalid generation discovery limits" }
     val response = Json.decodeFromJsonElement<GenerationDiscovery>(root)
     // kotlinx.serialization accepts quoted Boolean values even in its strict mode.

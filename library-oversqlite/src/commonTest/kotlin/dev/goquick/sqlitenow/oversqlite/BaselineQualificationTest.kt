@@ -25,7 +25,7 @@ internal class BaselineQualificationTest : CrossTargetSyncTestSupport() {
             assertEquals(dirty,baselineQualificationVector(db))
             assertTrue(client.attach("different-account").isFailure)
             assertEquals(dirty,baselineQualificationVector(db))
-            server.beforePushCommit={throw CancellationException("definitely uncommitted")}
+            server.beforePushResponse={throw CancellationException("lost committed response")}
             try {client.pushPending()} catch (_:CancellationException) { }
             val frozen=baselineQualificationVector(db)
             assertTrue(frozen.rows("_sync_outbox_rows").isNotEmpty())
@@ -50,7 +50,7 @@ internal class BaselineQualificationTest : CrossTargetSyncTestSupport() {
                 val adopted=baselineQualificationVector(db)
                 val b=adopted.row("_sync_dirty_rows","U")
                 assertEquals("absent",b.text("base_kind"));assertEquals(null,b.payload("base_payload"))
-                assertEquals("user-2",b.payload("base_provenance")!!.jsonObject["account_scope"]!!.jsonObject["account_id"]!!.jsonPrimitive.content)
+                assertEquals("user-2",b.payload("base_provenance_context")!!.jsonObject["account_scope"]!!.jsonObject["account_id"]!!.jsonPrimitive.content)
                 assertBaselineCounters(adopted,source,1,0)
             } finally {other.closeFromCoordinatedOwner();otherHttp.close()}
             println("baseline-qualification: blocked cleanup preserves all owners; clean detach rotates source and prevents cross-account base reuse")
@@ -109,7 +109,7 @@ internal class BaselineQualificationTest : CrossTargetSyncTestSupport() {
                 assertEquals(acknowledged.row("_sync_row_state","R").payload("server_payload"),deletion.payload("base_payload"))
                 assertEquals(acknowledged.row("_sync_row_state","R").payload("server_provenance"),deletion.payload("base_provenance"))
                 assertEquals(chained.rows("users"),acknowledged.rows("users"));assertEquals(chained.rows("posts"),acknowledged.rows("posts"))
-                assertEquals(server.pushBodies[1],server.pushBodies[2])
+                assertEquals(2,server.pushBodies.size);assertEquals(1,server.resolveRequests.size)
                 replay.pushPending().getOrThrow()
                 val complete=baselineQualificationVector(replayDb)
                 assertEquals("deleted",complete.row("_sync_row_state","R").text("server_kind"))
@@ -134,12 +134,14 @@ internal class BaselineQualificationTest : CrossTargetSyncTestSupport() {
             assertEquals(original.rows("_sync_row_state"),newer.rows("_sync_row_state"))
             assertEquals(frozen.rows("_sync_outbox_rows"),newer.rows("_sync_outbox_rows"))
             assertEquals("child",Json.parseToJsonElement(server.remoteRowsForBaselineTest().getValue("posts/id=C")).jsonObject["title"]!!.jsonPrimitive.content)
-            requeueDefinitelyUncommittedBaselineOutbox(db)
+            client.pushPending().getOrThrow()
+            assertEquals(1,server.resolveRequests.size)
             val queued=baselineQualificationVector(db)
             val b=queued.row("_sync_dirty_rows","C")
             for(c in listOf("base_kind","base_row_version","base_payload","base_provenance")) assertEquals(frozen.rows("_sync_outbox_rows").single()[c],b[c],c)
             assertTextPayload(b.payload("payload"),mapOf("id" to "C","user_id" to "P","title" to "newer"))
-            for(t in listOf("users","posts","_sync_row_state","_sync_source_state","_sync_attachment_state")) assertEquals(newer.rows(t),queued.rows(t),t)
+            for(t in listOf("users","posts","_sync_row_state","_sync_attachment_state")) assertEquals(newer.rows(t),queued.rows(t),t)
+            assertEquals("3",queued.rows("_sync_source_state").single().text("next_source_bundle_id"))
             assertTrue(queued.rows("_sync_outbox_rows").isEmpty())
             val replayDb=if(path==null) db else {client.closeFromCoordinatedOwner();db.close();newFileBackedDb(path)}
             val replay=if(path==null) client else newClient(replayDb,http)
@@ -187,7 +189,7 @@ internal class BaselineQualificationTest : CrossTargetSyncTestSupport() {
                 val active=newClient(activeDb,http).also {restarted=it}
                 assertEquals(chained,baselineQualificationVector(activeDb));active.openAndConnect("user-1").getOrThrow()
                 assertEquals(chained,baselineQualificationVector(activeDb));active.pushPending().getOrThrow()
-                assertEquals(server.pushBodies[2],server.pushBodies[3])
+                assertEquals(3,server.pushBodies.size);assertEquals(1,server.resolveRequests.size)
                 val committed=baselineQualificationVector(activeDb)
                 assertEquals("deleted",committed.row("_sync_row_state","Q").text("server_kind"))
                 assertEquals(published.row("_sync_row_state","R").payload("server_payload"),committed.row("_sync_dirty_rows","R").payload("base_payload"))
@@ -225,7 +227,15 @@ internal class BaselineQualificationTest : CrossTargetSyncTestSupport() {
                 "/sync/generations/1" -> Json.encodeToString(GenerationDiscovery("v1",old,testWireLimits(),false))
                 "/sync/generations/2" -> Json.encodeToString(GenerationDiscovery("v1",target,testWireLimits(),false))
                 "/sync/connect" -> Json.encodeToString(ConnectResponse(resolution=if(targetMode) "remote_authoritative" else "initialize_empty"))
-                "/sync/snapshot-sessions" -> Json.encodeToString(SnapshotSession("baseline-generation-snapshot",9,1,OversqliteCompactCodec.snapshotLogicalByteCount(target,rows),"2099-01-01T00:00:00Z"))
+                "/sync/snapshot-sessions" -> {
+                    val create=Json.decodeFromString(SnapshotSessionCreateRequest.serializer(),request.bodyText())
+                    val source=create.sourceReplacement?.newSourceId ?: request.headers["Oversync-Source-ID"].orEmpty()
+                    val sealed=sealedSnapshotForTest(target,source,"baseline-generation-snapshot",9,
+                        rows.map {SnapshotRow(it.schema,it.table,it.key,it.rowVersion,it.payload!!)},create.recovery)
+                    val fields=Json.encodeToJsonElement(SnapshotSession.serializer(),sealed).jsonObject.toMutableMap()
+                    if(sealed.recovery==null) fields.remove("recovery")
+                    JsonObject(fields).toString()
+                }
                 "/sync/snapshot-sessions/baseline-generation-snapshot" -> if(request.method==HttpMethod.Delete) "" else buildJsonObject {
                     put("rows",OversqliteCompactCodec.encodeBundleRows(target,rows,firstOrdinal=1,snapshot=true));put("next_row_ordinal",1);put("has_more",false);put("logical_byte_count",OversqliteCompactCodec.snapshotLogicalByteCount(target,rows))
                 }.toString()
@@ -255,9 +265,10 @@ internal class BaselineQualificationTest : CrossTargetSyncTestSupport() {
             val vector=baselineQualificationVector(ready.database.connection(),listOf("notes"))
             val a=vector.row("_sync_row_state",id)
             assertTextPayload(a.payload("server_payload"),mapOf("id" to id,"title" to "target-authority"));assertEquals("9",a.text("row_version"));assertEquals("live",a.text("server_kind"))
-            val p=a.payload("server_provenance")!!.jsonObject
+            val p=a.payload("server_provenance_context")!!.jsonObject
+            val observation=a.payload("server_provenance")!!.jsonObject
             assertEquals("2",p["generation_id"]!!.jsonPrimitive.content);assertEquals(target.fingerprint,p["generation_fingerprint"]!!.jsonPrimitive.content)
-            assertEquals("snapshot",p["origin"]!!.jsonPrimitive.content);assertEquals("9",p["bundle_sequence"]!!.jsonPrimitive.content);assertEquals("9",p["authoritative_version"]!!.jsonPrimitive.content)
+            assertEquals("snapshot",observation["origin"]!!.jsonPrimitive.content);assertEquals("9",observation["bundle_sequence"]!!.jsonPrimitive.content);assertEquals("9",a.text("row_version"))
             assertEquals("user-1",p["account_scope"]!!.jsonObject["account_id"]!!.jsonPrimitive.content)
             assertEquals("target-authority",vector.rows("notes").single().text("title"))
             for(t in listOf("_sync_dirty_rows","_sync_outbox_rows","_sync_relationships")) assertTrue(vector.rows(t).isEmpty(),t)
@@ -316,7 +327,9 @@ internal class BaselineQualificationTest : CrossTargetSyncTestSupport() {
             server.addRemoteBundleForTest(listOf(BundleRow("main","posts",mapOf("id" to "C"),"UPDATE",4,Json.parseToJsonElement("""{"id":"C","user_id":"P","title":"snapshot-complete"}"""))))
             client.rebuild().getOrThrow()
             val snapshot=baselineQualificationVector(db)
-            assertEquals(setOf("{\"id\":\"P\"}","{\"id\":\"C\"}"),snapshot.rows("_sync_row_state").map {it.text("key_json")}.toSet())
+            assertEquals(setOf("{\"id\":\"P\"}","{\"id\":\"C\"}","{\"id\":\"Q\"}"),snapshot.rows("_sync_row_state").map {it.text("key_json")}.toSet())
+            assertEquals("absent",snapshot.row("_sync_row_state","Q").text("server_kind"))
+            assertEquals("0",snapshot.row("_sync_row_state","Q").text("row_version"))
             assertTextPayload(snapshot.row("_sync_row_state","C").payload("server_payload"),mapOf("id" to "C","user_id" to "P","title" to "snapshot-complete"))
             assertEquals("4",snapshot.row("_sync_row_state","C").text("row_version"));assertBaselineProvenance(snapshot.row("_sync_row_state","C"),"server_provenance",4)
             assertEquals("snapshot-complete",snapshot.rows("posts").single().text("title"));assertEquals(1,snapshot.rows("users").size)
@@ -450,7 +463,18 @@ internal class BaselineQualificationTest : CrossTargetSyncTestSupport() {
                     assertEquals(2L,request.sourceBundleId);assertBaselineCounters(frozen,source,2,1)
                     assertEquals(remoteBefore,server.remoteRowsForBaselineTest())
                     replay.pushPending().getOrThrow()
-                    assertEquals(server.pushBodies[1],server.pushBodies[2]);assertEquals(3,server.pushRequestCount)
+                    assertEquals(2,server.pushBodies.size);assertEquals(1,server.resolveRequests.size)
+                    val canceled=baselineQualificationVector(replayDb)
+                    assertEquals(chain.rows("users"),canceled.rows("users"));assertEquals(chain.rows("posts"),canceled.rows("posts"))
+                    assertEquals(frozen.rows("_sync_row_state"),canceled.rows("_sync_row_state"))
+                    assertTrue(canceled.rows("_sync_outbox_rows").isEmpty())
+                    assertBaselineCounters(canceled,source,3,1)
+                    replay.pushPending().getOrThrow()
+                    assertEquals(3,server.pushBodies.size);assertEquals(3,server.pushRequestCount)
+                    val successor=Json.decodeFromString(CompletePushRequest.serializer(),server.pushBodies[2])
+                    assertEquals(request.sourceBundleId+1,successor.sourceBundleId)
+                    assertEquals(request.canonicalRequestHash,successor.canonicalRequestHash)
+                    assertEquals(request.rows,successor.rows)
                     val settled=baselineQualificationVector(replayDb)
                     assertTrue(settled.rows("_sync_dirty_rows").isEmpty());assertTrue(settled.rows("_sync_outbox_rows").isEmpty())
                     assertEquals("none",settled.rows("_sync_outbox_bundle").single().text("state"))
@@ -459,6 +483,7 @@ internal class BaselineQualificationTest : CrossTargetSyncTestSupport() {
                     val conflictSettled=settled.rows("_sync_conflict_state").single()
                     for((column,value) in conflictFrozen) {
                         if(column=="baseline_revision") assertEquals((conflictFrozen.text(column)!!.toLong()+2).toString(),conflictSettled.text(column))
+                        else if(column=="dirty_revision") assertEquals((conflictFrozen.text(column)!!.toLong()+4).toString(),conflictSettled.text(column),"two requeued captures and two successor freezes")
                         else assertEquals(value,conflictSettled[column],column)
                     }
                     assertEquals(chain.row("_sync_row_state","R"),settled.row("_sync_row_state","R"))
@@ -466,7 +491,7 @@ internal class BaselineQualificationTest : CrossTargetSyncTestSupport() {
                     assertEquals("2",settled.row("_sync_row_state","Q").text("row_version"));assertBaselineProvenance(settled.row("_sync_row_state","Q"),"server_provenance",2)
                     assertTextPayload(settled.row("_sync_row_state","S").payload("server_payload"),mapOf("id" to "S","name" to "other"))
                     assertEquals("2",settled.row("_sync_row_state","S").text("row_version"));assertBaselineProvenance(settled.row("_sync_row_state","S"),"server_provenance",2)
-                    assertBaselineCounters(settled,source,3,2)
+                    assertBaselineCounters(settled,source,4,2)
                     val expectedRemote=remoteBefore.filterKeys {it!="users/id=Q"}+mapOf("users/id=S" to """{"id":"S","name":"other"}""")
                     assertEquals(expectedRemote.mapValues {Json.parseToJsonElement(it.value)},server.remoteRowsForBaselineTest().mapValues {Json.parseToJsonElement(it.value)})
                     assertTrue(server.remoteRowsForBaselineTest().keys.none {it=="users/id=R"})
@@ -551,7 +576,7 @@ internal class BaselineQualificationTest : CrossTargetSyncTestSupport() {
             assertEquals(frozen.rows("users"),settled.rows("users"));assertEquals(frozen.rows("posts"),settled.rows("posts"))
             assertBaselineEdges(settled,"server","C","Q");assertBaselineEdges(settled,"desired","C","P")
             assertBaselineCounters(settled,source,3,2);assertTrue(settled.rows("_sync_outbox_rows").isEmpty())
-            assertEquals(server.pushBodies[1],server.pushBodies[2])
+            assertEquals(2,server.pushBodies.size);assertEquals(1,server.resolveRequests.size)
             assertEquals("normalized",Json.parseToJsonElement(server.remoteRowsForBaselineTest().getValue("posts/id=C")).jsonObject["title"]!!.jsonPrimitive.content)
             val again=baselineQualificationVector(db)
             assertEquals(settled,again,"observation cannot advance settlement twice")
@@ -569,7 +594,8 @@ internal class BaselineQualificationTest : CrossTargetSyncTestSupport() {
             assertTrue(client.pushPending().isFailure)
             val pending=baselineQualificationVector(db)
             assertEquals(before.rows("_sync_row_state"),pending.rows("_sync_row_state"))
-            for(t in listOf("users","posts","_sync_source_state","_sync_attachment_state")) assertEquals(before.rows(t),pending.rows(t),t)
+            for(t in listOf("users","posts","_sync_attachment_state")) assertEquals(before.rows(t),pending.rows(t),t)
+            assertEquals("3",pending.rows("_sync_source_state").single().text("next_source_bundle_id"))
             assertTrue(pending.rows("_sync_dirty_rows").isEmpty())
             assertBaselineEdges(pending,"server","C","P");assertBaselineEdges(pending,"desired","C",null)
             for(k in listOf("C","Q")) {
@@ -587,14 +613,15 @@ internal class BaselineQualificationTest : CrossTargetSyncTestSupport() {
             assertTextPayload(resolved.row("_sync_dirty_rows","C").payload("payload"),mapOf("id" to "C","user_id" to "P","title" to "desired"))
             assertEquals(before.row("_sync_row_state","Q"),resolved.row("_sync_row_state","Q"))
             for(c in listOf("base_kind","base_row_version","base_payload","base_provenance","payload")) assertEquals(before.row("_sync_dirty_rows","Q")[c],resolved.row("_sync_dirty_rows","Q")[c])
-            for(t in listOf("users","posts","_sync_source_state","_sync_attachment_state")) assertEquals(before.rows(t),resolved.rows(t),t)
+            for(t in listOf("users","posts","_sync_attachment_state")) assertEquals(before.rows(t),resolved.rows(t),t)
+            assertEquals(pending.rows("_sync_source_state"),resolved.rows("_sync_source_state"))
             assertBaselineEdges(resolved,"server","C","P");assertBaselineEdges(resolved,"desired","C","P")
             assertTrue(resolved.rows("_sync_outbox_rows").isEmpty())
             println("baseline-qualification: defer then explicit KeepLocal full rebase and unrelated owners verified")
         }
     }
 
-    @Test fun sourceRecoverySnapshotPreservesOriginalFrozenBaseAndWire() = runOwnedWebDatabaseTest {
+    @Test fun sourceRecoveryWaitsForOriginalFrozenOutcomeBeforeCleanSnapshot() = runOwnedWebDatabaseTest {
         seeded { db,server,_,client ->
             val initial=baselineQualificationVector(db)
             val source=initial.rows("_sync_attachment_state").single().text("current_source_id")!!
@@ -605,7 +632,7 @@ internal class BaselineQualificationTest : CrossTargetSyncTestSupport() {
             db.execSQL("UPDATE posts SET title='frozen' WHERE id='C'")
             server.beforePushResponse={ throw CancellationException("committed response lost") }
             try { client.pushPending() } catch (_: CancellationException) { }
-            val frozen=baselineQualificationVector(db)
+            val frozen=baselineQualificationVector(db,listOf("users","posts","_sync_upload_journal"))
             assertEquals(initial.rows("_sync_row_state"),frozen.rows("_sync_row_state"))
             assertBaselineCounters(frozen,source,2,1)
             val outbox=frozen.rows("_sync_outbox_rows").single()
@@ -616,6 +643,16 @@ internal class BaselineQualificationTest : CrossTargetSyncTestSupport() {
             assertBaselineEdges(frozen,"server","C","P");assertBaselineEdges(frozen,"desired","C",null)
             assertEquals("frozen",Json.parseToJsonElement(server.remoteRowsForBaselineTest().getValue("posts/id=C")).jsonObject.getValue("title").jsonPrimitive.content)
             server.addRemoteBundleForTest(listOf(BundleRow("main","posts",mapOf("id" to "C"),"UPDATE",3,Json.parseToJsonElement("""{"id":"C","user_id":"Q","title":"snapshot-newer"}"""))))
+            val requests=server.snapshotSessionCreateRequestCount
+            val resolves=server.resolveRequests.size;val acks=server.ackRequests.size
+            assertIs<PendingPushReplayException>(client.rebuild().exceptionOrNull())
+            assertEquals(frozen,baselineQualificationVector(db,listOf("users","posts","_sync_upload_journal")))
+            assertEquals(requests,server.snapshotSessionCreateRequestCount)
+            assertEquals(resolves,server.resolveRequests.size);assertEquals(acks,server.ackRequests.size)
+            client.pushPending().getOrThrow()
+            val settled=baselineQualificationVector(db)
+            assertTrue(settled.rows("_sync_outbox_rows").isEmpty())
+            assertTextPayload(settled.row("_sync_row_state","C").payload("server_payload"),mapOf("id" to "C","user_id" to "P","title" to "frozen"))
             markSourceRecoveryRequired(db,replacementSourceId="qualification-replacement")
             client.rebuild().getOrThrow()
             val recovered=baselineQualificationVector(db)
@@ -624,13 +661,11 @@ internal class BaselineQualificationTest : CrossTargetSyncTestSupport() {
             assertTextPayload(authoritative.payload("server_payload"),mapOf("id" to "C","user_id" to "Q","title" to "snapshot-newer"))
             assertEquals("3",authoritative.text("row_version"))
             assertBaselineProvenance(authoritative,"server_provenance",3)
-            val retained=recovered.rows("_sync_outbox_rows").single()
-            for(column in listOf("key_json","wire_key_json","op","base_row_version","base_kind","base_payload","base_provenance","wire_payload","local_payload")) assertEquals(outbox.getValue(column),retained.getValue(column),"immutable frozen $column across recovery")
-            assertEquals(frozen.rows("_sync_outbox_bundle").single().text("canonical_request_hash"),recovered.rows("_sync_outbox_bundle").single().text("canonical_request_hash"))
-            assertEquals(frozen.rows("posts"),recovered.rows("posts"),"snapshot must replay frozen L")
+            assertTrue(recovered.rows("_sync_outbox_rows").isEmpty())
+            assertEquals("snapshot-newer",recovered.rows("posts").single().text("title"))
             assertBaselineEdges(recovered,"server","C","Q");assertBaselineEdges(recovered,"desired","C",null)
-            assertBaselineCounters(recovered,"qualification-replacement",2,3)
-            println("baseline-qualification: source recovery full frozen B/wire and newer A and frozen L verified")
+            assertBaselineCounters(recovered,"qualification-replacement",1,3)
+            println("baseline-qualification: source recovery blocks complete F/journal without remote controls, settles original C, then installs clean newer S")
         }
     }
 }

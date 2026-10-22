@@ -28,7 +28,7 @@ class SharedProtocolHandshakeFixtureTest {
             "max_snapshot_decoded_bytes_per_chunk",
             "max_snapshot_rows",
             "max_snapshot_logical_bytes",
-            "max_row_decoded_bytes",
+            "max_row_decoded_bytes", "max_push_outcome_decoded_bytes",
         )
 
         root.getValue("discoveryCases").jsonArray.map { it.jsonObject }.forEach { case ->

@@ -32,8 +32,8 @@
       "path": "client.mjs",
       "role": "client",
       "origin": "SQLiteNow",
-      "size": 65557,
-      "sha256": "db97732ffaf6a68ea059e9d685bdee265dfb9a2b23174583bb037ef22a1ba4d0"
+      "size": 65793,
+      "sha256": "2ba37d2e5bb1301041c7f08370a4f632cd4af1c145102fc0bb762e5202f5c78c"
     },
     {
       "path": "sqlite-3.53.0-build1/worker.mjs",

@@ -6,8 +6,10 @@ import io.ktor.client.engine.mock.respond
 import io.ktor.client.plugins.defaultRequest
 import io.ktor.http.HttpStatusCode
 import kotlinx.coroutines.test.runTest
-import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.*
+import kotlinx.serialization.encodeToString
 import kotlin.test.Test
+import kotlin.test.assertTrue
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
@@ -85,6 +87,7 @@ class RemoteApiReviewRegressionTest {
         val cases = listOf(
             Triple(HttpStatusCode.Conflict, "push_replay_mismatch", false),
             Triple(HttpStatusCode.UnprocessableEntity, "bundle_projection_too_large", false),
+            Triple(HttpStatusCode.PayloadTooLarge, "push_outcome_too_large", false),
             Triple(HttpStatusCode.ServiceUnavailable, "service_not_ready", true),
         )
         cases.forEach { (status, code, retryable) ->
@@ -244,14 +247,25 @@ class RemoteApiReviewRegressionTest {
 
     @Test
     fun conflictRejectsExtraNestedAndOuterFields() = runTest {
-        val detail = """{"schema":"main","table":"users","key":{"id":"u1"},"op":"i","base_row_version":0,"server_row_version":1,"server_row_deleted":false,"server_row":null%s}"""
+        val generation=testGeneration()
+        val detail=PushConflictDetails("main","users",mapOf("id" to "u1"),"i",0,1,false,
+            Json.parseToJsonElement("""{"id":"u1","name":"server"}"""))
+        val unsealed=TerminalPushOutcome("source-a",generation.id,generation.fingerprint,1,"a".repeat(64),null,
+            "rejected","",rejection=PushOutcomeRejection("push_conflict",detail))
+        val outcome=unsealed.copy(outcomeHash=hashPushOutcome(unsealed,generation))
+        val fields=Json.encodeToJsonElement(outcome).jsonObject.toMutableMap()
+        fields.remove("committed")
+        val valid=JsonObject(fields)
+        val rejection=valid.getValue("rejection").jsonObject
         listOf(
-            """{"error":"push_conflict","message":"safe","conflict":${detail.replace("%s", ",\"row_count\":1")}}""",
-            """{"error":"push_conflict","message":"safe","conflict":${detail.replace("%s", "")},"Message":"safe"}""",
+            JsonObject(fields+ ("rejection" to JsonObject(rejection+("conflict" to JsonObject(rejection.getValue("conflict").jsonObject+("row_count" to JsonPrimitive(1))))))),
+            JsonObject(fields+("Message" to JsonPrimitive("safe"))),
         ).forEach { body ->
-            val http = client(HttpStatusCode.Conflict, body)
+            val http = client(HttpStatusCode.OK, body.toString())
             try {
-                assertFailsWith<RemoteResponseSemanticException> { api(http).pushOne() }
+                val failure=assertFailsWith<RemoteResponseDecodeException> { api(http).pushOne() }
+                assertEquals(OversqliteErrorCategory.PROTOCOL,failure.category)
+                assertTrue(failure.isTerminalSyncCompatibilityFailure())
             } finally {
                 http.close()
             }

@@ -4,6 +4,10 @@ import dev.goquick.sqlitenow.oversqlite.*
 import dev.goquick.sqlitenow.oversqlite.platform.*
 import io.ktor.client.statement.HttpReceivePipeline
 import io.ktor.client.request.HttpSendPipeline
+import io.ktor.client.request.post
+import io.ktor.client.request.setBody
+import io.ktor.client.call.body
+import io.ktor.http.contentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.content.OutgoingContent
 import androidx.sqlite.async.step
@@ -19,7 +23,7 @@ import kotlin.time.Duration.Companion.seconds
 internal class OrdinarySafetyLiveTest : RealServerHarnessSupport() {
     @Test fun pullDiscoveredRecoveryAndExplicitRebuildHydrateCompleteRemoteState() = runTest(timeout = 360.seconds) {
         val identity = "dev.goquick.sqlitenow.oversqlite.realserver.OrdinarySafetyLiveTest.pullDiscoveredRecoveryAndExplicitRebuildHydrateCompleteRemoteState"
-        val authority = requireRealServerConfig() ?: run {
+        val authority = requireRealServerConfig("OVERSQLITE_CATEGORIES_REAL_SERVER_SMOKE_BASE_URL") ?: run {
             println("A3_NOT_EXECUTED ${webRuntimeKind()} $identity opt_in_disabled")
             return@runTest
         }
@@ -69,6 +73,8 @@ internal class OrdinarySafetyLiveTest : RealServerHarnessSupport() {
                 put("parent_id", typed(parent?.let(::JsonPrimitive) ?: JsonNull, if (parent == null) "null" else "text"))
             }
             val conflictQuery = "SELECT json_object(${projection(listOf("singleton_key", "dirty_revision", "baseline_revision", "decision_state", "source_id", "source_bundle_id", "canonical_request_hash", "generation_id", "generation_fingerprint", "conflict_json", "local_payload_json"))}) FROM _sync_conflict_state"
+            val operationColumns = db.connection().queryList("SELECT name FROM pragma_table_info('_sync_operation_state') ORDER BY cid") { it.getText(0) }
+            val operationQuery = "SELECT json_object(${projection(operationColumns)}) FROM _sync_operation_state"
             fun verifyRestoreCounters(owner: DefaultOversqliteClient) {
                 val counters = owner.snapshotRestoreDiagnosticsForTest()
                 assertEquals(1L, counters.sessionCount); assertEquals(1L, counters.fetchedChunks)
@@ -120,30 +126,44 @@ internal class OrdinarySafetyLiveTest : RealServerHarnessSupport() {
                     assertTrue(vector.getValue(table).isEmpty(), "retired owner $table")
                 assertEquals(OversqliteOperationState(), OversqliteOperationStateStore(target.connection()).loadState())
                 assertEquals(OversqliteOutboxBundleState(), OversqliteOutboxStateStore(target.connection()).loadBundleState())
-                assertEquals(WorkspaceCharge(1, 536), OversqliteWorkspace(target.connection(), cfg).usage(applyUnit("author-live-recovery", 0, "")))
+                assertEquals(WorkspaceCharge(1, 536 + 6 * scalarLong(target, "SELECT length(CAST(recovery_state AS BLOB)) FROM _sync_operation_state")), OversqliteWorkspace(target.connection(), cfg).usage(applyUnit("author-live-recovery", 0, "")))
                 assertEquals(0L, scalarLong(target, "SELECT count(*) FROM pragma_foreign_key_check"))
             }
             suspend fun exercise(mode: String, sequence: Long, childName: String, parent: String) {
                 writerDb.execSQL("UPDATE categories SET name='$childName',parent_id='$parent' WHERE id='$c'")
                 assertEquals(PushOutcome.COMMITTED, writer.pushPending().getOrThrow().outcome)
                 assertEquals(sequence, writer.syncStatus().getOrThrow().lastBundleSeqSeen)
-                if (mode == "checkpoint-ahead") db.execSQL("UPDATE _sync_attachment_state SET last_bundle_seq_seen=99")
+                if (mode == "history-pruned") {
+                    // Retire actual server history while preserving the client's
+                    // last installed observation. A higher local floor is a
+                    // refusal case, not a recoverable stale checkpoint.
+                    val control = checkNotNull(writerHttp).post("/__recovery-fixture/prune") {
+                        contentType(io.ktor.http.ContentType.Application.Json)
+                        setBody(buildJsonObject { put("scope", user) })
+                    }
+                    assertEquals(io.ktor.http.HttpStatusCode.OK, control.status)
+                    val pruned = control.body<JsonObject>()
+                    assertEquals(sequence, pruned.getValue("bundle_seq").jsonPrimitive.long)
+                    assertEquals(0L, pruned.getValue("history").jsonPrimitive.long)
+                    assertEquals(0L, pruned.getValue("outcomes").jsonPrimitive.long)
+                }
                 val attachmentBefore = OversqliteAttachmentStateStore(db.connection()).loadState()
                 assertFalse(attachmentBefore.rebuildRequired, "public operation discovers/owns its recovery transition")
                 val sourceBefore = requireNotNull(OversqliteSourceStateStore(db.connection()).loadState(attachmentBefore.currentSourceId))
                 val before = databaseStateVector(db.connection(), listOf("categories"))
+                val operationBefore = Json.parseToJsonElement(scalarText(db, operationQuery)).jsonObject
                 val conflictBefore = Json.parseToJsonElement(scalarText(db, conflictQuery)).jsonObject
                 val revisionBefore = conflictBefore.getValue("baseline_revision").jsonObject.getValue("value").jsonPrimitive.long
                 val requestStart = requests.size; val routeStart = routes.size
                 val publicationStart = scalarText(db, "SELECT strftime('%Y-%m-%dT%H:%M:%fZ','now')")
-                val report = if (mode == "checkpoint-ahead") client.pullToStable().getOrThrow() else client.rebuild().getOrThrow()
+                val report = if (mode == "history-pruned") client.pullToStable().getOrThrow() else client.rebuild().getOrThrow()
                 val publicationEnd = scalarText(db, "SELECT strftime('%Y-%m-%dT%H:%M:%fZ','now')")
                 assertEquals(RemoteSyncOutcome.APPLIED_SNAPSHOT, report.outcome)
                 assertEquals(RestoreSummary(sequence, 4), report.restore)
                 assertEquals(SyncStatus(AuthorityStatus.AUTHORITATIVE_MATERIALIZED, PendingSyncStatus(false, 0, false), sequence), report.status)
                 verifyRestoreCounters(client)
                 val observed = requests.drop(requestStart)
-                val offset = if (mode == "checkpoint-ahead") 1 else 0
+                val offset = if (mode == "history-pruned") 1 else 0
                 assertEquals(offset + 3, observed.size, "$mode one owned snapshot with chunk and DELETE; no retry/push/reconcile")
                 if (offset == 1) assertEquals("/sync/pull", observed[0])
                 assertEquals("/sync/snapshot-sessions", observed[offset])
@@ -154,15 +174,31 @@ internal class OrdinarySafetyLiveTest : RealServerHarnessSupport() {
                 val expected = listOf(payload(p, "parent", null), payload(q, "other", null), payload(c, childName, parent), payload(d, "grandchild", c))
                     .sortedBy { it.getValue("id").jsonObject.getValue("value").jsonPrimitive.content }
                     .associateBy { it.getValue("id").jsonObject.getValue("value").jsonPrimitive.content }
-                verifySnapshot(db, expected, sequence, sequence, revisionBefore + 5, publicationStart, publicationEnd)
+                verifySnapshot(db, expected, sequence, sequence, revisionBefore + 1, publicationStart, publicationEnd)
                 assertEquals(sourceBefore, OversqliteSourceStateStore(db.connection()).loadState(attachmentBefore.currentSourceId))
                 assertEquals(1L, scalarLong(db, "SELECT count(*) FROM _sync_source_state")); assertEquals(2L, sourceBefore.nextSourceBundleId)
                 assertEquals(attachmentBefore.copy(lastBundleSeqSeen = sequence, rebuildRequired = false, pendingInitializationId = ""),
                     OversqliteAttachmentStateStore(db.connection()).loadState())
-                assertEquals(JsonObject(conflictBefore + ("baseline_revision" to typed(JsonPrimitive(revisionBefore + 8), "integer"))),
-                    Json.parseToJsonElement(scalarText(db, conflictQuery)), "only four old A removals and four snapshot installations change conflict controls")
+                assertEquals(JsonObject(conflictBefore + ("baseline_revision" to typed(JsonPrimitive(revisionBefore + 4), "integer"))),
+                    Json.parseToJsonElement(scalarText(db, conflictQuery)), "four snapshot baseline upserts change conflict controls; existing keys are not cleared first")
                 val recovered = databaseStateVector(db.connection(), listOf("categories"))
-                val changed = setOf("categories", "_sync_row_state", "_sync_relationships", "_sync_attachment_state", "_sync_conflict_state")
+                val operationAfter = Json.parseToJsonElement(scalarText(db, operationQuery)).jsonObject
+                if (mode == "history-pruned") {
+                    val encoded = scalarText(db, "SELECT recovery_state FROM _sync_operation_state")
+                    val record = Json.decodeFromString(AutomaticRecoveryRecord.serializer(), encoded)
+                    assertTrue(Regex("[0-9a-f]{64}").matches(record.status.recoveryId))
+                    assertTrue(Regex("[0-9a-f]{64}").matches(record.localGuard))
+                    assertEquals(AutomaticRecoveryRecord(status = RecoveryStatus("completed", "history_pruned", record.status.recoveryId, sequence),
+                        sourceId = attachmentBefore.currentSourceId, generationFingerprint = provenance.getValue("generation_fingerprint").jsonPrimitive.content,
+                        serviceId = cfg.serviceId, originalReason = "history_pruned", unitHash = "history_pruned", localGuard = record.localGuard), record)
+                    assertEquals(Json { encodeDefaults = true; ignoreUnknownKeys = false }.encodeToString(AutomaticRecoveryRecord.serializer(), record), encoded)
+                    assertEquals(JsonObject(operationBefore + ("recovery_state" to typed(JsonPrimitive(encoded), "text"))), operationAfter,
+                        "complete raw operation row changes only by the validated bounded completed recovery record")
+                } else {
+                    assertEquals(operationBefore, operationAfter, "explicit rebuild preserves the entire previously completed automatic recovery record and every other operation field")
+                }
+                assertEquals(0L, scalarLong(db, "SELECT reserved_entries+reserved_bytes+length(workspace_context)+snapshot_stage_entries+snapshot_stage_bytes FROM _sync_operation_state"))
+                val changed = setOf("categories", "_sync_row_state", "_sync_relationships", "_sync_attachment_state", "_sync_conflict_state", "_sync_operation_state")
                 assertEquals(before.filterKeys { it !in changed }, recovered.filterKeys { it !in changed }, "$mode full unowned primary/recovery/stage state preserved")
                 println("A3_SCENARIO ${webRuntimeKind()} $identity $mode/full-snapshot")
                 val counted = requests.toList(); val countedRoutes = routes.toList()
@@ -206,7 +242,7 @@ internal class OrdinarySafetyLiveTest : RealServerHarnessSupport() {
                         val peerAfter = databaseStateVector(peer.connection(), listOf("categories"))
                         for (table in listOf("_sync_contract_identity", "_sync_admitted_contracts", "_sync_managed_tables"))
                             assertEquals(recovered.getValue(table), peerAfter.getValue(table), "$mode full independent admitted fixture/contract identity $table")
-                        val peerChanged = changed + setOf("_sync_opening_state", "_sync_contract_identity", "_sync_admitted_contracts", "_sync_managed_tables")
+                        val peerChanged = (changed - "_sync_operation_state") + setOf("_sync_opening_state", "_sync_contract_identity", "_sync_admitted_contracts", "_sync_managed_tables")
                         assertEquals(peerBefore.filterKeys { it !in peerChanged }, peerAfter.filterKeys { it !in peerChanged }, "$mode every other typed observer owner unchanged")
                         assertEquals(counted, requests); assertEquals(countedRoutes, routes, "independent readback excluded from counted public primitive")
                         assertEquals(recovered, databaseStateVector(db.connection(), listOf("categories")), "readback preserves every original full identity/control/capture field")
@@ -215,14 +251,14 @@ internal class OrdinarySafetyLiveTest : RealServerHarnessSupport() {
                 verifyIndependentAuthority()
                 println("A3_SCENARIO ${webRuntimeKind()} $identity $mode/independent-authority-readback")
             }
-            exercise("checkpoint-ahead", 2, "new remote child", q)
+            exercise("history-pruned", 2, "new remote child", q)
             exercise("explicit-rebuild", 3, "newer remote child", p)
         } finally { writerHttp?.close(); http?.close(); writerDb.close(); db.close(); cleanupOwnedWorkerStorage() }
     }
 
     @Test fun secondConnectionWritesAtRealResponseBarrierPreserveNewerCapture() = runTest(timeout = 360.seconds) {
         val identity = "dev.goquick.sqlitenow.oversqlite.realserver.OrdinarySafetyLiveTest.secondConnectionWritesAtRealResponseBarrierPreserveNewerCapture"
-        val authority = requireRealServerConfig() ?: run {
+        val authority = requireRealServerConfig("OVERSQLITE_CATEGORIES_REAL_SERVER_SMOKE_BASE_URL") ?: run {
             println("A3_NOT_EXECUTED ${webRuntimeKind()} $identity opt_in_disabled")
             return@runTest
         }
@@ -325,7 +361,7 @@ internal class OrdinarySafetyLiveTest : RealServerHarnessSupport() {
                 val wire = Json.parseToJsonElement(wires[1]).jsonObject
                 assertEquals(bundle.canonicalRequestHash, wire.getValue("canonical_request_hash").jsonPrimitive.content)
                 assertEquals(2L, wire.getValue("source_bundle_id").jsonPrimitive.long)
-                assertEquals(mapOf("/sync/push" to 1), requests.mapValues { (path, count) -> count - requestStart.getOrElse(path) { 0 } }.filterValues { it != 0 })
+                assertEquals(mapOf("/sync/push" to 1, "/sync/push-outcomes/ack" to 1), requests.mapValues { (path, count) -> count - requestStart.getOrElse(path) { 0 } }.filterValues { it != 0 })
                 val after = databaseStateVector(db.connection(), listOf("categories"), predicates)
                 // The confirmed parent-delete/child-reparent effects own P/C.
                 // Every other full typed primary/capture/edge record stays exact.
@@ -433,7 +469,7 @@ internal class OrdinarySafetyLiveTest : RealServerHarnessSupport() {
 
     @Test fun ordinaryEmptyOneRowAndSettledHaveExactRequestsAndServerReadback() = runTest(timeout = 180.seconds) {
         val identity = "dev.goquick.sqlitenow.oversqlite.realserver.OrdinarySafetyLiveTest.ordinaryEmptyOneRowAndSettledHaveExactRequestsAndServerReadback"
-        val authority = requireRealServerConfig() ?: run {
+        val authority = requireRealServerConfig("OVERSQLITE_CATEGORIES_REAL_SERVER_SMOKE_BASE_URL") ?: run {
             println("A3_NOT_EXECUTED ${webRuntimeKind()} $identity opt_in_disabled")
             return@runTest
         }
@@ -505,7 +541,7 @@ internal class OrdinarySafetyLiveTest : RealServerHarnessSupport() {
             val publicationEnd = scalarText(db, "SELECT strftime('%Y-%m-%dT%H:%M:%fZ','now')")
             assertEquals(PushOutcome.COMMITTED, one.pushOutcome)
             assertFalse(one.status.pending.hasPendingSyncData)
-            assertEquals(mapOf("/sync/push" to 1, "/sync/pull" to 1), delta(oneStart))
+            assertEquals(mapOf("/sync/push" to 1, "/sync/push-outcomes/ack" to 1, "/sync/pull" to 1), delta(oneStart))
             assertEquals(listOf(source), sources)
             assertEquals(listOf(originalIntent), frozen)
             assertEquals(1, wires.size)
@@ -596,7 +632,7 @@ internal class OrdinarySafetyLiveTest : RealServerHarnessSupport() {
 
     @Test fun onePublicSyncDrainsMultipleBatchesWithExactServerVector() = runTest(timeout = 180.seconds) {
         val identity = "dev.goquick.sqlitenow.oversqlite.realserver.OrdinarySafetyLiveTest.onePublicSyncDrainsMultipleBatchesWithExactServerVector"
-        val authority = requireRealServerConfig() ?: run {
+        val authority = requireRealServerConfig("OVERSQLITE_CATEGORIES_REAL_SERVER_SMOKE_BASE_URL") ?: run {
             println("A3_NOT_EXECUTED ${webRuntimeKind()} $identity opt_in_disabled")
             return@runTest
         }
@@ -681,7 +717,7 @@ internal class OrdinarySafetyLiveTest : RealServerHarnessSupport() {
             assertEquals<List<JsonElement>>(List(3) { i -> JsonArray(originalIntents.drop(i * 2).take(2)) }, frozenIntents,
                 "each real request freezes complete original B/provenance/L without later recapture")
             val deltas = requests.mapValues { (path, count) -> count - requestStart.getOrElse(path) { 0 } }.filterValues { it != 0 }
-            assertEquals(mapOf("/sync/push" to 3, "/sync/pull" to 1), deltas,
+            assertEquals(mapOf("/sync/push" to 3, "/sync/push-outcomes/ack" to 3, "/sync/pull" to 1), deltas,
                 "counted invocation has no snapshot, connect, reconcile or hidden extra request")
             assertTrue(stats.work > 0 && stats.work <= cfg.maxSyncWorkUnitsPerInvocation)
             assertTrue(stats.savedCopies > 0 && stats.primaryReads > 0 && stats.serializedBytes > 0)
@@ -776,7 +812,7 @@ internal class OrdinarySafetyLiveTest : RealServerHarnessSupport() {
 
     private fun runCommittedReplay(size: Int, width: Int) = runTest(timeout = 900.seconds) {
         val identity = "dev.goquick.sqlitenow.oversqlite.realserver.OrdinarySafetyLiveTest.committedReplayWith${size}RowsWidth$width"
-        val authority = requireRealServerConfig() ?: run {
+        val authority = requireRealServerConfig("OVERSQLITE_CATEGORIES_REAL_SERVER_SMOKE_BASE_URL") ?: run {
             println("A3_NOT_EXECUTED ${webRuntimeKind()} $identity opt_in_disabled")
             return@runTest
         }
@@ -800,6 +836,8 @@ internal class OrdinarySafetyLiveTest : RealServerHarnessSupport() {
             val pushEncodings = mutableListOf<String?>()
             val pushWires = mutableListOf<String>()
             val pushSources = mutableListOf<String>()
+            val recoveryControls = mutableListOf<Triple<String, String, String>>()
+            val recoveryJournals = mutableListOf<UploadJournal>()
             val original = newRealServerHttpClient(authority.baseUrl, token, beforeRequest = { path ->
                 requests[path] = requests.getOrElse(path) { 0 } + 1
             })
@@ -814,6 +852,14 @@ internal class OrdinarySafetyLiveTest : RealServerHarnessSupport() {
                                 decodeOversqliteSingleMemberGzip(bytes, 1024 * 1024) else bytes
                             pushWires += decoded.decodeToString()
                             pushSources += context.headers["Oversync-Source-ID"].orEmpty()
+                        }
+                        val path = context.url.build().encodedPath
+                        if (path in setOf("/sync/push-outcomes/resolve", "/sync/push-outcomes/ack")) {
+                            val bytes = (subject as OutgoingContent.ByteArrayContent).bytes()
+                            val decoded = if (context.headers[HttpHeaders.ContentEncoding] == "gzip")
+                                decodeOversqliteSingleMemberGzip(bytes, 4096) else bytes
+                            recoveryControls += Triple(path, context.headers["Oversync-Source-ID"].orEmpty(), decoded.decodeToString())
+                            recoveryJournals += checkNotNull(loadUploadJournal(db.connection()))
                         }
                         proceed()
                     }
@@ -896,6 +942,13 @@ internal class OrdinarySafetyLiveTest : RealServerHarnessSupport() {
             assertEquals(2L, scalarLong(db, "SELECT source_bundle_id FROM _sync_outbox_bundle"))
             assertEquals(2, pushWires.size)
             val frozenWire = pushWires[1]
+            val frozenEncodedBody = pushBodies[1].copyOf()
+            val frozenEncoding = pushEncodings[1]
+            val frozenJournal = checkNotNull(loadUploadJournal(db.connection()))
+            assertEquals("frozen", frozenJournal.phase)
+            assertEquals(0L, frozenJournal.outcomeBytes)
+            assertEquals(sha256Hex(frozenWire.encodeToByteArray()), frozenJournal.requestDigest)
+            assertEquals(frozenWire, scalarText(db, "SELECT CAST(request_body AS TEXT) FROM _sync_upload_journal"))
             val frozenBundle = requireNotNull(OversqliteOutboxStateStore(db.connection()).loadBundleState())
             val frozenIntentFields = intentFields.replace("'L',payload", "'L',local_payload")
             assertEquals(originalIntent, Json.parseToJsonElement(scalarText(db, "SELECT $frozenIntentFields FROM _sync_outbox_rows")),
@@ -981,7 +1034,7 @@ internal class OrdinarySafetyLiveTest : RealServerHarnessSupport() {
                 "_sync_row_state" to predicate, "_sync_dirty_rows" to predicate,
                 "_sync_relationships" to "json_extract(child_key,'$.id') LIKE '00000000-0000-4000-8000-%'")
             val before = databaseStateVector(db.connection(), listOf("categories"))
-            val unrelated = databaseStateVector(db.connection(), listOf("categories"), predicates).filterKeys { it in predicates }
+            val unrelated = selectedDatabaseStateVector(db.connection(), listOf("categories"), predicates.keys.toList(), predicates)
             if (webRuntimeKind() != "js-node") {
                 val previous = db.connection()
                 db.close()
@@ -992,12 +1045,16 @@ internal class OrdinarySafetyLiveTest : RealServerHarnessSupport() {
                 client.attach(user).getOrThrow()
             } else println("A3 live Node transient; physical restart NOT-APPLICABLE")
             assertEquals(frozenBundle, OversqliteOutboxStateStore(db.connection()).loadBundleState(), "complete frozen identity survives preparation and recreation")
+            assertEquals(frozenJournal, loadUploadJournal(db.connection()), "complete frozen journal survives preparation and recreation")
+            assertEquals(frozenWire, scalarText(db, "SELECT CAST(request_body AS TEXT) FROM _sync_upload_journal"), "original F bytes remain exact before resolve")
+            val recoveryStart = recoveryControls.size
             val sourceBefore = requireNotNull(OversqliteSourceStateStore(db.connection()).loadState(source))
             val attachmentBefore = OversqliteAttachmentStateStore(db.connection()).loadState()
             val operationBefore = OversqliteOperationStateStore(db.connection()).loadState()
             val requestStart = requests.toMap()
-            // One public primitive settles the original committed response;
-            // it must not drain or recapture the unrelated dirty backlog.
+            // One public primitive resolves and settles the original committed
+            // outcome, then acknowledges it; it must not reupload F or drain
+            // or recapture the unrelated dirty backlog.
             val replayObserver = if (suiteFlagEnabled("OVERSQLITE_R1_OBSERVATIONS")) {
                 check(webRuntimeKind() in setOf("jvm", "native", "android")) { "R1 live observer requires a synchronous native driver" }
                 R1LiveReplayObserver(db.connection())
@@ -1019,7 +1076,7 @@ internal class OrdinarySafetyLiveTest : RealServerHarnessSupport() {
             assertTrue(stats.serializedBytes <= 4 * stats.primaryBytes + 4096, "bounded serialization $stats")
             assertTrue(stats.work >= 1024L * size, "charged work $stats")
             assertTrue(stats.work < 2048L * size + 10_000, "bounded work $stats")
-            assertEquals(unrelated, databaseStateVector(db.connection(), listOf("categories"), predicates).filterKeys { it in predicates })
+            assertEquals(unrelated, selectedDatabaseStateVector(db.connection(), listOf("categories"), predicates.keys.toList(), predicates))
             assertEquals("grandchild", scalarText(db, "SELECT name FROM categories WHERE id='$d'"))
             assertEquals(c, scalarText(db, "SELECT parent_id FROM categories WHERE id='$d'"))
             assertEquals("child", scalarText(db, "SELECT name FROM categories WHERE id='$c'"))
@@ -1033,15 +1090,29 @@ internal class OrdinarySafetyLiveTest : RealServerHarnessSupport() {
             assertEquals(3L, scalarLong(db, "SELECT next_source_bundle_id FROM _sync_source_state"))
             assertEquals(2L, scalarLong(db, "SELECT last_bundle_seq_seen FROM _sync_attachment_state"))
             assertEquals(0L, scalarLong(db, "SELECT count(*) FROM pragma_foreign_key_check"))
-            assertEquals(3, requests["/sync/push"], "seed + committed loss + exact replay")
-            assertEquals(3, pushWires.size)
-            assertEquals(3, pushBodies.size)
-            assertContentEquals(pushBodies[1], pushBodies[2], "exact encoded HTTP body survives response loss and reopen")
-            assertEquals(pushEncodings[1], pushEncodings[2], "replay content encoding")
-            assertEquals(frozenWire, pushWires[2], "decoded replay request bytes equal the lost committed request")
-            assertEquals(List(3) { source }, pushSources)
-            assertEquals(mapOf("/sync/push" to 1), requests.mapValues { (path, count) -> count - requestStart.getOrElse(path) { 0 } }.filterValues { it != 0 },
-                "counted replay does not drain unrelated intent or hide additional routes")
+            assertEquals(2, requests["/sync/push"], "seed + committed loss; uncertain F resolves without reupload")
+            assertEquals(2, pushWires.size)
+            assertEquals(2, pushBodies.size)
+            assertContentEquals(frozenEncodedBody, pushBodies[1], "original encoded HTTP body survives response loss and reopen")
+            assertEquals(frozenEncoding, pushEncodings[1], "original content encoding")
+            assertEquals(frozenWire, pushWires[1], "original decoded F bytes are unchanged")
+            assertEquals(List(2) { source }, pushSources)
+            val controls = recoveryControls.drop(recoveryStart)
+            val journals = recoveryJournals.drop(recoveryStart)
+            assertEquals(listOf("/sync/push-outcomes/resolve", "/sync/push-outcomes/ack"), controls.map { it.first })
+            assertEquals(List(2) { source }, controls.map { it.second }, "resolve and ack preserve the original source")
+            assertEquals(frozenJournal, journals[0], "resolve owns the complete original frozen binding and request digest")
+            val ackJournal = journals[1]
+            assertEquals(frozenJournal.binding, ackJournal.binding)
+            assertEquals(frozenJournal.requestDigest, ackJournal.requestDigest)
+            assertEquals("ack_pending", ackJournal.phase)
+            assertTrue(ackJournal.outcomeBytes > 0)
+            assertTrue(Regex("[0-9a-f]{64}").matches(ackJournal.outcomeHash))
+            assertEquals(PushOutcomeResolveRequest(2, hash, frozenJournal.binding.operation.initializationId), decodeOutcomeResolve(controls[0].third))
+            assertEquals(PushOutcomeAckRequest(2, hash, ackJournal.outcomeHash), decodeOutcomeAck(controls[1].third))
+            assertNull(loadUploadJournal(db.connection()), "only the successful ack retires the disposed outcome")
+            assertEquals(mapOf("/sync/push-outcomes/resolve" to 1, "/sync/push-outcomes/ack" to 1), requests.mapValues { (path, count) -> count - requestStart.getOrElse(path) { 0 } }.filterValues { it != 0 },
+                "counted resolve/settlement/ack does not drain unrelated intent or hide additional routes")
             assertEquals(sourceBefore.copy(nextSourceBundleId = 3), OversqliteSourceStateStore(db.connection()).loadState(source))
             assertEquals(attachmentBefore.copy(lastBundleSeqSeen = 2, pendingInitializationId = ""), OversqliteAttachmentStateStore(db.connection()).loadState())
             assertEquals(operationBefore, OversqliteOperationStateStore(db.connection()).loadState())
@@ -1052,7 +1123,10 @@ internal class OrdinarySafetyLiveTest : RealServerHarnessSupport() {
             assertEquals(size + 4L, scalarLong(db, "SELECT count(*) FROM _sync_row_state"))
             assertEquals(expectedBusiness, Json.parseToJsonElement(scalarText(db, businessQuery)), "every local surviving typed business field")
             assertEquals(size + 3L, scalarLong(db, "SELECT count(*) FROM categories"))
-            val settled = databaseStateVector(db.connection(), listOf("categories"))
+            val settled = selectedDatabaseStateVector(db.connection(), listOf("categories"), listOf(
+                "_sync_opening_state", "_sync_contract_identity", "_sync_admitted_contracts", "_sync_managed_tables",
+                "_sync_snapshot_stage", "_sync_apply_plan", "_sync_apply_rows", "_sync_apply_edges",
+                "_sync_push_plan", "_sync_push_nodes", "_sync_push_edges"))
             for (table in listOf("_sync_opening_state", "_sync_contract_identity", "_sync_admitted_contracts", "_sync_managed_tables"))
                 assertEquals(before.getValue(table), settled.getValue(table), "primary/recovery identity $table")
             for (table in listOf("_sync_snapshot_stage", "_sync_apply_plan", "_sync_apply_rows", "_sync_apply_edges", "_sync_push_plan", "_sync_push_nodes", "_sync_push_edges"))

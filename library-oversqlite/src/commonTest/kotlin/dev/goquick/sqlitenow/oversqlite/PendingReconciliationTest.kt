@@ -8,6 +8,7 @@ internal class PendingReconciliationTest : SurvivorTestSupport() {
     @Test fun publicResults() = runOwnedWebDatabaseTest {
         for(detail in listOf("dependency_unavailable","relationship_unknown","historical_repair_required"))
             withSurvivorFixture { server,db,_,client ->
+                client.setRecoveryMode(RecoveryMode.DISABLED).getOrThrow()
                 var parent="missing"
                 if(detail=="relationship_unknown") {
                     parent="Q"
@@ -25,7 +26,8 @@ internal class PendingReconciliationTest : SurvivorTestSupport() {
                 val before=baselineQualificationVector(db,listOf("nodes"))
                 val pending=assertIs<FKReconciliationRequiredException>(client.pullToStable().exceptionOrNull())
                 assertEquals(detail,pending.detail)
-                assertEquals(64,pending.unit.length)
+                assertTrue(isCanonicalSha256(pending.unit.substringBefore(":")))
+                assertTrue(pending.unit.length<=96)
                 assertEquals(mapOf("id" to "R"),pending.sample.single().key)
                 assertEquals(before,baselineQualificationVector(db,listOf("nodes")))
                 assertEquals(pending.unit,assertIs<FKReconciliationRequiredException>(client.pullToStable().exceptionOrNull()).unit)

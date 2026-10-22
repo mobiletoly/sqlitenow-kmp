@@ -7,7 +7,7 @@ import dev.goquick.sqlitenow.oversqlite.MergeResult
 import dev.goquick.sqlitenow.oversqlite.Resolver
 import dev.goquick.sqlitenow.oversqlite.ServerWinsResolver
 import io.ktor.client.HttpClient
-import kotlinx.coroutines.runBlocking
+import dev.goquick.sqlitenow.oversqlite.realserver.runEnabledRealServerTest as runBlocking
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject

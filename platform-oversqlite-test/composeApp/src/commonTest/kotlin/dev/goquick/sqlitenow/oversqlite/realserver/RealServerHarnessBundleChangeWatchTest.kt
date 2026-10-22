@@ -36,9 +36,12 @@ internal class RealServerHarnessBundleChangeWatchTest : RealServerHarnessSupport
             val token = issueDummySigninToken(config.baseUrl, randomRealServerId("watch-cap-user"), sourceId)
             http = newRealServerHttpClient(config.baseUrl, token)
 
-            val discovery = http.get("/sync/generations/1") {
+            val response = http.get("/sync/generations/1") {
+                header("Oversync-Protocol-Version", "v1")
                 header("Oversync-Source-ID", sourceId)
-            }.body<JsonObject>()
+            }
+            assertEquals(io.ktor.http.HttpStatusCode.OK, response.status)
+            val discovery = response.body<JsonObject>()
 
             assertTrue(
                 discovery.getValue("watch_enabled").jsonPrimitive.boolean,

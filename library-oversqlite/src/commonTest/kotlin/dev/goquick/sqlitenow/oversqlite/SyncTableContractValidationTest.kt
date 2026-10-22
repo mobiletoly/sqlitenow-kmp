@@ -48,7 +48,7 @@ internal class SyncTableContractValidationTest {
     }
 
     @Test
-    fun dayTempoHealthMeshMismatchReportsOnlyMonitoringFocusAsServerOnly() {
+    fun extraMonitoringFocusIsReportedAsServerOnly() {
         val clientTables = listOf(
             "activity_sessions",
             "daily_goals",

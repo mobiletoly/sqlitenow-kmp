@@ -2,14 +2,180 @@
   "formatVersion": 2,
   "baseUri": "https://sync.test/api/v1/",
   "cases": [
-    {"name":"discovery","operation":"discovery","sourceId":"source-discovery","args":{"generationId":"1"},"expected":{"method":"GET","path":"/api/v1/sync/generations/1","query":{},"sourceHeader":"source-discovery","body":null}},
-    {"name":"connect","operation":"connect","sourceId":"source-connect","args":{"hasLocalPendingRows":true},"expected":{"method":"POST","path":"/api/v1/sync/connect","query":{},"sourceHeader":"source-connect","body":{"has_local_pending_rows":true},"bodyMustNotContain":["source_id"]}},
-    {"name":"push-one-bundle","operation":"push","sourceId":"source-push","args":{"sourceBundleId":7},"expected":{"method":"POST","path":"/api/v1/sync/push","query":{},"sourceHeader":"source-push","body":{"source_bundle_id":7,"canonical_request_hash":"72df2033e0ac3eed9081f821a9dd0039b6a25cc7fbf02b9c4e5f4b51a31d2f3c","rows":[[0,0,[["i",["user-1"],0,{"id":"user-1","name":"Ada"}]]]]},"bodyMustNotContain":["source_id","planned_row_count","push_id"]}},
-    {"name":"pull","operation":"pull","sourceId":"source-pull","args":{"afterBundleSeq":3,"maxBundles":11,"targetBundleSeq":14},"expected":{"method":"GET","path":"/api/v1/sync/pull","query":{"after_bundle_seq":"3","max_bundles":"11","target_bundle_seq":"14"},"sourceHeader":"source-pull","body":null}},
-    {"name":"snapshot-session","operation":"snapshotSession","sourceId":"source-snapshot","expected":{"method":"POST","path":"/api/v1/sync/snapshot-sessions","query":{},"sourceHeader":"source-snapshot","body":null}},
-    {"name":"snapshot-chunk","operation":"snapshotChunk","sourceId":"source-snapshot-chunk","args":{"snapshotId":"snapshot-fixture","afterRowOrdinal":5,"maxRows":19,"maxBytes":4194304},"expected":{"method":"GET","path":"/api/v1/sync/snapshot-sessions/snapshot-fixture","query":{"after_row_ordinal":"5","max_rows":"19","max_bytes":"4194304"},"sourceHeader":"source-snapshot-chunk","body":null}},
-    {"name":"snapshot-release","operation":"snapshotRelease","sourceId":"source-snapshot-release","args":{"snapshotId":"snapshot-fixture"},"expected":{"method":"DELETE","path":"/api/v1/sync/snapshot-sessions/snapshot-fixture","query":{},"sourceHeader":"source-snapshot-release","body":null}},
-    {"name":"watch","operation":"watch","sourceId":"source-watch","args":{"afterBundleSeq":12},"expected":{"method":"GET","path":"/api/v1/sync/watch","query":{"after_bundle_seq":"12"},"sourceHeader":"source-watch","body":null}}
+    {
+      "name": "discovery",
+      "operation": "discovery",
+      "sourceId": "source-discovery",
+      "args": {
+        "generationId": "1"
+      },
+      "expected": {
+        "method": "GET",
+        "path": "/api/v1/sync/generations/1",
+        "query": {},
+        "sourceHeader": "source-discovery",
+        "body": null
+      }
+    },
+    {
+      "name": "connect",
+      "operation": "connect",
+      "sourceId": "source-connect",
+      "args": {
+        "hasLocalPendingRows": true
+      },
+      "expected": {
+        "method": "POST",
+        "path": "/api/v1/sync/connect",
+        "query": {},
+        "sourceHeader": "source-connect",
+        "body": {
+          "has_local_pending_rows": true
+        },
+        "bodyMustNotContain": [
+          "source_id"
+        ]
+      }
+    },
+    {
+      "name": "push-one-bundle",
+      "operation": "push",
+      "sourceId": "source-push",
+      "args": {
+        "sourceBundleId": 7
+      },
+      "expected": {
+        "method": "POST",
+        "path": "/api/v1/sync/push",
+        "query": {},
+        "sourceHeader": "source-push",
+        "body": {
+          "source_bundle_id": 7,
+          "canonical_request_hash": "72df2033e0ac3eed9081f821a9dd0039b6a25cc7fbf02b9c4e5f4b51a31d2f3c",
+          "rows": [
+            [
+              0,
+              0,
+              [
+                [
+                  "i",
+                  [
+                    "user-1"
+                  ],
+                  0,
+                  {
+                    "id": "user-1",
+                    "name": "Ada"
+                  }
+                ]
+              ]
+            ]
+          ]
+        },
+        "bodyMustNotContain": [
+          "source_id",
+          "planned_row_count",
+          "push_id"
+        ]
+      }
+    },
+    {
+      "name": "pull",
+      "operation": "pull",
+      "sourceId": "source-pull",
+      "args": {
+        "afterBundleSeq": 3,
+        "maxBundles": 11,
+        "targetBundleSeq": 14
+      },
+      "expected": {
+        "method": "GET",
+        "path": "/api/v1/sync/pull",
+        "query": {
+          "after_bundle_seq": "3",
+          "max_bundles": "11",
+          "target_bundle_seq": "14"
+        },
+        "sourceHeader": "source-pull",
+        "body": null
+      }
+    },
+    {
+      "name": "snapshot-session",
+      "operation": "snapshotSession",
+      "sourceId": "source-snapshot",
+      "expected": {
+        "method": "POST",
+        "path": "/api/v1/sync/snapshot-sessions",
+        "query": {},
+        "sourceHeader": "source-snapshot",
+        "body": null
+      }
+    },
+    {
+      "name": "snapshot-chunk",
+      "operation": "snapshotChunk",
+      "sourceId": "source-snapshot-chunk",
+      "args": {
+        "snapshotId": "snapshot-fixture",
+        "afterRowOrdinal": 5,
+        "maxRows": 19,
+        "maxBytes": 4194304
+      },
+      "expected": {
+        "method": "GET",
+        "path": "/api/v1/sync/snapshot-sessions/snapshot-fixture",
+        "query": {
+          "after_row_ordinal": "5",
+          "max_rows": "19",
+          "max_bytes": "4194304"
+        },
+        "sourceHeader": "source-snapshot-chunk",
+        "body": null
+      }
+    },
+    {
+      "name": "snapshot-release",
+      "operation": "snapshotRelease",
+      "sourceId": "source-snapshot-release",
+      "args": {
+        "snapshotId": "snapshot-fixture"
+      },
+      "expected": {
+        "method": "DELETE",
+        "path": "/api/v1/sync/snapshot-sessions/snapshot-fixture",
+        "query": {},
+        "sourceHeader": "source-snapshot-release",
+        "body": null
+      }
+    },
+    {
+      "name": "watch",
+      "operation": "watch",
+      "sourceId": "source-watch",
+      "args": {
+        "afterBundleSeq": 12
+      },
+      "expected": {
+        "method": "GET",
+        "path": "/api/v1/sync/watch",
+        "query": {
+          "after_bundle_seq": "12"
+        },
+        "sourceHeader": "source-watch",
+        "body": null
+      }
+    }
   ],
-  "removedOperations": ["capabilities","pushSessionCreate","pushSessionChunk","pushSessionCommit","committedRows"]
+  "removedOperations": [
+    "capabilities",
+    "pushSessionCreate",
+    "pushSessionChunk",
+    "pushSessionCommit",
+    "committedRows"
+  ],
+  "requiredProtocolHeader": {
+    "name": "Oversync-Protocol-Version",
+    "value": "v1"
+  }
 }

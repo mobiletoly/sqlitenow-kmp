@@ -1449,6 +1449,7 @@ registerOversqliteExecTask(
 )
 
 val hostRealserverBaseUrl = System.getenv("OVERSQLITE_REAL_SERVER_SMOKE_BASE_URL").orEmpty()
+val categoriesRealserverBaseUrl = System.getenv("OVERSQLITE_CATEGORIES_REAL_SERVER_SMOKE_BASE_URL").orEmpty()
 val androidRealserverBaseUrl =
     System.getenv("OVERSQLITE_ANDROID_REAL_SERVER_SMOKE_BASE_URL").orEmpty()
 
@@ -1462,6 +1463,7 @@ registerOversqliteExecTask(
             "-Pandroid.testInstrumentationRunnerArguments.OVERSQLITE_PLATFORM_TESTS=true",
             "-Pandroid.testInstrumentationRunnerArguments.OVERSQLITE_REALSERVER_TESTS=true",
             "-Pandroid.testInstrumentationRunnerArguments.OVERSQLITE_REAL_SERVER_SMOKE_BASE_URL=$androidRealserverBaseUrl",
+            "-Pandroid.testInstrumentationRunnerArguments.OVERSQLITE_CATEGORIES_REAL_SERVER_SMOKE_BASE_URL=$categoriesRealserverBaseUrl",
         ),
 )
 
@@ -1476,6 +1478,7 @@ registerOversqliteExecTask(
             "-Pandroid.testInstrumentationRunnerArguments.OVERSQLITE_REALSERVER_TESTS=true",
             "-Pandroid.testInstrumentationRunnerArguments.OVERSQLITE_REALSERVER_HEAVY=true",
             "-Pandroid.testInstrumentationRunnerArguments.OVERSQLITE_REAL_SERVER_SMOKE_BASE_URL=$androidRealserverBaseUrl",
+            "-Pandroid.testInstrumentationRunnerArguments.OVERSQLITE_CATEGORIES_REAL_SERVER_SMOKE_BASE_URL=$categoriesRealserverBaseUrl",
         ),
 )
 
@@ -1512,6 +1515,7 @@ registerOversqliteExecTask(
         mapOf(
             "SIMCTL_CHILD_OVERSQLITE_REALSERVER_TESTS" to "true",
             "SIMCTL_CHILD_OVERSQLITE_REAL_SERVER_SMOKE_BASE_URL" to hostRealserverBaseUrl,
+            "SIMCTL_CHILD_OVERSQLITE_CATEGORIES_REAL_SERVER_SMOKE_BASE_URL" to categoriesRealserverBaseUrl,
         ),
     arguments = listOf(":platform-oversqlite-test:composeApp:iosSimulatorArm64Test"),
 )
@@ -1525,6 +1529,7 @@ registerOversqliteExecTask(
             "SIMCTL_CHILD_OVERSQLITE_REALSERVER_TESTS" to "true",
             "SIMCTL_CHILD_OVERSQLITE_REALSERVER_HEAVY" to "true",
             "SIMCTL_CHILD_OVERSQLITE_REAL_SERVER_SMOKE_BASE_URL" to hostRealserverBaseUrl,
+            "SIMCTL_CHILD_OVERSQLITE_CATEGORIES_REAL_SERVER_SMOKE_BASE_URL" to categoriesRealserverBaseUrl,
         ),
     arguments = listOf(":platform-oversqlite-test:composeApp:iosSimulatorArm64Test"),
 )

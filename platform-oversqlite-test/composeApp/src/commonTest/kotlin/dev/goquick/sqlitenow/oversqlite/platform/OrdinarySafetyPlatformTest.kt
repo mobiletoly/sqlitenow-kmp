@@ -37,6 +37,81 @@ internal class OrdinarySafetyPlatformTest : PlatformCrossTargetTestSupport() {
         maxSyncWorkUnitsPerInvocation = work,
     )
 
+    // Final-state guard identity includes the service, and unique-index paths
+    // additionally bind both schema versions. It is not a bare unit SHA.
+    private fun assertApplyGuard(unit: String) {
+        assertTrue(Regex("[0-9a-f]{64}:" + Regex.escape(config().serviceId) + "(?::[0-9]+:[0-9]+)?").matches(unit))
+    }
+
+    private fun operationField(value: JsonPrimitive): JsonObject = buildJsonObject {
+        put("storage", if (value.isString) "text" else "integer"); put("value", value)
+    }
+
+    private suspend fun operationRecord(db: PlatformTestDatabase): JsonObject {
+        val columns = db.connection().queryList("SELECT name FROM pragma_table_info('_sync_operation_state') ORDER BY cid") { it.getText(0) }
+        val projection = columns.joinToString(",") { column ->
+            val quoted = "\"" + column.replace("\"", "\"\"") + "\""
+            "'$column',json_object('storage',typeof($quoted),'value',$quoted)"
+        }
+        return Json.parseToJsonElement(scalarText(db, "SELECT json_object($projection) FROM _sync_operation_state")).jsonObject
+    }
+
+    // Validate the complete retained progress against the staged wire rows and
+    // its source-bound streaming seal before permitting auxiliary changes.
+    private suspend fun assertSealedSnapshot(
+        db: PlatformTestDatabase, cfg: OversqliteConfig, before: OversqliteOperationState,
+        expectedRows: Long, boundary: Long, rawBefore: JsonObject, reason: String = before.reason,
+    ): OversqliteOperationState {
+        val after = OversqliteOperationStateStore(db.connection()).loadState()
+        val seal = json.decodeFromString(RetainedSnapshotSeal.serializer(), after.snapshotTransfer)
+        val session = seal.session
+        val state = workspaceRuntimeState(db, cfg)
+        assertEquals(state.sourceId, seal.source)
+        assertEquals(cfg.serviceId, seal.authority)
+        assertEquals(boundary, session.snapshotBundleSeq)
+        assertEquals(expectedRows, session.rowCount)
+        assertEquals("2099-01-01T00:00:00Z", session.expiresAt)
+        assertTrue(session.snapshotId.isNotEmpty())
+        assertTrue(Regex("[0-9a-f]{64}").matches(after.snapshotStageGuard))
+        assertTrue(requireNotNull(session.recovery).minimumBundleSeq <= boundary)
+        var ordinal = 0L
+        var chargedBytes = 0L
+        val rows = db.connection().queryList("SELECT schema_name,table_name,key_json,row_version,payload,snapshot_id,row_ordinal,charge FROM _sync_snapshot_stage ORDER BY row_ordinal") {
+            ordinal++
+            assertEquals(session.snapshotId, it.getText(5), "each staged row belongs to the exact sealed session")
+            assertEquals(ordinal, it.getLong(6), "sealed input uses exactly contiguous1..N ordinals")
+            val charge = 64L + 6 * listOf(it.getText(5), it.getText(0), it.getText(1), it.getText(2)).sumOf { value -> value.encodeToByteArray().size.toLong() } + it.getText(4).encodeToByteArray().size
+            assertEquals(charge, it.getLong(7), "every retained stage row is independently charged")
+            assertTrue(it.getLong(3) in 1..boundary)
+            chargedBytes += charge
+            BundleRow(it.getText(0), it.getText(1), Json.parseToJsonElement(it.getText(2)).jsonObject.mapValues { field -> field.value.jsonPrimitive.content },
+                "INSERT", it.getLong(3), Json.parseToJsonElement(it.getText(4)))
+        }
+        assertEquals(expectedRows, rows.size.toLong())
+        assertEquals(session.logicalByteCount, OversqliteCompactCodec.snapshotLogicalByteCount(state.admittedContract.generation, rows))
+        val hash = SnapshotHashWriter(seal.source, state.admittedContract.generation, session.snapshotId, boundary, session.recovery)
+        for (row in rows) {
+            val index = state.admittedContract.generation.tables.indexOfFirst { it.schema == row.schema && it.table == row.table }
+            hash.add(index, JsonArray(state.admittedContract.generation.tables[index].syncKeyColumns.map { JsonPrimitive(row.key.getValue(it)) }), row.rowVersion, row.payload!!.jsonObject)
+        }
+        assertEquals(session.snapshotHash, hash.finish(expectedRows, session.logicalByteCount))
+        assertEquals(before.copy(stagedSnapshotId = session.snapshotId, snapshotBundleSeq = boundary,
+            snapshotRowCount = expectedRows, snapshotByteCount = session.logicalByteCount, snapshotStageComplete = true,
+            snapshotStagedRowCount = expectedRows, snapshotStagedByteCount = session.logicalByteCount,
+            snapshotStageGuard = after.snapshotStageGuard, snapshotTransfer = after.snapshotTransfer, reason = reason), after)
+        val permitted = mapOf(
+            "staged_snapshot_id" to JsonPrimitive(session.snapshotId), "snapshot_bundle_seq" to JsonPrimitive(boundary),
+            "snapshot_row_count" to JsonPrimitive(expectedRows), "snapshot_byte_count" to JsonPrimitive(session.logicalByteCount),
+            "snapshot_stage_complete" to JsonPrimitive(1), "snapshot_staged_row_count" to JsonPrimitive(expectedRows),
+            "snapshot_staged_byte_count" to JsonPrimitive(session.logicalByteCount), "snapshot_stage_guard" to JsonPrimitive(after.snapshotStageGuard),
+            "snapshot_transfer" to JsonPrimitive(after.snapshotTransfer), "reason" to JsonPrimitive(reason),
+            "snapshot_stage_entries" to JsonPrimitive(expectedRows), "snapshot_stage_bytes" to JsonPrimitive(chargedBytes),
+            "workspace_context" to JsonPrimitive(""), "reserved_entries" to JsonPrimitive(0), "reserved_bytes" to JsonPrimitive(0),
+        ).mapValues { operationField(it.value) }
+        assertEquals(JsonObject(rawBefore + permitted), operationRecord(db), "all typed operation fields, cleanup cursor and recovery ownership change only by the verified seal/progress")
+        return after
+    }
+
     private suspend fun sameLifetimeRetainedRefusal(
         openingConfig: OversqliteConfig,
         seed: suspend (dev.goquick.sqlitenow.core.SafeSQLiteConnection, MockSyncServer, io.ktor.client.HttpClient) -> Unit,
@@ -93,7 +168,8 @@ internal class OrdinarySafetyPlatformTest : PlatformCrossTargetTestSupport() {
         return RuntimeState(validated, AdmittedOversqliteContract("v1", generation,
             OversqliteWireLimits(limits.maxPushRows, limits.maxPushDecodedBytes, limits.maxPullBundles,
                 limits.maxPullDecodedBytes, limits.maxSnapshotRowsPerChunk, limits.maxSnapshotDecodedBytesPerChunk,
-                limits.maxSnapshotRows, limits.maxSnapshotLogicalBytes, limits.maxRowDecodedBytes), false),
+                limits.maxSnapshotRows, limits.maxSnapshotLogicalBytes, limits.maxRowDecodedBytes,
+                limits.maxPushOutcomeDecodedBytes), false),
             "user-1", scalarText(db, "SELECT current_source_id FROM _sync_attachment_state"))
     }
 
@@ -236,13 +312,13 @@ internal class OrdinarySafetyPlatformTest : PlatformCrossTargetTestSupport() {
                         assertEquals(WorkspaceCharge(1, 536), OversqliteWorkspace(target.connection(), nodeConfig).usage(applyUnit("author-snapshot-parents", 0, "")))
                         assertEquals(0L, scalarLong(target, "SELECT count(*) FROM pragma_foreign_key_check"))
                     }
-                    verifySnapshot(db, attachmentBefore.currentSourceId, revisionBefore + 5, publicationStart, publicationEnd)
+                    verifySnapshot(db, attachmentBefore.currentSourceId, revisionBefore + 1, publicationStart, publicationEnd)
                     assertEquals(sourceBefore, OversqliteSourceStateStore(db.connection()).loadState(attachmentBefore.currentSourceId))
                     assertEquals(1L, scalarLong(db, "SELECT count(*) FROM _sync_source_state")); assertEquals(2L, sourceBefore.nextSourceBundleId)
                     assertEquals(attachmentBefore.copy(lastBundleSeqSeen = 2, rebuildRequired = false, pendingInitializationId = ""),
                         OversqliteAttachmentStateStore(db.connection()).loadState())
-                    assertEquals(JsonObject(conflictBefore + ("baseline_revision" to typed(JsonPrimitive(revisionBefore + 4 + expected.size), "integer"))),
-                        Json.parseToJsonElement(scalarText(db, conflictQuery)), "$reason only four A removals and complete snapshot installations advance conflict controls")
+                    assertEquals(JsonObject(conflictBefore + ("baseline_revision" to typed(JsonPrimitive(revisionBefore + expected.size), "integer"))),
+                        Json.parseToJsonElement(scalarText(db, conflictQuery)), "$reason only complete sealed snapshot authority installations advance conflict controls")
                     val recovered = databaseStateVector(db.connection(), listOf("nodes"))
                     val changed = setOf("nodes", "_sync_row_state", "_sync_relationships", "_sync_attachment_state", "_sync_conflict_state")
                     assertEquals(before.filterKeys { it !in changed }, recovered.filterKeys { it !in changed }, "$reason every other full primary/recovery/stage identity preserved")
@@ -389,7 +465,7 @@ internal class OrdinarySafetyPlatformTest : PlatformCrossTargetTestSupport() {
                     }
                     val publicationEnd = scalarText(db, "SELECT strftime('%Y-%m-%dT%H:%M:%fZ','now')")
                     val requestDelta = server.requestCounts.mapValues { (path, count) -> count - requestsBefore.getOrElse(path) { 0 } }.filterValues { it != 0 }
-                    assertEquals(mapOf((if (operation == "push") "/sync/push" else "/sync/pull") to 1), requestDelta, "$tag exact one public data-plane request; no repair/evasion")
+                    assertEquals(if (operation == "push") mapOf("/sync/push" to 1, "/sync/push-outcomes/ack" to 1) else mapOf("/sync/pull" to 1), requestDelta, "$tag exact data-plane request and committed terminal ack; no repair/evasion")
                     val expectedBusiness = buildJsonArray { for ((id, value) in expected.toList().sortedBy { it.first }) add(buildJsonObject {
                         put("id", id); put("name", value.first); put("parent_id", value.second?.let(::JsonPrimitive) ?: JsonNull)
                     }) }
@@ -511,6 +587,8 @@ internal class OrdinarySafetyPlatformTest : PlatformCrossTargetTestSupport() {
                     client.attach("user-1").getOrThrow()
                     db.execSQL("INSERT INTO nodes VALUES('P','parent',NULL),('Q','other',NULL),('C','child','P'),('D','grandchild','C')")
                     client.pushPending().getOrThrow()
+                    assertEquals(1L, scalarLong(db, "SELECT count(*) FROM _sync_source_state"))
+                    val sourceBefore = requireNotNull(OversqliteSourceStateStore(db.connection()).loadState(scalarText(db, "SELECT current_source_id FROM _sync_attachment_state")))
                     val stable = databaseStateVector(db.connection(), listOf("nodes"), predicates = mapOf("_sync_row_state" to "key_json<>'{\"id\":\"P\"}'"))
                     val provenance = Json.parseToJsonElement(scalarText(db, "SELECT server_provenance FROM _sync_row_state WHERE key_json='{\"id\":\"P\"}'")).jsonObject
                     db.execSQL("UPDATE nodes SET name='frozen parent' WHERE id='P'")
@@ -555,7 +633,9 @@ internal class OrdinarySafetyPlatformTest : PlatformCrossTargetTestSupport() {
                     val retained = OversqliteWorkspace(db.connection(), config()).usage(applyUnit("author-retained", 2, action))
                     assertTrue(retained.entries <= config().maxSyncWorkspaceEntries)
                     assertTrue(retained.bytes <= config().maxSyncWorkspaceBytes)
-                    for (table in listOf("_sync_source_state", "_sync_attachment_state", "_sync_opening_state", "_sync_contract_identity", "_sync_admitted_contracts", "_sync_managed_tables")) assertEquals(stable.getValue(table), after.getValue(table), "$action source/checkpoint/recovery identity does not publish a rejected push")
+                    assertEquals(sourceBefore.copy(nextSourceBundleId = sourceBefore.nextSourceBundleId + 1), OversqliteSourceStateStore(db.connection()).loadState(sourceBefore.sourceId), "only atomic rejected disposition advances the sequence; ack clears its obligation")
+                    assertEquals(1L, scalarLong(db, "SELECT count(*) FROM _sync_source_state"), "no extra or replaced source row after disposition")
+                    for (table in listOf("_sync_attachment_state", "_sync_opening_state", "_sync_contract_identity", "_sync_admitted_contracts", "_sync_managed_tables")) assertEquals(stable.getValue(table), after.getValue(table), "$action source/checkpoint/recovery identity does not publish a rejected push")
                     assertEquals(0L, scalarLong(db, "SELECT reserved_entries+reserved_bytes+length(workspace_context) FROM _sync_operation_state"))
                     assertEquals(0L, scalarLong(db, "SELECT count(*) FROM pragma_foreign_key_check"))
                     assertEquals(frozenWire, server.requestBodies.last { it.first == "/sync/push" }.second)
@@ -567,13 +647,13 @@ internal class OrdinarySafetyPlatformTest : PlatformCrossTargetTestSupport() {
                     val final = databaseStateVector(db.connection(), listOf("nodes"))
                     for (table in listOf("_sync_dirty_rows", "_sync_outbox_rows", "_sync_apply_plan", "_sync_apply_rows", "_sync_apply_edges", "_sync_push_plan", "_sync_push_nodes", "_sync_push_edges")) assertTrue(final.getValue(table).isEmpty(), "$action later guarded push reclaims $table")
                     for (id in listOf("C", "D")) {
-                        assertEquals(2L, scalarLong(db, "SELECT row_version FROM _sync_row_state WHERE key_json='{\"id\":\"$id\"}'"))
+                        assertEquals(3L, scalarLong(db, "SELECT row_version FROM _sync_row_state WHERE key_json='{\"id\":\"$id\"}'"))
                         val originalDirty = expectedDirty.jsonArray.single { it.jsonObject.getValue("key").jsonPrimitive.content == "{\"id\":\"$id\"}" }.jsonObject
                         assertEquals(Json.parseToJsonElement(originalDirty.getValue("L").jsonPrimitive.content), Json.parseToJsonElement(scalarText(db, "SELECT server_payload FROM _sync_row_state WHERE key_json='{\"id\":\"$id\"}'")), "$action full published survivor A $id")
                     }
                     assertEquals(3, server.pushRequestCount)
-                    assertEquals(3L, scalarLong(db, "SELECT next_source_bundle_id FROM _sync_source_state"))
-                    assertEquals(2L, scalarLong(db, "SELECT last_bundle_seq_seen FROM _sync_attachment_state"))
+                    assertEquals(4L, scalarLong(db, "SELECT next_source_bundle_id FROM _sync_source_state"))
+                    assertEquals(1L, scalarLong(db, "SELECT last_bundle_seq_seen FROM _sync_attachment_state"), "a push receipt cannot jump the unconsumed historical conflict observation")
                     assertEquals(0L, scalarLong(db, "SELECT reserved_entries+reserved_bytes+length(workspace_context) FROM _sync_operation_state"))
                     assertEquals(0L, scalarLong(db, "SELECT count(*) FROM pragma_foreign_key_check"))
                     println("ORDINARY_SCENARIO ${webRuntimeKind()} reachedDeleteConflictRetainsDirtyDependentBasesAcrossAdmittedActions $action/reclaimed-and-pushed")
@@ -607,7 +687,26 @@ internal class OrdinarySafetyPlatformTest : PlatformCrossTargetTestSupport() {
                         val rows = listOf(remoteNode("D", "C"), remoteNode("C", "Q"), remoteNode("Q", null)) +
                             BundleRow("main", "nodes", mapOf("id" to "P"), "DELETE", 2, null)
                         server.addRemoteBundleForTest(rows)
-                        if (operation == "pull") client.pullToStable().getOrThrow() else client.rebuild().getOrThrow()
+                        if (operation == "pull") client.pullToStable().getOrThrow() else {
+                            val blockedBefore = databaseStateVector(db.connection(), listOf("nodes", "_sync_upload_journal"))
+                            val attachmentBefore = OversqliteAttachmentStateStore(db.connection()).loadState()
+                            val operationBefore = OversqliteOperationStateStore(db.connection()).loadState()
+                            val operationRawBefore = operationRecord(db)
+                            val snapshots = server.requestCounts["/sync/snapshot-sessions"] ?: 0
+                            val refusal = assertIs<FinalStateApplyBlockedException>(client.rebuild().exceptionOrNull())
+                            assertEquals("unsafe_trigger_or_dependency", refusal.reason)
+                            assertEquals("nodes", refusal.table)
+                            val blockedAfter = databaseStateVector(db.connection(), listOf("nodes", "_sync_upload_journal"))
+                            val lifecycle = setOf("_sync_attachment_state", "_sync_operation_state", "_sync_snapshot_stage")
+                            assertEquals(blockedBefore.filterKeys { it !in lifecycle }, blockedAfter.filterKeys { it !in lifecycle }, "$tag unsafe application trigger preserves every primary/journal/stage owner")
+                            assertEquals(attachmentBefore.copy(rebuildRequired = true), OversqliteAttachmentStateStore(db.connection()).loadState())
+                            assertSealedSnapshot(db, config().copy(syncTables = listOf(SyncTable("nodes", syncKeyColumnName = "id"))), operationBefore, 3, 2, operationRawBefore, "explicit_rebuild")
+                            assertEquals(snapshots + 1, server.requestCounts["/sync/snapshot-sessions"] ?: 0, "$tag sealed input establishes which trigger-owned table the proposed delta would mutate")
+                            // The application explicitly removes its unsafe trigger.
+                            // The same positive FK-action delta must still install.
+                            db.execSQL("DROP TRIGGER damage_d")
+                            client.rebuild().getOrThrow()
+                        }
                         assertEquals(Json.parseToJsonElement("""[{"id":"C","name":"S-C","parent_id":"Q"},{"id":"D","name":"S-D","parent_id":"C"},{"id":"Q","name":"S-Q","parent_id":null}]"""),
                             Json.parseToJsonElement(scalarText(db, "SELECT json_group_array(json_object('id',id,'name',name,'parent_id',parent_id)) FROM (SELECT * FROM nodes ORDER BY id)")), "$tag complete business payload")
                         for (row in rows.filter { it.op != "DELETE" }) {
@@ -795,13 +894,30 @@ internal class OrdinarySafetyPlatformTest : PlatformCrossTargetTestSupport() {
                 val publicationStart = scalarText(db, "SELECT strftime('%Y-%m-%dT%H:%M:%fZ','now')")
                 server.beforePushCommit = null
                 client.pushPending().getOrThrow()
+                assertEquals(frozenBody, server.requestBodies.last { it.first == "/sync/push" }.second, "cancelled frozen tuple is never retransmitted")
+                assertEquals(3, server.pushRequestCount)
+                assertEquals(frozenNext + 1, scalarLong(db, "SELECT next_source_bundle_id FROM _sync_source_state"), "cancelled disposition consumes the fenced sequence")
+                assertEquals(3L, scalarLong(db, "SELECT count(*) FROM _sync_dirty_rows"))
+                assertEquals(0L, scalarLong(db, "SELECT count(*) FROM _sync_outbox_rows"))
+                assertEquals(0L, scalarLong(db, "SELECT count(*) FROM _sync_upload_journal"), "cancelled outcome is acknowledged before a successor")
+                for (row in frozenRows) {
+                    val key = row.keyJson.replace("'", "''")
+                    val retained = db.connection().queryList("SELECT op,base_row_version,base_kind,base_payload,base_provenance,payload FROM _sync_dirty_rows WHERE key_json='$key'") {
+                        listOf(JsonPrimitive(it.getText(0)), JsonPrimitive(it.getLong(1)), JsonPrimitive(it.getText(2)),
+                            if (it.isNull(3)) JsonNull else JsonPrimitive(it.getText(3)), JsonPrimitive(it.getText(4)), if (it.isNull(5)) JsonNull else JsonPrimitive(it.getText(5)))
+                    }.single()
+                    assertEquals(listOf(JsonPrimitive(row.op), JsonPrimitive(row.baseRowVersion), JsonPrimitive(row.base.kind), row.base.payload?.let(::JsonPrimitive) ?: JsonNull,
+                        JsonPrimitive(row.base.provenance), row.localPayload?.let(::JsonPrimitive) ?: JsonNull), retained, "cancelled chained rekey retains exact B/provenance/L $key")
+                }
+                client.pushPending().getOrThrow()
                 val publicationEnd = scalarText(db, "SELECT strftime('%Y-%m-%dT%H:%M:%fZ','now')")
-                assertEquals(frozenBody, server.requestBodies.last { it.first == "/sync/push" }.second, "same-lifetime replay uses exact frozen wire bytes")
-                assertEquals(4, server.pushRequestCount, "one replay request follows the failed precommit request")
-                assertEquals(frozenNext + 1, scalarLong(db, "SELECT next_source_bundle_id FROM _sync_source_state"), "confirmation advances the frozen source sequence exactly once")
+                val successorWire = Json.parseToJsonElement(server.requestBodies.last { it.first == "/sync/push" }.second).jsonObject
+                assertEquals(JsonObject(Json.parseToJsonElement(frozenBody).jsonObject + ("source_bundle_id" to JsonPrimitive(frozenNext + 1))), successorWire, "same complete intent uses a fresh operation after cancellation")
+                assertEquals(4, server.pushRequestCount, "only the fresh successor publishes the cancelled intent")
+                assertEquals(frozenNext + 2, scalarLong(db, "SELECT next_source_bundle_id FROM _sync_source_state"))
                 assertTrue(frozenHash.matches(Regex("[0-9a-f]{64}")))
                 assertEquals(source, scalarText(db, "SELECT current_source_id FROM _sync_attachment_state"))
-                assertEquals(sourceBefore.copy(nextSourceBundleId = sourceBefore.nextSourceBundleId + 2), OversqliteSourceStateStore(db.connection()).loadState(source))
+                assertEquals(sourceBefore.copy(nextSourceBundleId = sourceBefore.nextSourceBundleId + 3), OversqliteSourceStateStore(db.connection()).loadState(source))
                 assertEquals(attachmentBefore.copy(lastBundleSeqSeen = 3), OversqliteAttachmentStateStore(db.connection()).loadState())
                 assertEquals(operationBefore, OversqliteOperationStateStore(db.connection()).loadState())
                 assertEquals(Json.parseToJsonElement("""[{"id":"C","name":"child","parent_id":"S"},{"id":"D","name":"grandchild","parent_id":"C"},{"id":"Q","name":"other","parent_id":null},{"id":"S","name":"parent","parent_id":null}]"""),
@@ -815,7 +931,7 @@ internal class OrdinarySafetyPlatformTest : PlatformCrossTargetTestSupport() {
                 assertEquals("live", scalarText(db, "SELECT server_kind FROM _sync_row_state WHERE key_json='{\"id\":\"S\"}'"))
                 assertEquals(frozenP, databaseStateVector(db.connection(), listOf("nodes"), mapOf("_sync_row_state" to "key_json='{\"id\":\"P\"}'")).getValue("_sync_row_state"), "first published deletion remains byte-identical authority")
                 assertEquals(baselineRevision + 3, scalarLong(db, "SELECT baseline_revision FROM _sync_conflict_state"), "three frozen effects install exactly once")
-                assertEquals(JsonObject(frozenConflict + ("baseline_revision" to JsonPrimitive(baselineRevision + 3))),
+                assertEquals(JsonObject(frozenConflict + mapOf("baseline_revision" to JsonPrimitive(baselineRevision + 3), "dirty_revision" to JsonPrimitive(frozenConflict.getValue("dirty_revision").jsonPrimitive.long + 2 * frozenRows.size))),
                     Json.parseToJsonElement(scalarText(db, conflictQuery)), "all conflict controls preserve the frozen identity; only three authority installs advance its revision")
                 assertEquals(6L, scalarLong(db, "SELECT count(*) FROM _sync_row_state"), "P/R tombstones and C/D/Q/S authority are the complete key inventory")
                 val provenance = Json.parseToJsonElement(intermediateProvenance).jsonObject
@@ -1019,6 +1135,7 @@ internal class OrdinarySafetyPlatformTest : PlatformCrossTargetTestSupport() {
                                 it.maxPushRows, it.maxPushDecodedBytes, it.maxPullBundles, it.maxPullDecodedBytes,
                                 it.maxSnapshotRowsPerChunk, it.maxSnapshotDecodedBytesPerChunk,
                                 it.maxSnapshotRows, it.maxSnapshotLogicalBytes, it.maxRowDecodedBytes,
+                                it.maxPushOutcomeDecodedBytes,
                             )
                         }, false),
                         "user-1", scalarText(db, "SELECT current_source_id FROM _sync_attachment_state"),
@@ -1186,7 +1303,7 @@ internal class OrdinarySafetyPlatformTest : PlatformCrossTargetTestSupport() {
                 val http = server.newHttpClient()
                 try {
                     db.execSQL("CREATE TABLE nodes(id TEXT PRIMARY KEY NOT NULL, name TEXT NOT NULL, parent_id TEXT REFERENCES nodes(id) ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED)")
-                    val cfg = config().copy(syncTables = listOf(SyncTable("nodes", syncKeyColumnName = "id")), maxSyncWorkspaceBytes = 64L * 1024 * 1024)
+                    val cfg = config().copy(syncTables = listOf(SyncTable("nodes", syncKeyColumnName = "id")), maxSyncWorkspaceBytes = 64L * 1024 * 1024, recoveryMode = RecoveryMode.DISABLED)
                     val client = db.openClient(cfg, http, ServerWinsResolver)
                     client.attach("user-1").getOrThrow()
                     db.execSQL("INSERT INTO nodes VALUES('P','parent',NULL),('Q','other',NULL),('C','child','P'),('D','grandchild','C')")
@@ -1225,8 +1342,8 @@ internal class OrdinarySafetyPlatformTest : PlatformCrossTargetTestSupport() {
                             // One descriptor (512+6*two SHA identities), one
                             // intended R row, and the two current C/D FK edges
                             // remain live with the held buffer during admission.
-                            val descriptor = 512L + 6 * (64 + 64)
-                            val rowCharge = 64L + 6 * (5 + 1) + requireNotNull(selectedRow.payload).toString().encodeToByteArray().size
+                            val descriptor = 512L + 6 * (64 + 64 + 1 + cfg.serviceId.encodeToByteArray().size)
+                            val rowCharge = 96L + 6 * (5 + 1) + requireNotNull(selectedRow.payload).toString().encodeToByteArray().size
                             val edgeCharge = 2L * (64 + 6 * (5 + 1 + 5 + 1))
                             assertEquals(heldUsage.bytes + descriptor + rowCharge + edgeCharge, failure.used,
                                 "$detail/$operation simultaneous owner byte accounting")
@@ -1235,7 +1352,7 @@ internal class OrdinarySafetyPlatformTest : PlatformCrossTargetTestSupport() {
                             assertTrue(failure.reserved > failure.limit - failure.used)
                             assertFalse(failure.resumable)
                             assertEquals(SyncProgress(), failure.progress)
-                            assertTrue(Regex("[0-9a-f]{64}").matches(failure.unit))
+                            assertApplyGuard(failure.unit)
                             assertEquals(held, databaseStateVector(connection, listOf("nodes")), "$detail/$operation full primary/stage/reservation rollback")
                             assertEquals(requested, workspace.reserved(token), "operation cannot reclaim a live buffer")
                             assertEquals(pulls + 1, server.requestCounts["/sync/pull"], "one pull, no busy retry")
@@ -1296,6 +1413,8 @@ internal class OrdinarySafetyPlatformTest : PlatformCrossTargetTestSupport() {
                     }
                     db.execSQL("UPDATE nodes SET name='frozen child' WHERE id='C'")
                     db.execSQL("UPDATE nodes SET name='other frozen intent' WHERE id='D'")
+                    assertEquals(1L, scalarLong(db, "SELECT count(*) FROM _sync_source_state"))
+                    val sourceBefore = requireNotNull(OversqliteSourceStateStore(db.connection()).loadState(scalarText(db, "SELECT current_source_id FROM _sync_attachment_state")))
                     val before = databaseStateVector(db.connection(), listOf("nodes"), predicates = mapOf("_sync_row_state" to "key_json<>'{\"id\":\"C\"}'"))
                     val seedProvenance = Json.parseToJsonElement(scalarText(db, "SELECT server_provenance FROM _sync_row_state WHERE key_json='{\"id\":\"C\"}'")).jsonObject
                     val dirtyFields = "json_object('schema',schema_name,'table',table_name,'key',key_json,'op',op,'version',base_row_version,'kind',base_kind,'B',base_payload,'provenance',base_provenance,'L',payload)"
@@ -1351,7 +1470,9 @@ internal class OrdinarySafetyPlatformTest : PlatformCrossTargetTestSupport() {
                     assertEquals(0L, scalarLong(db, "SELECT count(*) FROM _sync_relationships e JOIN _sync_row_state a ON a.schema_name=e.child_schema AND a.table_name=e.child_table AND a.key_json=e.child_key WHERE e.view='server' AND e.owner_revision<>a.server_revision"))
                     val after = databaseStateVector(db.connection(), listOf("nodes"), predicates = mapOf("_sync_row_state" to "key_json<>'{\"id\":\"C\"}'"))
                     assertEquals(before.getValue("_sync_row_state"), after.getValue("_sync_row_state"), "$tag every unaffected A field")
-                    for (table in listOf("_sync_source_state", "_sync_attachment_state", "_sync_opening_state", "_sync_contract_identity", "_sync_admitted_contracts", "_sync_managed_tables")) assertEquals(before.getValue(table), after.getValue(table), "$tag source/checkpoint/recovery identity unchanged")
+                    assertEquals(sourceBefore.copy(nextSourceBundleId = sourceBefore.nextSourceBundleId + 1), OversqliteSourceStateStore(db.connection()).loadState(sourceBefore.sourceId), "only atomic rejected disposition advances the sequence; ack clears its obligation")
+                    assertEquals(1L, scalarLong(db, "SELECT count(*) FROM _sync_source_state"), "no extra or replaced source row after disposition")
+                    for (table in listOf("_sync_attachment_state", "_sync_opening_state", "_sync_contract_identity", "_sync_admitted_contracts", "_sync_managed_tables")) assertEquals(before.getValue(table), after.getValue(table), "$tag source/checkpoint/recovery identity unchanged")
                     assertEquals(OversqliteOutboxBundleState(), OversqliteOutboxStateStore(db.connection()).loadBundleState())
                     assertTrue(after.getValue("_sync_outbox_rows").isEmpty())
                     for (table in listOf("_sync_apply_plan", "_sync_apply_rows", "_sync_apply_edges")) assertTrue(after.getValue(table).isEmpty(), "$tag apply cleanup")
@@ -1387,6 +1508,8 @@ internal class OrdinarySafetyPlatformTest : PlatformCrossTargetTestSupport() {
                     val otherDirtyQuery = "SELECT json_group_array($dirtyFields) FROM (SELECT * FROM _sync_dirty_rows WHERE key_json<>'{\"id\":\"C\"}' ORDER BY key_json)"
                     val otherDirty = Json.parseToJsonElement(scalarText(db, otherDirtyQuery))
                     val seedProvenance = Json.parseToJsonElement(scalarText(db, "SELECT server_provenance FROM _sync_row_state WHERE key_json='{\"id\":\"C\"}'")).jsonObject
+                    assertEquals(1L, scalarLong(db, "SELECT count(*) FROM _sync_source_state"))
+                    val sourceBefore = requireNotNull(OversqliteSourceStateStore(db.connection()).loadState(scalarText(db, "SELECT current_source_id FROM _sync_attachment_state")))
                     val unaffected = databaseStateVector(db.connection(), listOf("nodes"), predicates = mapOf("nodes" to "id<>'C'", "_sync_row_state" to "key_json<>'{\"id\":\"C\"}'"))
                     val remote = buildJsonObject { put("id", "C"); put("name", "selected remote child"); put("parent_id", "X") }
                     server.conflictOverride = { row, _, _ -> if (row.key == mapOf("id" to "C")) PushConflictDetails(row.schema, row.table, row.key, row.op, row.baseRowVersion, 2, false, remote) else null }
@@ -1398,7 +1521,7 @@ internal class OrdinarySafetyPlatformTest : PlatformCrossTargetTestSupport() {
                     if (topology == "new") {
                         val pending = assertIs<FKReconciliationRequiredException>(client.resolveConflict(selected, MergeResult.AcceptServer).exceptionOrNull())
                         assertEquals("dependency_unavailable", pending.detail)
-                        assertTrue(Regex("[0-9a-f]{64}").matches(pending.unit))
+                        assertApplyGuard(pending.unit)
                         assertEquals(listOf(mapOf("id" to "C")), pending.sample.map { it.key })
                         assertFalse(pending.hasMore)
                         assertEquals(SyncProgress(outboundRows = 3), pending.progress)
@@ -1427,7 +1550,9 @@ internal class OrdinarySafetyPlatformTest : PlatformCrossTargetTestSupport() {
                         val after = databaseStateVector(db.connection(), listOf("nodes"), predicates = mapOf("nodes" to "id<>'C'", "_sync_row_state" to "key_json<>'{\"id\":\"C\"}'"))
                         assertEquals(unaffected.getValue("nodes"), after.getValue("nodes"), "cycle preserves every unrelated business value")
                         assertEquals(unaffected.getValue("_sync_row_state"), after.getValue("_sync_row_state"), "cycle never promotes unpublished X to authoritative A")
-                        for (table in listOf("_sync_source_state", "_sync_attachment_state", "_sync_opening_state", "_sync_contract_identity", "_sync_admitted_contracts", "_sync_managed_tables")) assertEquals(unaffected.getValue(table), after.getValue(table))
+                        assertEquals(sourceBefore.copy(nextSourceBundleId = sourceBefore.nextSourceBundleId + 1), OversqliteSourceStateStore(db.connection()).loadState(sourceBefore.sourceId))
+                    assertEquals(1L, scalarLong(db, "SELECT count(*) FROM _sync_source_state"), "no extra or replaced source row after disposition")
+                        for (table in listOf("_sync_attachment_state", "_sync_opening_state", "_sync_contract_identity", "_sync_admitted_contracts", "_sync_managed_tables")) assertEquals(unaffected.getValue(table), after.getValue(table))
                         assertEquals(Json.parseToJsonElement("""[{"view":"desired","child":"D","parent":"C"},{"view":"desired","child":"X","parent":"C"},{"view":"server","child":"C","parent":"X"},{"view":"server","child":"D","parent":"C"}]"""), Json.parseToJsonElement(scalarText(db, "SELECT json_group_array(json_object('view',view,'child',json_extract(child_key,'$.id'),'parent',json_extract(parent_key,'$.id'))) FROM (SELECT * FROM _sync_relationships ORDER BY view,child_key)")))
                         assertEquals(0L, scalarLong(db, "SELECT count(*) FROM _sync_relationships e JOIN _sync_row_state a ON a.schema_name=e.child_schema AND a.table_name=e.child_table AND a.key_json=e.child_key WHERE e.view='server' AND e.owner_revision<>a.server_revision"))
                         assertEquals(OversqliteOutboxBundleState(), OversqliteOutboxStateStore(db.connection()).loadBundleState())
@@ -1437,7 +1562,7 @@ internal class OrdinarySafetyPlatformTest : PlatformCrossTargetTestSupport() {
                     assertEquals(2, server.pushRequestCount, "$topology no hidden parent publication or repair")
                     assertEquals(0, server.requestCounts["/sync/snapshot-sessions"] ?: 0)
                     assertEquals(1L, scalarLong(db, "SELECT last_bundle_seq_seen FROM _sync_attachment_state"))
-                    assertEquals(2L, scalarLong(db, "SELECT next_source_bundle_id FROM _sync_source_state"))
+                    assertEquals(3L, scalarLong(db, "SELECT next_source_bundle_id FROM _sync_source_state"), "terminal rejection ack consumes its original sequence even while the row decision remains pending")
                     assertEquals("attached", scalarText(db, "SELECT binding_state FROM _sync_attachment_state"))
                     assertEquals(0L, scalarLong(db, "SELECT reserved_entries+reserved_bytes+length(workspace_context) FROM _sync_operation_state"))
                     assertEquals(0L, scalarLong(db, "SELECT count(*) FROM pragma_foreign_key_check"))
@@ -1483,7 +1608,7 @@ internal class OrdinarySafetyPlatformTest : PlatformCrossTargetTestSupport() {
                     assertEquals(0L, scalarLong(db, "SELECT count(*) FROM _sync_dirty_rows"))
                     val pending = assertIs<FKReconciliationRequiredException>(client.resolveConflict(selected, MergeResult.AcceptServer).exceptionOrNull())
                     assertEquals(detail, pending.detail)
-                    assertTrue(Regex("[0-9a-f]{64}").matches(pending.unit))
+                    assertApplyGuard(pending.unit)
                     assertEquals(listOf(mapOf("id" to "P")), pending.sample.map { it.key })
                     assertFalse(pending.hasMore)
                     assertTrue(json.encodeToString(pending.sample).encodeToByteArray().size <= 4096)
@@ -1515,7 +1640,7 @@ internal class OrdinarySafetyPlatformTest : PlatformCrossTargetTestSupport() {
                     assertEquals(wire, server.requestBodies.last { it.first == "/sync/push" }.second)
                     assertEquals(2, server.pushRequestCount, "$detail resolution performs no hidden HTTP retry")
                     assertEquals(1L, scalarLong(db, "SELECT last_bundle_seq_seen FROM _sync_attachment_state"))
-                    assertEquals(2L, scalarLong(db, "SELECT next_source_bundle_id FROM _sync_source_state"))
+                    assertEquals(3L, scalarLong(db, "SELECT next_source_bundle_id FROM _sync_source_state"), "terminal rejection ack consumes its original sequence even while the row decision remains pending")
                     assertEquals(0, server.requestCounts["/sync/snapshot-sessions"] ?: 0)
                     assertEquals("attached", scalarText(db, "SELECT binding_state FROM _sync_attachment_state"))
                     assertEquals(0L, scalarLong(db, "SELECT reserved_entries+reserved_bytes+length(workspace_context) FROM _sync_operation_state"))
@@ -1539,7 +1664,7 @@ internal class OrdinarySafetyPlatformTest : PlatformCrossTargetTestSupport() {
                 try {
                     db.execSQL("CREATE TABLE nodes(id TEXT PRIMARY KEY NOT NULL, name TEXT NOT NULL, parent_id TEXT REFERENCES nodes(id) ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED)")
                     val client = db.openClient(
-                        config().copy(syncTables = listOf(SyncTable("nodes", syncKeyColumnName = "id"))),
+                        config().copy(syncTables = listOf(SyncTable("nodes", syncKeyColumnName = "id")), recoveryMode = RecoveryMode.DISABLED),
                         http, ServerWinsResolver,
                     )
                     client.attach("user-1").getOrThrow()
@@ -1564,7 +1689,7 @@ internal class OrdinarySafetyPlatformTest : PlatformCrossTargetTestSupport() {
                     val before = databaseStateVector(db.connection(), listOf("nodes"), ignoreDerivedCharges = true)
                     val pending = assertIs<FKReconciliationRequiredException>(client.pullToStable().exceptionOrNull())
                     assertEquals(detail, pending.detail)
-                    assertEquals(64, pending.unit.length)
+                    assertApplyGuard(pending.unit)
                     assertEquals(mapOf("id" to "R"), pending.sample.single().key)
                     assertTrue(pending.sample.size <= 16, "$detail bounded sample count")
                     assertTrue(json.encodeToString(pending.sample).encodeToByteArray().size <= 4096,
@@ -1683,7 +1808,9 @@ internal class OrdinarySafetyPlatformTest : PlatformCrossTargetTestSupport() {
             assertEquals(request, server.requestBodies.last { it.first == "/sync/push" }.second, "pending replays exact frozen request bytes")
             assertEquals(hash, scalarText(db, "SELECT canonical_request_hash FROM _sync_outbox_bundle"))
             assertEquals(frozen, databaseStateVector(db.connection(), listOf("nodes")), "replay preserves full primary, stage, reservation and recovery identity")
-            assertEquals(3, server.pushRequestCount, "seed, confirmed pending, exact replay")
+            assertEquals(2, server.pushRequestCount, "seed and confirmed pending; retained immutable C settles without retransmission")
+            assertEquals(0, server.requestCounts["/sync/push-outcomes/resolve"] ?: 0)
+            assertEquals(1, server.requestCounts["/sync/push-outcomes/ack"], "unsafe C remains unacknowledged")
             assertEquals(0, server.requestCounts["/sync/snapshot-sessions"] ?: 0, "pending push never evades through snapshot")
             assertEquals(0L, scalarLong(db, "SELECT count(*) FROM pragma_foreign_key_check"))
         } finally { http.close(); db.close(); cleanupOwnedWorkerStorage() }
@@ -1712,6 +1839,7 @@ internal class OrdinarySafetyPlatformTest : PlatformCrossTargetTestSupport() {
             val connection = db.connection()
             val attachmentBefore = OversqliteAttachmentStateStore(connection).loadState()
             val operationBefore = OversqliteOperationStateStore(connection).loadState()
+            val operationRawBefore = operationRecord(db)
             val primaryBefore = databaseStateVector(connection, listOf("nodes"),
                 ignoreDerivedCharges = true, includeDurableStages = false)
                 .filterKeys { it != "_sync_attachment_state" && it != "_sync_operation_state" }
@@ -1720,7 +1848,7 @@ internal class OrdinarySafetyPlatformTest : PlatformCrossTargetTestSupport() {
             assertEquals(listOf(PushDependencyRecordRef("main", "nodes", mapOf("id" to "R"))), pending.sample)
             assertFalse(pending.hasMore)
             assertEquals(SyncProgress(), pending.progress)
-            assertTrue(pending.unit.matches(Regex("[0-9a-f]{64}")))
+            assertApplyGuard(pending.unit)
             assertNotEquals(pullPending.unit, pending.unit, "snapshot input and operation context change guarded identity")
             assertEquals(primaryBefore, databaseStateVector(connection, listOf("nodes"),
                 ignoreDerivedCharges = true, includeDurableStages = false)
@@ -1732,7 +1860,13 @@ internal class OrdinarySafetyPlatformTest : PlatformCrossTargetTestSupport() {
             assertEquals(attachmentBefore.copy(rebuildRequired = true),
                 OversqliteAttachmentStateStore(connection).loadState())
             val operationAfter = OversqliteOperationStateStore(connection).loadState()
-            assertEquals(operationBefore.copy(reason = "explicit_rebuild"), operationAfter)
+            assertEquals(operationAfter, assertSealedSnapshot(db, config().copy(syncTables = listOf(SyncTable("nodes", syncKeyColumnName = "id"))), operationBefore, 4, 2, operationRawBefore, "explicit_rebuild"))
+            val retained = retainedDatabaseVector(connection)
+            val repeated = assertIs<FKReconciliationRequiredException>(client.rebuild().exceptionOrNull())
+            assertEquals(pending.unit, repeated.unit)
+            assertEquals(pending.sample, repeated.sample)
+            assertEquals(operationAfter, OversqliteOperationStateStore(connection).loadState())
+            assertEquals(retained, retainedDatabaseVector(connection), "same sealed input and complete primary state survive retry")
             assertEquals(4L, scalarLong(db, "SELECT count(*) FROM _sync_snapshot_stage"))
             assertEquals(1L, scalarLong(db, "SELECT count(DISTINCT snapshot_id) FROM _sync_snapshot_stage"))
             assertTrue(scalarLong(db, "SELECT sum(charge) FROM _sync_snapshot_stage") > 0,
@@ -1774,7 +1908,7 @@ internal class OrdinarySafetyPlatformTest : PlatformCrossTargetTestSupport() {
                     val before = databaseStateVector(db.connection(), listOf("nodes"), ignoreDerivedCharges = true)
                     val pending = assertIs<FKReconciliationRequiredException>(client.pullToStable().exceptionOrNull())
                     assertEquals("dependency_unavailable", pending.detail)
-                    assertTrue(pending.unit.matches(Regex("[0-9a-f]{64}")))
+                    assertApplyGuard(pending.unit)
                     assertEquals(if (sampleBytes <= 4096) listOf(ref) else emptyList(), pending.sample,
                         "exact encoded sample boundary $sampleBytes")
                     assertEquals(sampleBytes > 4096, pending.hasMore)
@@ -2150,12 +2284,31 @@ internal class OrdinarySafetyPlatformTest : PlatformCrossTargetTestSupport() {
                     assertFalse(attachmentBefore.rebuildRequired, "recovery must first be discovered by this public pull")
                     val sourceBefore = requireNotNull(OversqliteSourceStateStore(db.connection()).loadState(attachmentBefore.currentSourceId))
                     val before = databaseStateVector(db.connection(), listOf("nodes"))
+                    val operationRawBefore = operationRecord(db)
                     val conflictColumns = listOf("singleton_key", "dirty_revision", "baseline_revision", "decision_state", "source_id", "source_bundle_id", "canonical_request_hash", "generation_id", "generation_fingerprint", "conflict_json", "local_payload_json")
                     fun projection(columns: List<String>) = columns.joinToString(",") { "'$it',json_object('storage',typeof($it),'value',$it)" }
                     fun typed(value: JsonElement, storage: String) = buildJsonObject { put("storage", storage); put("value", value) }
                     val conflictQuery = "SELECT json_object(${projection(conflictColumns)}) FROM _sync_conflict_state"
                     val conflictBefore = Json.parseToJsonElement(scalarText(db, conflictQuery)).jsonObject
                     val revisionBefore = conflictBefore.getValue("baseline_revision").jsonObject.getValue("value").jsonPrimitive.long
+                    val boundary = if (reason == "checkpoint_ahead") 3L else 2L
+                    if (reason == "checkpoint_ahead") {
+                        val failure = assertIs<SnapshotHttpException>(client.pullToStable().exceptionOrNull())
+                        assertContains(failure.message.orEmpty(), "recovery_floor_ahead")
+                        val refused = databaseStateVector(db.connection(), listOf("nodes"))
+                        val auxiliary = setOf("_sync_attachment_state", "_sync_operation_state")
+                        assertEquals(before.filterKeys { it !in auxiliary }, refused.filterKeys { it !in auxiliary }, "a lower snapshot cannot roll back any installed authority or intent")
+                        assertEquals(attachmentBefore.copy(rebuildRequired = true), OversqliteAttachmentStateStore(db.connection()).loadState())
+                        assertEquals(3L, client.recoveryStatus().getOrThrow().observedBoundary)
+                        assertEquals(0L, scalarLong(db, "SELECT count(*) FROM _sync_snapshot_stage"))
+                        val parked = retainedDatabaseVector(db.connection())
+                        val requestsBeforeRetry = server.requestCounts.toMap()
+                        assertIs<RecoveryBlockedException>(client.pullToStable().exceptionOrNull())
+                        assertEquals(parked, retainedDatabaseVector(db.connection()), "unchanged floor failure remains parked")
+                        assertEquals(requestsBeforeRetry, server.requestCounts, "parked recovery makes no repeated snapshot request")
+                        assertEquals(3L, server.addRemoteBundleForTest(emptyList()), "authority must first reach the installed observation floor")
+                        client.retryRecovery().getOrThrow()
+                    }
                     val requestStart = server.requestSourceIds.size
                     val pushesBefore = server.pushRequestCount
                     val chunksBefore = server.snapshotChunkRequestCount
@@ -2163,8 +2316,8 @@ internal class OrdinarySafetyPlatformTest : PlatformCrossTargetTestSupport() {
                     val report = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) { client.pullToStable().getOrThrow() }
                     val publicationEnd = scalarText(db, "SELECT strftime('%Y-%m-%dT%H:%M:%fZ','now')")
                     assertEquals(RemoteSyncOutcome.APPLIED_SNAPSHOT, report.outcome)
-                    assertEquals(RestoreSummary(bundleSeq = 2, rowCount = 4), report.restore)
-                    assertEquals(SyncStatus(AuthorityStatus.AUTHORITATIVE_MATERIALIZED, PendingSyncStatus(false, 0, false), 2), report.status)
+                    assertEquals(RestoreSummary(bundleSeq = boundary, rowCount = 4), report.restore)
+                    assertEquals(SyncStatus(AuthorityStatus.AUTHORITATIVE_MATERIALIZED, PendingSyncStatus(false, 0, false), boundary), report.status)
                     fun verifyRestoreCounters(owner: DefaultOversqliteClient) {
                         val counters = owner.snapshotRestoreDiagnosticsForTest()
                         assertEquals(1L, counters.sessionCount); assertEquals(1L, counters.fetchedChunks)
@@ -2178,11 +2331,12 @@ internal class OrdinarySafetyPlatformTest : PlatformCrossTargetTestSupport() {
                     }
                     verifyRestoreCounters(client)
                     val requests = server.requestSourceIds.drop(requestStart)
-                    assertEquals(4, requests.size, "$reason one rejected pull, one snapshot creation, one chunk and cleanup")
-                    assertEquals("/sync/pull", requests[0].first); assertEquals("/sync/snapshot-sessions", requests[1].first)
-                    assertTrue(requests[2].first.startsWith("/sync/snapshot-sessions/"))
-                    assertEquals(requests[2].first, requests[3].first)
-                    assertEquals(List(4) { attachmentBefore.currentSourceId }, requests.map { it.second }, "checkpoint recovery has no source retarget")
+                    assertEquals(if (reason == "checkpoint_ahead") 3 else 4, requests.size, "$reason captured recovery resumes without another rejected pull")
+                    val snapshotRequests = if (reason == "checkpoint_ahead") requests else requests.drop(1).also { assertEquals("/sync/pull", requests[0].first) }
+                    assertEquals("/sync/snapshot-sessions", snapshotRequests[0].first)
+                    assertTrue(snapshotRequests[1].first.startsWith("/sync/snapshot-sessions/"))
+                    assertEquals(snapshotRequests[1].first, snapshotRequests[2].first)
+                    assertEquals(List(requests.size) { attachmentBefore.currentSourceId }, requests.map { it.second }, "checkpoint recovery has no source retarget")
                     assertEquals(chunksBefore + 1, server.snapshotChunkRequestCount)
                     assertTrue(server.requestedSnapshotSourceReplacements.isEmpty())
                     assertEquals(pushesBefore, server.pushRequestCount, "recovery never sends outbound intent")
@@ -2202,7 +2356,7 @@ internal class OrdinarySafetyPlatformTest : PlatformCrossTargetTestSupport() {
                             val version = if (id == "C") 2L else 1L
                             assertEquals(value, Json.parseToJsonElement(scalarText(target, "SELECT server_payload FROM _sync_row_state WHERE $predicate")))
                             assertEquals(JsonObject(seedProvenance + mapOf("origin" to JsonPrimitive("snapshot"), "origin_source_id" to JsonPrimitive(source),
-                                "bundle_sequence" to JsonPrimitive(2), "authoritative_version" to JsonPrimitive(version))),
+                                "bundle_sequence" to JsonPrimitive(boundary), "authoritative_version" to JsonPrimitive(version))),
                                 Json.parseToJsonElement(scalarText(target, "SELECT server_provenance FROM _sync_row_state WHERE $predicate")), "$reason complete provenance $id")
                             assertEquals(version, scalarLong(target, "SELECT row_version FROM _sync_row_state WHERE $predicate"))
                             assertEquals("live", scalarText(target, "SELECT server_kind FROM _sync_row_state WHERE $predicate"))
@@ -2229,18 +2383,29 @@ internal class OrdinarySafetyPlatformTest : PlatformCrossTargetTestSupport() {
                             assertTrue(vector.getValue(table).isEmpty(), "$reason retired transient owner $table")
                         assertEquals(OversqliteOperationState(), OversqliteOperationStateStore(target.connection()).loadState())
                         assertEquals(OversqliteOutboxBundleState(), OversqliteOutboxStateStore(target.connection()).loadBundleState())
-                        assertEquals(WorkspaceCharge(1, 536), OversqliteWorkspace(target.connection(), nodeConfig).usage(applyUnit("author-pull-recovery", 0, "")))
+                        assertEquals(WorkspaceCharge(1, 536 + 6 * scalarLong(target, "SELECT length(CAST(recovery_state AS BLOB)) FROM _sync_operation_state")), OversqliteWorkspace(target.connection(), nodeConfig).usage(applyUnit("author-pull-recovery", 0, "")))
                         assertEquals(0L, scalarLong(target, "SELECT count(*) FROM pragma_foreign_key_check"))
                     }
-                    verifySnapshot(db, attachmentBefore.currentSourceId, revisionBefore + 5, publicationStart, publicationEnd)
+                    verifySnapshot(db, attachmentBefore.currentSourceId, revisionBefore + 1, publicationStart, publicationEnd)
                     assertEquals(sourceBefore, OversqliteSourceStateStore(db.connection()).loadState(attachmentBefore.currentSourceId))
                     assertEquals(1L, scalarLong(db, "SELECT count(*) FROM _sync_source_state")); assertEquals(2L, sourceBefore.nextSourceBundleId)
-                    assertEquals(attachmentBefore.copy(lastBundleSeqSeen = 2, rebuildRequired = false, pendingInitializationId = ""),
+                    assertEquals(attachmentBefore.copy(lastBundleSeqSeen = boundary, rebuildRequired = false, pendingInitializationId = ""),
                         OversqliteAttachmentStateStore(db.connection()).loadState())
-                    assertEquals(JsonObject(conflictBefore + ("baseline_revision" to typed(JsonPrimitive(revisionBefore + 8), "integer"))),
-                        Json.parseToJsonElement(scalarText(db, conflictQuery)), "$reason only four A removals and four installations advance conflict controls")
+                    assertEquals(JsonObject(conflictBefore + ("baseline_revision" to typed(JsonPrimitive(revisionBefore + 4), "integer"))),
+                        Json.parseToJsonElement(scalarText(db, conflictQuery)), "$reason only four sealed snapshot authority installations advance conflict controls")
                     val recovered = databaseStateVector(db.connection(), listOf("nodes"))
-                    val changed = setOf("nodes", "_sync_row_state", "_sync_relationships", "_sync_attachment_state", "_sync_conflict_state")
+                    val operationAfter = OversqliteOperationStateStore(db.connection()).loadState()
+                    assertEquals(OversqliteOperationState(), operationAfter)
+                    val record = json.decodeFromString(AutomaticRecoveryRecord.serializer(), scalarText(db, "SELECT recovery_state FROM _sync_operation_state"))
+                    assertTrue(Regex("[0-9a-f]{64}").matches(record.status.recoveryId))
+                    assertTrue(Regex("[0-9a-f]{64}").matches(record.localGuard))
+                    assertEquals(reason, record.unitHash, "history discovery binds its exact reason as the durable failure identity")
+                    assertEquals(AutomaticRecoveryRecord(status = RecoveryStatus("completed", reason, record.status.recoveryId, boundary),
+                        sourceId = attachmentBefore.currentSourceId, generationFingerprint = seedProvenance.getValue("generation_fingerprint").jsonPrimitive.content,
+                        serviceId = nodeConfig.serviceId, originalReason = reason, unitHash = record.unitHash, localGuard = record.localGuard), record)
+                    assertEquals(0L, scalarLong(db, "SELECT reserved_entries+reserved_bytes+length(workspace_context)+snapshot_stage_entries+snapshot_stage_bytes FROM _sync_operation_state"))
+                    assertEquals(JsonObject(operationRawBefore + ("recovery_state" to operationField(JsonPrimitive(Json { encodeDefaults = true; ignoreUnknownKeys = false }.encodeToString(AutomaticRecoveryRecord.serializer(), record))))), operationRecord(db), "the full raw operation row permits only the independently validated recovery record")
+                    val changed = setOf("nodes", "_sync_row_state", "_sync_relationships", "_sync_attachment_state", "_sync_conflict_state", "_sync_operation_state")
                     assertEquals(before.filterKeys { it !in changed }, recovered.filterKeys { it !in changed }, "$reason every other full primary/recovery/stage identity preserved")
                     println("ORDINARY_SCENARIO ${webRuntimeKind()} recoveryFirstDiscoveredInPull $reason/full-snapshot")
                     val peer = newCoordinatedDb()
@@ -2268,7 +2433,7 @@ internal class OrdinarySafetyPlatformTest : PlatformCrossTargetTestSupport() {
                         assertTrue(peerSource.createdAt >= peerStart && peerSource.createdAt <= peerEnd)
                         assertEquals(1L, scalarLong(peer, "SELECT count(*) FROM _sync_source_state"))
                         assertEquals(peerAttachment.copy(attachmentEpoch = peerAttachment.attachmentEpoch + 1, bindingState = attachmentBindingAttached,
-                            attachedUserId = "user-1", schemaName = attachmentBefore.schemaName, lastBundleSeqSeen = 2, rebuildRequired = false, pendingInitializationId = ""),
+                            attachedUserId = "user-1", schemaName = attachmentBefore.schemaName, lastBundleSeqSeen = boundary, rebuildRequired = false, pendingInitializationId = ""),
                             OversqliteAttachmentStateStore(peer.connection()).loadState())
                         assertEquals(JsonObject(peerConflict + ("baseline_revision" to typed(JsonPrimitive(4), "integer"))),
                             Json.parseToJsonElement(scalarText(peer, conflictQuery)), "$reason complete independent conflict controls")
@@ -2291,186 +2456,191 @@ internal class OrdinarySafetyPlatformTest : PlatformCrossTargetTestSupport() {
         } finally { cleanupOwnedWorkerStorage() }
     }
 
-    @Test fun preparedOutboxSurvivesSourceRecovery() = runTest(timeout = 180.seconds) {
-        if (!scenarioEnabled("preparedOutboxSurvivesSourceRecovery")) return@runTest
-        val server = MockSyncServer(
-            registeredTableSpecs = testRegisteredTableSpecs("nodes"),
-            generationResponses = mapOf(1L to nodeGeneration("CASCADE")),
-        )
-        val db = newCoordinatedDb()
-        val http = server.newHttpClient()
+    @Test fun preparedOutboxSurvivesSourceRecovery() = runTest(timeout = 180.seconds) { withContext(Dispatchers.Default) {
+        if (!scenarioEnabled("preparedOutboxSurvivesSourceRecovery")) return@withContext
+        fun typedProjection(columns: List<String>) = columns.joinToString(",") { "'$it',json_object('storage',typeof($it),'value',$it)" }
+        fun typed(value: JsonElement, storage: String) = buildJsonObject { put("storage", storage);put("value", value) }
+        fun payload(id: String, name: String, parent: String?) = buildJsonObject {
+            put("id", typed(JsonPrimitive(id), "text"));put("name", typed(JsonPrimitive(name), "text"))
+            put("parent_id", typed(parent?.let(::JsonPrimitive) ?: JsonNull, if (parent == null) "null" else "text"))
+        }
+        val conflictColumns = listOf("singleton_key", "dirty_revision", "baseline_revision", "decision_state", "source_id", "source_bundle_id", "canonical_request_hash", "generation_id", "generation_fingerprint", "conflict_json", "local_payload_json")
+        val businessProjection = typedProjection(listOf("id", "name", "parent_id"))
+        val conflictQuery = "SELECT json_object(${typedProjection(conflictColumns)}) FROM _sync_conflict_state"
         try {
-            db.execSQL("CREATE TABLE nodes(id TEXT PRIMARY KEY NOT NULL, name TEXT NOT NULL, parent_id TEXT REFERENCES nodes(id) ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED)")
-            val client = db.openClient(
-                config().copy(syncTables = listOf(SyncTable("nodes", syncKeyColumnName = "id"))),
-                http, ServerWinsResolver,
-            )
-            client.attach("user-1").getOrThrow()
-            db.execSQL("INSERT INTO nodes VALUES('P','parent',NULL),('Q','other',NULL),('C','child','P'),('D','grandchild','C')")
-            client.pushPending().getOrThrow()
-            db.execSQL("UPDATE nodes SET name='frozen L' WHERE id='P'")
-            server.beforePushCommit = { throw CancellationException("freeze original before remote commit") }
-            assertFailsWith<CancellationException> { client.pushPending().getOrThrow() }
-            server.beforePushCommit = null
-            val frozen = databaseStateVector(db.connection(), listOf("nodes"))
-            assertTrue(frozen.getValue("_sync_push_plan").isNotEmpty(), "cancelled send retains its charged invalid derived plan")
-            val workspace = OversqliteWorkspace(db.connection(), config())
-            val workspaceUnit = applyUnit("author-prepared-recovery", 0, "")
-            val frozenUsage = workspace.usage(workspaceUnit)
-            assertTrue(frozenUsage.entries > 1 && frozenUsage.bytes > 536)
-            assertTrue(frozenUsage.entries <= config().maxSyncWorkspaceEntries && frozenUsage.bytes <= config().maxSyncWorkspaceBytes)
-            val originalRows = OversqliteOutboxStateStore(db.connection()).loadRows()
-            val originalBundle = OversqliteOutboxStateStore(db.connection()).loadBundleState()
-            val originalSource = scalarText(db, "SELECT current_source_id FROM _sync_attachment_state")
-            val sourceBefore = requireNotNull(OversqliteSourceStateStore(db.connection()).loadState(originalSource))
-            val attachmentBefore = OversqliteAttachmentStateStore(db.connection()).loadState()
-            val operationBefore = OversqliteOperationStateStore(db.connection()).loadState()
-            fun typedProjection(columns: List<String>) = columns.joinToString(",") { "'$it',json_object('storage',typeof($it),'value',$it)" }
-            val outboxColumns = listOf("source_bundle_id", "row_ordinal", "schema_name", "table_name", "key_json", "wire_key_json", "op", "base_row_version", "base_kind", "base_payload", "base_provenance", "local_payload", "wire_payload")
-            val outboxQuery = "SELECT json_object(${typedProjection(outboxColumns)}) FROM _sync_outbox_rows"
-            val frozenTypedRow = Json.parseToJsonElement(scalarText(db, outboxQuery)).jsonObject
-            val bundleColumns = listOf("singleton_key", "canonical_json_contract", "state", "source_id", "source_bundle_id", "initialization_id", "canonical_request_hash", "row_count")
-            val bundleQuery = "SELECT json_object(${typedProjection(bundleColumns)}) FROM _sync_outbox_bundle"
-            val frozenTypedBundle = Json.parseToJsonElement(scalarText(db, bundleQuery)).jsonObject
-            val conflictColumns = listOf("singleton_key", "dirty_revision", "baseline_revision", "decision_state", "source_id", "source_bundle_id", "canonical_request_hash", "generation_id", "generation_fingerprint", "conflict_json", "local_payload_json")
-            val conflictQuery = "SELECT json_object(${typedProjection(conflictColumns)}) FROM _sync_conflict_state"
-            val conflictBefore = Json.parseToJsonElement(scalarText(db, conflictQuery)).jsonObject
-            val revisionBefore = conflictBefore.getValue("baseline_revision").jsonObject.getValue("value").jsonPrimitive.long
-            val provenanceBefore = Json.parseToJsonElement(scalarText(db, "SELECT server_provenance FROM _sync_row_state WHERE key_json='{\"id\":\"P\"}'")).jsonObject
-            // A newer snapshot changes C's complete authority/relationship while
-            // P's frozen historical B/provenance and original wire stay owned.
-            assertEquals(2L, server.addRemoteBundleForTest(listOf(BundleRow("main", "nodes", mapOf("id" to "C"), "UPDATE", 2,
-                Json.parseToJsonElement("""{"id":"C","name":"snapshot child","parent_id":"Q"}""")))))
-            val replacement = "00000000-0000-4000-8000-000000000099"
-            OversqliteSourceStateStore(db.connection()).ensureSource(replacement)
-            val replacementBefore = requireNotNull(OversqliteSourceStateStore(db.connection()).loadState(replacement))
-            OversqliteAttachmentStateStore(db.connection()).setRebuildRequired(true)
-            OversqliteOperationStateStore(db.connection()).persistState(OversqliteOperationState(
-                kind = operationKindSourceRecovery,
-                reason = SourceRecoveryReason.HISTORY_PRUNED.toPersistedOperationReason(),
-                replacementSourceId = replacement,
-            ))
-            val requestStart = server.requestSourceIds.size
-            val snapshotCreatesBefore = server.requestCounts["/sync/snapshot-sessions"] ?: 0
-            val snapshotChunksBefore = server.snapshotChunkRequestCount
-            val publicationStart = scalarText(db, "SELECT strftime('%Y-%m-%dT%H:%M:%fZ','now')")
-            // Keep the real MockEngine dispatcher and retirement deadline on the same clock.
-            assertEquals(RemoteSyncOutcome.APPLIED_SNAPSHOT, kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) { client.rebuild().getOrThrow() }.outcome)
-            val publicationEnd = scalarText(db, "SELECT strftime('%Y-%m-%dT%H:%M:%fZ','now')")
-            val recoveredRows = OversqliteOutboxStateStore(db.connection()).loadRows()
-            fun typed(value: JsonElement, storage: String) = buildJsonObject { put("storage", storage); put("value", value) }
-            assertEquals(originalRows.map { it.copy(sourceBundleId = 1) }, recoveredRows, "every historical B/wire/L/key/order field survives source rebind")
-            assertEquals(JsonObject(frozenTypedRow + ("source_bundle_id" to typed(JsonPrimitive(1), "integer"))),
-                Json.parseToJsonElement(scalarText(db, outboxQuery)), "full typed frozen row permits only source bundle rebind")
-            assertEquals(originalBundle.copy(sourceId = replacement, sourceBundleId = 1), OversqliteOutboxStateStore(db.connection()).loadBundleState())
-            assertEquals(JsonObject(frozenTypedBundle + mapOf("source_id" to typed(JsonPrimitive(replacement), "text"), "source_bundle_id" to typed(JsonPrimitive(1), "integer"))),
-                Json.parseToJsonElement(scalarText(db, bundleQuery)), "full typed bundle permits only proven source/ID rebind")
-            assertEquals(sourceBefore.copy(replacedBySourceId = replacement), OversqliteSourceStateStore(db.connection()).loadState(originalSource))
-            assertEquals(replacementBefore.copy(nextSourceBundleId = 2), OversqliteSourceStateStore(db.connection()).loadState(replacement))
-            assertEquals(2L, scalarLong(db, "SELECT count(*) FROM _sync_source_state"))
-            assertEquals(attachmentBefore.copy(currentSourceId = replacement, attachmentEpoch = attachmentBefore.attachmentEpoch + 1, lastBundleSeqSeen = 2, rebuildRequired = false, pendingInitializationId = ""),
-                OversqliteAttachmentStateStore(db.connection()).loadState())
-            assertEquals(operationBefore, OversqliteOperationStateStore(db.connection()).loadState())
-            assertEquals(JsonObject(conflictBefore + ("baseline_revision" to typed(JsonPrimitive(revisionBefore + 8), "integer"))),
-                Json.parseToJsonElement(scalarText(db, conflictQuery)), "only four old A deletes and four snapshot A installs advance the control vector")
-            assertEquals(snapshotCreatesBefore + 1, server.requestCounts["/sync/snapshot-sessions"] ?: 0)
-            assertEquals(snapshotChunksBefore + 1, server.snapshotChunkRequestCount)
-            assertEquals(listOf(SnapshotSourceReplacement(originalSource, replacement, "history_pruned")), server.requestedSnapshotSourceReplacements)
-            val snapshotRequests = server.requestSourceIds.drop(requestStart).filter { it.first.startsWith("/sync/snapshot-sessions") }
-            assertEquals(3, snapshotRequests.size, "one authenticated creation, chunk and session cleanup")
-            assertEquals("/sync/snapshot-sessions", snapshotRequests[0].first)
-            assertTrue(snapshotRequests[1].first.startsWith("/sync/snapshot-sessions/"))
-            assertEquals(snapshotRequests[1].first, snapshotRequests[2].first, "chunk and cleanup own the same snapshot session")
-            assertEquals(listOf(originalSource, replacement, replacement), snapshotRequests.map { it.second }, "old source reserves replacement; new source owns chunk and cleanup")
-            assertTrue(server.requestSourceIds.drop(requestStart).none { it.first == "/sync/push" }, "rebuild preserves prepared intent without sending it")
-            fun payload(id: String, name: String, parent: String?) = buildJsonObject {
-                putJsonObject("id") { put("storage", "text"); put("value", id) }
-                putJsonObject("name") { put("storage", "text"); put("value", name) }
-                putJsonObject("parent_id") { put("storage", if (parent == null) "null" else "text"); put("value", parent?.let(::JsonPrimitive) ?: JsonNull) }
-            }
-            val expectedA = linkedMapOf("C" to payload("C", "snapshot child", "Q"), "D" to payload("D", "grandchild", "C"), "P" to payload("P", "parent", null), "Q" to payload("Q", "other", null))
-            assertEquals(4L, scalarLong(db, "SELECT count(*) FROM _sync_row_state"))
-            for ((index, entry) in expectedA.entries.withIndex()) {
-                val (id, expected) = entry
-                val predicate = "schema_name='main' AND table_name='nodes' AND key_json='{\"id\":\"$id\"}'"
-                val version = if (id == "C") 2L else 1L
-                assertEquals(expected, Json.parseToJsonElement(scalarText(db, "SELECT server_payload FROM _sync_row_state WHERE $predicate")), "complete snapshot A $id")
-                assertEquals(JsonObject(provenanceBefore + mapOf("origin" to JsonPrimitive("snapshot"), "bundle_sequence" to JsonPrimitive(2), "authoritative_version" to JsonPrimitive(version))),
-                    Json.parseToJsonElement(scalarText(db, "SELECT server_provenance FROM _sync_row_state WHERE $predicate")), "all snapshot provenance fields $id, including original hydration source")
-                assertEquals(version, scalarLong(db, "SELECT row_version FROM _sync_row_state WHERE $predicate"))
-                assertEquals("live", scalarText(db, "SELECT server_kind FROM _sync_row_state WHERE $predicate"))
-                assertEquals(1L, scalarLong(db, "SELECT relationships_known FROM _sync_row_state WHERE $predicate"))
-                assertEquals(revisionBefore + 5 + index, scalarLong(db, "SELECT server_revision FROM _sync_row_state WHERE $predicate"))
-                val publishedAt = scalarText(db, "SELECT updated_at FROM _sync_row_state WHERE $predicate")
-                assertTrue(publishedAt >= publicationStart && publishedAt <= publicationEnd)
-                for (column in listOf("schema_name", "table_name", "key_json", "server_kind", "server_payload", "server_provenance", "updated_at"))
-                    assertEquals("text", scalarText(db, "SELECT typeof($column) FROM _sync_row_state WHERE $predicate"))
-                for (column in listOf("row_version", "relationships_known", "server_revision"))
-                    assertEquals("integer", scalarText(db, "SELECT typeof($column) FROM _sync_row_state WHERE $predicate"))
-            }
-            val businessProjection = listOf("id", "name", "parent_id").joinToString(",") { "'$it',json_object('storage',typeof($it),'value',$it)" }
-            assertEquals(JsonArray(expectedA.map { (id, authority) -> if (id == "P") payload("P", "frozen L", null) else authority }),
-                Json.parseToJsonElement(scalarText(db, "SELECT json_group_array(json_object($businessProjection)) FROM (SELECT * FROM nodes ORDER BY id)")), "complete business L replays only the retained original intent")
-            val edgeQuery = "SELECT json_group_array(json(edge)) FROM (SELECT json_object('view',view,'child_schema',child_schema,'child_table',child_table,'child_key',child_key,'fk_column',fk_column,'parent_schema',parent_schema,'parent_table',parent_table,'parent_key',parent_key,'owner_revision',owner_revision) AS edge FROM _sync_relationships ORDER BY child_key,view)"
-            val expectedEdges = listOf("C" to "Q", "D" to "C").map { (child, parent) -> buildJsonObject {
-                put("view", "server"); put("child_schema", "main"); put("child_table", "nodes"); put("child_key", "{\"id\":\"$child\"}")
-                put("fk_column", "parent_id"); put("parent_schema", "main"); put("parent_table", "nodes"); put("parent_key", "{\"id\":\"$parent\"}")
-                put("owner_revision", scalarLong(db, "SELECT server_revision FROM _sync_row_state WHERE key_json='{\"id\":\"$child\"}'"))
-            } }
-            assertEquals(JsonArray(expectedEdges), Json.parseToJsonElement(scalarText(db, edgeQuery)), "exact server edges and no fabricated desired/dirty edges")
-            val recovered = databaseStateVector(db.connection(), listOf("nodes"))
-            val publishedOwners = setOf("nodes", "_sync_row_state", "_sync_relationships", "_sync_source_state", "_sync_attachment_state", "_sync_conflict_state", "_sync_outbox_rows", "_sync_outbox_bundle")
-            assertEquals(frozen.filterKeys { it !in publishedOwners }, recovered.filterKeys { it !in publishedOwners }, "all other full typed primary/recovery/stage identities remain exact")
-            assertEquals(frozenUsage, workspace.usage(workspaceUnit), "snapshot recovery preserves the exact retained push-plan charge; transient hydration charges are released")
-            for (table in listOf("_sync_dirty_rows", "_sync_snapshot_stage", "_sync_apply_plan", "_sync_apply_rows", "_sync_apply_edges"))
-                assertTrue(recovered.getValue(table).isEmpty(), "retired recovery owner $table")
-            assertEquals(0L, scalarLong(db, "SELECT reserved_entries+reserved_bytes+length(workspace_context) FROM _sync_operation_state"))
-            println("ORDINARY_SCENARIO ${webRuntimeKind()} preparedOutboxSurvivesSourceRecovery snapshot-retains-full-history")
-            val unaffectedPredicate = mapOf("_sync_row_state" to "key_json!='{\"id\":\"P\"}'")
-            val recoveredUnaffected = databaseStateVector(db.connection(), listOf("nodes"), unaffectedPredicate)
-            val replayStart = server.requestSourceIds.size
-            val replayBodiesBefore = server.requestBodies.count { it.first == "/sync/push" }
-            val replayPublicationStart = scalarText(db, "SELECT strftime('%Y-%m-%dT%H:%M:%fZ','now')")
-            assertEquals(PushOutcome.COMMITTED, client.pushPending().getOrThrow().outcome)
-            val replayPublicationEnd = scalarText(db, "SELECT strftime('%Y-%m-%dT%H:%M:%fZ','now')")
-            val replayWire = Json.parseToJsonElement(server.requestBodies.last { it.first == "/sync/push" }.second).jsonObject
-            val originalWire = Json.parseToJsonElement(server.requestBodies.filter { it.first == "/sync/push" }[replayBodiesBefore - 1].second).jsonObject
-            assertEquals(JsonObject(originalWire + ("source_bundle_id" to JsonPrimitive(1))), replayWire, "complete canonical replay changes only the proven source bundle ID")
-            assertEquals(listOf("/sync/push" to replacement), server.requestSourceIds.drop(replayStart))
-            assertEquals(replacementBefore.copy(nextSourceBundleId = 2), OversqliteSourceStateStore(db.connection()).loadState(replacement))
-            assertEquals(attachmentBefore.copy(currentSourceId = replacement, attachmentEpoch = attachmentBefore.attachmentEpoch + 1, lastBundleSeqSeen = 3, rebuildRequired = false, pendingInitializationId = ""),
-                OversqliteAttachmentStateStore(db.connection()).loadState())
-            assertEquals(JsonObject(conflictBefore + ("baseline_revision" to typed(JsonPrimitive(revisionBefore + 9), "integer"))),
-                Json.parseToJsonElement(scalarText(db, conflictQuery)))
-            assertEquals(OversqliteOutboxBundleState(), OversqliteOutboxStateStore(db.connection()).loadBundleState())
-            assertEquals(payload("P", "frozen L", null), Json.parseToJsonElement(scalarText(db, "SELECT server_payload FROM _sync_row_state WHERE key_json='{\"id\":\"P\"}'")))
-            assertEquals(JsonObject(provenanceBefore + mapOf("origin_source_id" to JsonPrimitive(replacement), "origin" to JsonPrimitive("settlement"), "bundle_sequence" to JsonPrimitive(3), "authoritative_version" to JsonPrimitive(3))),
-                Json.parseToJsonElement(scalarText(db, "SELECT server_provenance FROM _sync_row_state WHERE key_json='{\"id\":\"P\"}'")))
-            assertEquals(3L, scalarLong(db, "SELECT row_version FROM _sync_row_state WHERE key_json='{\"id\":\"P\"}'"))
-            assertEquals("live", scalarText(db, "SELECT server_kind FROM _sync_row_state WHERE key_json='{\"id\":\"P\"}'"))
-            assertEquals(1L, scalarLong(db, "SELECT relationships_known FROM _sync_row_state WHERE key_json='{\"id\":\"P\"}'"))
-            assertEquals(revisionBefore + 9, scalarLong(db, "SELECT server_revision FROM _sync_row_state WHERE key_json='{\"id\":\"P\"}'"))
-            val replayPublishedAt = scalarText(db, "SELECT updated_at FROM _sync_row_state WHERE key_json='{\"id\":\"P\"}'")
-            assertTrue(replayPublishedAt >= replayPublicationStart && replayPublishedAt <= replayPublicationEnd)
-            val settled = databaseStateVector(db.connection(), listOf("nodes"), unaffectedPredicate)
-            val replayOwners = setOf("_sync_outbox_rows", "_sync_outbox_bundle", "_sync_attachment_state", "_sync_conflict_state", "_sync_push_plan", "_sync_push_nodes", "_sync_push_edges")
-            assertEquals(recoveredUnaffected.filterKeys { it !in replayOwners }, settled.filterKeys { it !in replayOwners }, "every complete non-P owner survives confirmation")
-            for (table in listOf("_sync_push_plan", "_sync_push_nodes", "_sync_push_edges")) assertTrue(settled.getValue(table).isEmpty(), "confirmed replay completes charged stale-plan cleanup $table")
-            assertEquals(WorkspaceCharge(1, 536), workspace.usage(workspaceUnit), "only the empty operation singleton remains charged")
-            assertEquals(JsonArray(expectedEdges), Json.parseToJsonElement(scalarText(db, edgeQuery)))
-            assertEquals(recovered.getValue("nodes"), settled.getValue("nodes"), "replay confirms the exact frozen business L")
-            assertTrue(settled.getValue("_sync_outbox_rows").isEmpty()); assertTrue(settled.getValue("_sync_dirty_rows").isEmpty())
-            assertEquals(0L, scalarLong(db, "SELECT count(*) FROM pragma_foreign_key_check"))
-            println("ORDINARY_SCENARIO ${webRuntimeKind()} preparedOutboxSurvivesSourceRecovery proven-source-replay")
-            val beforeReadback = databaseStateVector(db.connection(), listOf("nodes"))
-            val pushesBeforeReadback = server.pushRequestCount
-            suspend fun verifyIndependentAuthority() {
+            for (committed in listOf(false, true)) {
+                val server = MockSyncServer(registeredTableSpecs = testRegisteredTableSpecs("nodes"), generationResponses = mapOf(1L to nodeGeneration("CASCADE")))
+                val db = newCoordinatedDb()
+                val http = server.newHttpClient()
+                try {
+                    val ddl = "CREATE TABLE nodes(id TEXT PRIMARY KEY NOT NULL, name TEXT NOT NULL,parent_id TEXT REFERENCES nodes(id) ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED)"
+                    val cfg = config().copy(syncTables = listOf(SyncTable("nodes", syncKeyColumnName = "id")))
+                    db.execSQL(ddl)
+                    val client = db.openClient(cfg, http, ServerWinsResolver)
+                    client.attach("user-1").getOrThrow()
+                    db.execSQL("INSERT INTO nodes VALUES('P','parent',NULL),('Q','other',NULL),('C','child','P'),('D','grandchild','C')")
+                    client.pushPending().getOrThrow()
+                    val emptyOperation = operationRecord(db)
+                    val originalAuthority = scalarText(db, "SELECT server_payload FROM _sync_row_state WHERE key_json='{\"id\":\"P\"}'")
+                    val originalProvenance = scalarText(db, "SELECT server_provenance FROM _sync_row_state WHERE key_json='{\"id\":\"P\"}'")
+                    db.execSQL("UPDATE nodes SET name='frozen L' WHERE id='P'")
+                    if (committed) server.beforePushResponse = { server.beforePushResponse = null; throw CancellationException("committed reply lost before source recovery") }
+                    else server.beforePushCommit = { server.beforePushCommit = null; throw CancellationException("prepared input before source recovery") }
+                    assertFailsWith<CancellationException> { client.pushPending().getOrThrow() }
+                    val rows = OversqliteOutboxStateStore(db.connection()).loadRows()
+                    val bundle = OversqliteOutboxStateStore(db.connection()).loadBundleState()
+                    assertEquals(1, rows.size)
+                    assertEquals(originalAuthority, rows.single().base.payload)
+                    assertEquals(originalProvenance, rows.single().base.provenance)
+                    assertContains(requireNotNull(rows.single().localPayload), "frozen L")
+                    val wire = server.requestBodies.last { it.first == "/sync/push" }.second
+                    val source = scalarText(db, "SELECT current_source_id FROM _sync_attachment_state")
+                    val sourceBefore = requireNotNull(OversqliteSourceStateStore(db.connection()).loadState(source))
+                    val replacement = "00000000-0000-4000-8000-000000000099"
+                    OversqliteSourceStateStore(db.connection()).ensureSource(replacement)
+                    val replacementBefore = requireNotNull(OversqliteSourceStateStore(db.connection()).loadState(replacement))
+                    OversqliteAttachmentStateStore(db.connection()).setRebuildRequired(true)
+                    OversqliteOperationStateStore(db.connection()).persistState(OversqliteOperationState(kind = operationKindSourceRecovery,
+                        reason = SourceRecoveryReason.HISTORY_PRUNED.toPersistedOperationReason(), replacementSourceId = replacement))
+                    val frozen = retainedDatabaseVector(db.connection())
+                    val requests = server.requestCounts.toMap()
+                    val workspace = OversqliteWorkspace(db.connection(), cfg)
+                    val unit = applyUnit("author-prepared-recovery", 0, "")
+                    val usage = workspace.usage(unit)
+                    assertTrue(usage.entries > 1 && usage.bytes > 536)
+                    assertTrue(usage.entries <= cfg.maxSyncWorkspaceEntries && usage.bytes <= cfg.maxSyncWorkspaceBytes)
+                    repeat(2) {
+                        assertIs<PendingPushReplayException>(client.rebuild().exceptionOrNull())
+                        assertEquals(frozen, retainedDatabaseVector(db.connection()), "prepared/committed=$committed full schema, all typed retained owners, F/B/L and recovery reservations stay exact")
+                        assertEquals(requests, server.requestCounts, "no dirty recovery snapshot or hidden upload")
+                        assertEquals(rows, OversqliteOutboxStateStore(db.connection()).loadRows())
+                        assertEquals(bundle, OversqliteOutboxStateStore(db.connection()).loadBundleState())
+                        assertEquals(wire, scalarText(db, "SELECT CAST(request_body AS TEXT) FROM _sync_upload_journal"))
+                        assertEquals(usage, workspace.usage(unit), "blocked recovery retains every charged owner")
+                    }
+                    println("ORDINARY_SCENARIO ${webRuntimeKind()} preparedOutboxSurvivesSourceRecovery committed=$committed/full-refusal")
+                    if (!committed) continue
+                    client.pushPending().getOrThrow()
+                    assertEquals(2, server.pushRequestCount, "settle original C by resolve, with no retransmission")
+                    assertEquals(1, server.requestCounts["/sync/push-outcomes/resolve"])
+                    assertEquals(2, server.requestCounts["/sync/push-outcomes/ack"])
+                    assertEquals(sourceBefore.copy(nextSourceBundleId = 3), OversqliteSourceStateStore(db.connection()).loadState(source))
+                    for (table in listOf("_sync_upload_journal", "_sync_outbox_rows", "_sync_dirty_rows")) assertEquals(0L, scalarLong(db, "SELECT count(*) FROM $table"))
+                    assertEquals(OversqliteOutboxBundleState(), OversqliteOutboxStateStore(db.connection()).loadBundleState())
+                    assertEquals(3L, server.addRemoteBundleForTest(listOf(BundleRow("main", "nodes", mapOf("id" to "C"), "UPDATE", 3,
+                        Json.parseToJsonElement("""{"id":"C","name":"snapshot child","parent_id":"Q"}""")))))
+                    val clean = databaseStateVector(db.connection(), listOf("nodes", "_sync_upload_journal"))
+                    val attachmentBefore = OversqliteAttachmentStateStore(db.connection()).loadState()
+                    val revision = scalarLong(db, "SELECT baseline_revision FROM _sync_conflict_state")
+                    val conflictBefore = Json.parseToJsonElement(scalarText(db, conflictQuery)).jsonObject
+                    val requestStart = server.requestSourceIds.size
+                    val publicationStart = scalarText(db, "SELECT strftime('%Y-%m-%dT%H:%M:%fZ','now')")
+                    assertEquals(RemoteSyncOutcome.APPLIED_SNAPSHOT, client.rebuild().getOrThrow().outcome)
+                    val publicationEnd = scalarText(db, "SELECT strftime('%Y-%m-%dT%H:%M:%fZ','now')")
+                    assertEquals(sourceBefore.copy(nextSourceBundleId = 3, replacedBySourceId = replacement), OversqliteSourceStateStore(db.connection()).loadState(source))
+                    assertEquals(replacementBefore, OversqliteSourceStateStore(db.connection()).loadState(replacement), "clean snapshot cannot consume a replacement upload sequence")
+                    assertEquals(2L, scalarLong(db, "SELECT count(*) FROM _sync_source_state"))
+                    assertEquals(attachmentBefore.copy(currentSourceId = replacement, attachmentEpoch = attachmentBefore.attachmentEpoch + 1,
+                        lastBundleSeqSeen = 3, rebuildRequired = false, pendingInitializationId = ""), OversqliteAttachmentStateStore(db.connection()).loadState())
+                    assertEquals(OversqliteOperationState(), OversqliteOperationStateStore(db.connection()).loadState())
+                    assertEquals(revision + 4, scalarLong(db, "SELECT baseline_revision FROM _sync_conflict_state"))
+                    assertEquals(JsonObject(conflictBefore + ("baseline_revision" to typed(JsonPrimitive(revision + 4), "integer"))), Json.parseToJsonElement(scalarText(db, conflictQuery)), "every conflict-control field changes only by four authority installations")
+                    assertEquals(emptyOperation, operationRecord(db), "all raw operation fields and charges are cleared after clean source replacement")
+                    val snapshotRequests = server.requestSourceIds.drop(requestStart)
+                    assertEquals(3, snapshotRequests.size)
+                    assertEquals("/sync/snapshot-sessions", snapshotRequests[0].first)
+                    assertEquals(snapshotRequests[1].first, snapshotRequests[2].first)
+                    assertEquals(listOf(source, replacement, replacement), snapshotRequests.map { it.second })
+                    assertEquals(listOf(SnapshotSourceReplacement(source, replacement, "history_pruned")), server.requestedSnapshotSourceReplacements)
+                    val expected = linkedMapOf("C" to Triple("snapshot child", "Q", 3L), "D" to Triple("grandchild", "C", 1L), "P" to Triple("frozen L", null, 2L), "Q" to Triple("other", null, 1L))
+                    suspend fun business(target: PlatformTestDatabase): JsonElement = Json.parseToJsonElement(scalarText(target,
+                        "SELECT json_group_array(json_object('id',id,'name',name,'parent_id',parent_id)) FROM (SELECT * FROM nodes ORDER BY id)"))
+                    fun expectedBusiness() = buildJsonArray { for ((id, values) in expected) add(buildJsonObject { put("id", id);put("name", values.first);put("parent_id", values.second?.let(::JsonPrimitive) ?: JsonNull) }) }
+                    assertEquals(expectedBusiness(), business(db))
+                    assertEquals(4L, scalarLong(db, "SELECT count(*) FROM _sync_row_state"))
+                    for ((index, entry) in expected.entries.withIndex()) {
+                        val (id, values) = entry
+                        val predicate = "key_json='{\"id\":\"$id\"}'"
+                        val typed = buildJsonObject { for ((name, value) in listOf("id" to id, "name" to values.first, "parent_id" to values.second)) putJsonObject(name) {
+                            put("storage", if (value == null) "null" else "text");put("value", value?.let(::JsonPrimitive) ?: JsonNull) } }
+                        assertEquals(typed, Json.parseToJsonElement(scalarText(db, "SELECT server_payload FROM _sync_row_state WHERE $predicate")))
+                        assertEquals(values.third, scalarLong(db, "SELECT row_version FROM _sync_row_state WHERE $predicate"))
+                        assertEquals(revision + index + 1, scalarLong(db, "SELECT server_revision FROM _sync_row_state WHERE $predicate"))
+                        assertEquals(1L, scalarLong(db, "SELECT relationships_known FROM _sync_row_state WHERE $predicate"))
+                        assertEquals("live", scalarText(db, "SELECT server_kind FROM _sync_row_state WHERE $predicate"))
+                        val provenance = Json.parseToJsonElement(originalProvenance).jsonObject
+                        assertEquals(JsonObject(provenance + mapOf("origin" to JsonPrimitive("snapshot"), "bundle_sequence" to JsonPrimitive(3), "authoritative_version" to JsonPrimitive(values.third))),
+                            Json.parseToJsonElement(scalarText(db, "SELECT server_provenance FROM _sync_row_state WHERE $predicate")))
+                        val at = scalarText(db, "SELECT updated_at FROM _sync_row_state WHERE $predicate")
+                        assertTrue(at >= publicationStart && at <= publicationEnd)
+                        for (column in listOf("schema_name", "table_name", "key_json", "server_kind", "server_payload", "server_provenance", "updated_at")) assertEquals("text", scalarText(db, "SELECT typeof($column) FROM _sync_row_state WHERE $predicate"))
+                        for (column in listOf("row_version", "relationships_known", "server_revision")) assertEquals("integer", scalarText(db, "SELECT typeof($column) FROM _sync_row_state WHERE $predicate"))
+                    }
+                    val edgeQuery = "SELECT json_group_array(json(edge)) FROM (SELECT json_object('view',view,'child_schema',child_schema,'child_table',child_table,'child_key',child_key,'fk_column',fk_column,'parent_schema',parent_schema,'parent_table',parent_table,'parent_key',parent_key,'owner_revision',owner_revision) AS edge FROM _sync_relationships ORDER BY child_key,view)"
+                    val expectedEdges = listOf("C" to "Q", "D" to "C").map { (child, parent) -> buildJsonObject {
+                        put("view", "server");put("child_schema", "main");put("child_table", "nodes");put("child_key", "{\"id\":\"$child\"}")
+                        put("fk_column", "parent_id");put("parent_schema", "main");put("parent_table", "nodes");put("parent_key", "{\"id\":\"$parent\"}")
+                        put("owner_revision", revision + if (child == "C") 1 else 2)
+                    } }
+                    assertEquals(JsonArray(expectedEdges), Json.parseToJsonElement(scalarText(db, edgeQuery)), "complete source authority edge inventory")
+                    assertEquals(0L, scalarLong(db, "SELECT count(*) FROM _sync_relationships e JOIN _sync_row_state a ON a.schema_name=e.child_schema AND a.table_name=e.child_table AND a.key_json=e.child_key WHERE e.owner_revision<>a.server_revision"))
+                    val rebuilt = databaseStateVector(db.connection(), listOf("nodes", "_sync_upload_journal"))
+                    for (table in listOf("_sync_opening_state", "_sync_contract_identity", "_sync_admitted_contracts", "_sync_managed_tables")) assertEquals(clean.getValue(table), rebuilt.getValue(table), "clean replacement preserves complete $table")
+                    for (table in listOf("_sync_upload_journal", "_sync_dirty_rows", "_sync_outbox_rows", "_sync_snapshot_stage", "_sync_apply_plan", "_sync_apply_rows", "_sync_apply_edges", "_sync_push_plan", "_sync_push_nodes", "_sync_push_edges")) assertTrue(rebuilt.getValue(table).isEmpty(), "retired owner $table")
+                    assertEquals(WorkspaceCharge(1, 536), workspace.usage(unit), "only the cleared operation singleton remains charged")
+                    val unchangedFollowup = mapOf("nodes" to "id<>'P'", "_sync_row_state" to "key_json<>'{\"id\":\"P\"}'")
+                    val beforeFollowup = databaseStateVector(db.connection(), listOf("nodes", "_sync_upload_journal"), unchangedFollowup)
+                    db.execSQL("UPDATE nodes SET name='replacement followup' WHERE id='P'")
+                    val followupStart = server.requestSourceIds.size
+                    val followupPublicationStart = scalarText(db, "SELECT strftime('%Y-%m-%dT%H:%M:%fZ','now')")
+                    client.pushPending().getOrThrow()
+                    val followupPublicationEnd = scalarText(db, "SELECT strftime('%Y-%m-%dT%H:%M:%fZ','now')")
+                    assertEquals(listOf("/sync/push" to replacement, "/sync/push-outcomes/ack" to replacement), server.requestSourceIds.drop(followupStart))
+                    assertEquals(replacementBefore.copy(nextSourceBundleId = 2), OversqliteSourceStateStore(db.connection()).loadState(replacement))
+                    assertEquals(4L, scalarLong(db, "SELECT last_bundle_seq_seen FROM _sync_attachment_state"))
+                    assertEquals(1L, Json.parseToJsonElement(server.requestBodies.last { it.first == "/sync/push" }.second).jsonObject.getValue("source_bundle_id").jsonPrimitive.long)
+                    expected["P"] = Triple("replacement followup", null, 4L)
+                    val provenanceBefore = Json.parseToJsonElement(originalProvenance).jsonObject
+                    assertEquals(JsonObject(provenanceBefore + mapOf("origin_source_id" to JsonPrimitive(replacement), "origin" to JsonPrimitive("settlement"), "bundle_sequence" to JsonPrimitive(4), "authoritative_version" to JsonPrimitive(4))),
+                        Json.parseToJsonElement(scalarText(db, "SELECT server_provenance FROM _sync_row_state WHERE key_json='{\"id\":\"P\"}'")), "followup settlement binds the actual replacement writer")
+                    val followupAt = scalarText(db, "SELECT updated_at FROM _sync_row_state WHERE key_json='{\"id\":\"P\"}'")
+                    assertTrue(followupAt >= followupPublicationStart && followupAt <= followupPublicationEnd)
+                    assertEquals(JsonObject(conflictBefore + mapOf("baseline_revision" to typed(JsonPrimitive(revision + 5), "integer"), "dirty_revision" to typed(JsonPrimitive(conflictBefore.getValue("dirty_revision").jsonObject.getValue("value").jsonPrimitive.long + 2), "integer"))),
+                        Json.parseToJsonElement(scalarText(db, conflictQuery)), "one new user intent and capture plus one authority install, no other control mutation")
+                    assertEquals(emptyOperation, operationRecord(db))
+                    assertEquals(JsonArray(expectedEdges), Json.parseToJsonElement(scalarText(db, edgeQuery)), "unrelated complete edges remain exact after replacement upload")
+                    assertEquals(expectedBusiness(), business(db), "replacement followup preserves every complete local business row")
+                    val parentPredicate = "key_json='{\"id\":\"P\"}'"
+                    assertEquals(payload("P", "replacement followup", null), Json.parseToJsonElement(scalarText(db, "SELECT server_payload FROM _sync_row_state WHERE $parentPredicate")), "complete local confirmed replacement payload")
+                    assertEquals(4L, scalarLong(db, "SELECT row_version FROM _sync_row_state WHERE $parentPredicate"))
+                    assertEquals("main", scalarText(db, "SELECT schema_name FROM _sync_row_state WHERE $parentPredicate"))
+                    assertEquals("nodes", scalarText(db, "SELECT table_name FROM _sync_row_state WHERE $parentPredicate"))
+                    assertEquals("live", scalarText(db, "SELECT server_kind FROM _sync_row_state WHERE $parentPredicate"))
+                    assertEquals(1L, scalarLong(db, "SELECT relationships_known FROM _sync_row_state WHERE $parentPredicate"))
+                    assertEquals(revision + 5, scalarLong(db, "SELECT server_revision FROM _sync_row_state WHERE $parentPredicate"))
+                    for (column in listOf("schema_name", "table_name", "key_json", "server_kind", "server_payload", "server_provenance", "updated_at")) assertEquals("text", scalarText(db, "SELECT typeof($column) FROM _sync_row_state WHERE $parentPredicate"))
+                    for (column in listOf("row_version", "relationships_known", "server_revision")) assertEquals("integer", scalarText(db, "SELECT typeof($column) FROM _sync_row_state WHERE $parentPredicate"))
+                    assertEquals(sourceBefore.copy(nextSourceBundleId = 3, replacedBySourceId = replacement), OversqliteSourceStateStore(db.connection()).loadState(source))
+                    assertEquals(2L, scalarLong(db, "SELECT count(*) FROM _sync_source_state"))
+                    assertEquals(attachmentBefore.copy(currentSourceId = replacement, attachmentEpoch = attachmentBefore.attachmentEpoch + 1,
+                        lastBundleSeqSeen = 4, rebuildRequired = false, pendingInitializationId = ""), OversqliteAttachmentStateStore(db.connection()).loadState())
+                    val afterFollowup = databaseStateVector(db.connection(), listOf("nodes", "_sync_upload_journal"), unchangedFollowup)
+                    val permittedFollowup = setOf("_sync_source_state", "_sync_attachment_state", "_sync_conflict_state")
+                    assertEquals(beforeFollowup.filterKeys { it !in permittedFollowup }, afterFollowup.filterKeys { it !in permittedFollowup }, "every complete non-P authority/intent/edge/plan/journal/identity/operation owner remains exact")
+                    for (table in listOf("_sync_upload_journal", "_sync_dirty_rows", "_sync_outbox_rows", "_sync_snapshot_stage", "_sync_apply_plan", "_sync_apply_rows", "_sync_apply_edges", "_sync_push_plan", "_sync_push_nodes", "_sync_push_edges")) assertTrue(afterFollowup.getValue(table).isEmpty(), "confirmed replacement cleanup $table")
+                    assertEquals(OversqliteOutboxBundleState(), OversqliteOutboxStateStore(db.connection()).loadBundleState())
+                    assertEquals(WorkspaceCharge(1, 536), workspace.usage(unit))
+                    val beforeReadback = databaseStateVector(db.connection(), listOf("nodes"))
+                    val pushesBeforeReadback = server.pushRequestCount
+                    val workspaceUnit = unit
+                    val settled = retainedDatabaseVector(db.connection())
+                    suspend fun verifyIndependentAuthority() {
                 val peer = newCoordinatedDb()
                 val peerHttp = server.newHttpClient()
                 try {
                     peer.execSQL("CREATE TABLE nodes(id TEXT PRIMARY KEY NOT NULL, name TEXT NOT NULL,parent_id TEXT REFERENCES nodes(id) ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED)")
                     val peerStart = scalarText(db, "SELECT strftime('%Y-%m-%dT%H:%M:%fZ','now')")
-                    val observer = peer.openClient(config().copy(syncTables = listOf(SyncTable("nodes", syncKeyColumnName = "id"))), peerHttp, ServerWinsResolver)
+                    val observer = peer.openClient(cfg, peerHttp, ServerWinsResolver)
                     val peerAttachmentBefore = OversqliteAttachmentStateStore(peer.connection()).loadState()
                     val peerSourceBefore = requireNotNull(OversqliteSourceStateStore(peer.connection()).loadState(peerAttachmentBefore.currentSourceId))
                     val peerBefore = databaseStateVector(peer.connection(), listOf("nodes"))
@@ -2488,17 +2658,17 @@ internal class OrdinarySafetyPlatformTest : PlatformCrossTargetTestSupport() {
                     val peerEnd = scalarText(peer, "SELECT strftime('%Y-%m-%dT%H:%M:%fZ','now')")
                     val peerSource = scalarText(peer, "SELECT current_source_id FROM _sync_attachment_state")
                     assertNotEquals(replacement, peerSource, "independent observer owns a separate source")
-                    val expectedFinal = expectedA + ("P" to payload("P", "frozen L", null))
+                    val expectedFinal = expected.mapValues { (id, values) -> payload(id, values.first, values.second) }
                     assertEquals(JsonArray(expectedFinal.values.toList()), Json.parseToJsonElement(scalarText(peer,
                         "SELECT json_group_array(json_object($businessProjection)) FROM (SELECT * FROM nodes ORDER BY id)")), "complete independent final authority business vector")
                     assertEquals(4L, scalarLong(peer, "SELECT count(*) FROM _sync_row_state"))
                     for ((index, entry) in expectedFinal.entries.withIndex()) {
                         val (id, expected) = entry
                         val predicate = "schema_name='main' AND table_name='nodes' AND key_json='{\"id\":\"$id\"}'"
-                        val version = when (id) { "P" -> 3L; "C" -> 2L; else -> 1L }
+                        val version = when (id) { "P" -> 4L; "C" -> 3L; else -> 1L }
                         assertEquals(expected, Json.parseToJsonElement(scalarText(peer, "SELECT server_payload FROM _sync_row_state WHERE $predicate")), "full independent A $id")
                         assertEquals(JsonObject(provenanceBefore + mapOf("origin_source_id" to JsonPrimitive(peerSource), "origin" to JsonPrimitive("snapshot"),
-                            "bundle_sequence" to JsonPrimitive(3), "authoritative_version" to JsonPrimitive(version))),
+                            "bundle_sequence" to JsonPrimitive(4), "authoritative_version" to JsonPrimitive(version))),
                             Json.parseToJsonElement(scalarText(peer, "SELECT server_provenance FROM _sync_row_state WHERE $predicate")), "full independent provenance $id")
                         assertEquals(version, scalarLong(peer, "SELECT row_version FROM _sync_row_state WHERE $predicate"))
                         assertEquals("live", scalarText(peer, "SELECT server_kind FROM _sync_row_state WHERE $predicate"))
@@ -2519,7 +2689,7 @@ internal class OrdinarySafetyPlatformTest : PlatformCrossTargetTestSupport() {
                     assertTrue(peerSourceBefore.createdAt >= peerStart && peerSourceBefore.createdAt <= peerEnd)
                     assertEquals(1L, scalarLong(peer, "SELECT count(*) FROM _sync_source_state"))
                     assertEquals(peerAttachmentBefore.copy(attachmentEpoch = peerAttachmentBefore.attachmentEpoch + 1, bindingState = attachmentBindingAttached,
-                        attachedUserId = "user-1", schemaName = attachmentBefore.schemaName, lastBundleSeqSeen = 3, rebuildRequired = false, pendingInitializationId = ""),
+                        attachedUserId = "user-1", schemaName = attachmentBefore.schemaName, lastBundleSeqSeen = 4, rebuildRequired = false, pendingInitializationId = ""),
                         OversqliteAttachmentStateStore(peer.connection()).loadState())
                     val expectedConflict = JsonObject(conflictColumns.associateWith { column -> when (column) {
                         "singleton_key" -> typed(JsonPrimitive(1), "integer")
@@ -2531,6 +2701,7 @@ internal class OrdinarySafetyPlatformTest : PlatformCrossTargetTestSupport() {
                     } })
                     assertEquals(expectedConflict, Json.parseToJsonElement(scalarText(peer, conflictQuery)), "full independent conflict controls")
                     assertEquals(OversqliteOperationState(), OversqliteOperationStateStore(peer.connection()).loadState())
+                    assertEquals(emptyOperation, operationRecord(peer), "all independent raw operation fields and counters")
                     assertEquals(OversqliteOutboxBundleState(), OversqliteOutboxStateStore(peer.connection()).loadBundleState())
                     val peerAfter = databaseStateVector(peer.connection(), listOf("nodes"))
                     for (table in listOf("_sync_dirty_rows", "_sync_outbox_rows", "_sync_snapshot_stage", "_sync_apply_plan", "_sync_apply_rows", "_sync_apply_edges", "_sync_push_plan", "_sync_push_nodes", "_sync_push_edges"))
@@ -2555,16 +2726,21 @@ internal class OrdinarySafetyPlatformTest : PlatformCrossTargetTestSupport() {
                         "table_name" to typed(JsonPrimitive("nodes"), "text"))))), Json.parseToJsonElement(scalarText(peer,
                         "SELECT json_group_array(json_object(${typedProjection(listOf("schema_name", "table_name"))})) FROM _sync_managed_tables")),
                         "exact registered fixture routing after admission")
-                    assertEquals(WorkspaceCharge(1, 536), OversqliteWorkspace(peer.connection(), config()).usage(workspaceUnit))
+                    assertEquals(WorkspaceCharge(1, 536), OversqliteWorkspace(peer.connection(), cfg).usage(workspaceUnit))
                     assertEquals(0L, scalarLong(peer, "SELECT count(*) FROM pragma_foreign_key_check"))
                     assertEquals(pushesBeforeReadback, server.pushRequestCount, "verification never sends new intent")
                     assertEquals(beforeReadback, databaseStateVector(db.connection(), listOf("nodes")), "independent readback preserves every original primary/recovery/stage field")
                 } finally { peerHttp.close(); peer.close() }
+                    }
+                    verifyIndependentAuthority()
+
+                    assertEquals(settled, retainedDatabaseVector(db.connection()), "independent observer preserves every owner")
+                    assertEquals(0L, scalarLong(db, "SELECT count(*) FROM pragma_foreign_key_check"))
+                    println("ORDINARY_SCENARIO ${webRuntimeKind()} preparedOutboxSurvivesSourceRecovery settlement-clean-rotation-followup-readback")
+                } finally { http.close();db.close() }
             }
-            verifyIndependentAuthority()
-            println("ORDINARY_SCENARIO ${webRuntimeKind()} preparedOutboxSurvivesSourceRecovery independent-authority-readback")
-        } finally { http.close(); db.close(); cleanupOwnedWorkerStorage() }
-    }
+        } finally { cleanupOwnedWorkerStorage() }
+    } }
 
     @Test fun retainedLedgerTamperAndRollback() = runTest(timeout = 180.seconds) {
         if (!scenarioEnabled("retainedLedgerTamperAndRollback")) return@runTest
@@ -2822,12 +2998,12 @@ internal class OrdinarySafetyPlatformTest : PlatformCrossTargetTestSupport() {
             val before = databaseStateVector(db.connection(), listOf("users", "posts"), ignoreDerivedCharges = true)
             val barrier = CompletableDeferred<Unit>()
             val release = CompletableDeferred<Unit>()
-            server.beforePushResponse = { barrier.complete(Unit); release.await() }
+            server.beforeResolveResponse = { barrier.complete(Unit); release.await() }
             val operation = async { client.pushPending().getOrThrow() }
             try {
                 cancelAtBarrier(barrier, release, operation, "response")
             } finally {
-                server.beforePushResponse = null
+                server.beforeResolveResponse = null
             }
             assertEquals(before, databaseStateVector(db.connection(), listOf("users", "posts"), ignoreDerivedCharges = true))
             assertEquals(0L, scalarLong(db, "SELECT reserved_entries+reserved_bytes+length(workspace_context) FROM _sync_operation_state"))
@@ -2839,14 +3015,35 @@ internal class OrdinarySafetyPlatformTest : PlatformCrossTargetTestSupport() {
     private suspend fun assertFrozenReplay(
         db: PlatformTestDatabase, server: MockSyncServer, client: DefaultOversqliteClient, request: String,
     ) {
+        val rows = OversqliteOutboxStateStore(db.connection()).loadRows()
+        val before = databaseStateVector(db.connection(), listOf("users", "posts"), ignoreDerivedCharges = true)
+        val pushes = server.pushRequestCount
         client.pushPending().getOrThrow()
         assertEquals(request, server.requestBodies.last { it.first == "/sync/push" }.second)
+        assertEquals(pushes, server.pushRequestCount, "resolve fences the original precommit tuple without retransmission")
+        assertEquals(1L, scalarLong(db, "SELECT count(*) FROM _sync_dirty_rows"))
+        assertEquals(0L, scalarLong(db, "SELECT count(*) FROM _sync_outbox_rows"))
+        assertEquals(0L, scalarLong(db, "SELECT count(*) FROM _sync_upload_journal"))
+        val captured = rows.single()
+        assertEquals(captured.base.payload, scalarText(db, "SELECT base_payload FROM _sync_dirty_rows"))
+        assertEquals(captured.base.provenance, scalarText(db, "SELECT base_provenance FROM _sync_dirty_rows"))
+        assertEquals(captured.localPayload, scalarText(db, "SELECT payload FROM _sync_dirty_rows"))
+        val requeued = databaseStateVector(db.connection(), listOf("users", "posts"), ignoreDerivedCharges = true)
+        for (table in listOf("users", "posts", "_sync_row_state", "_sync_relationships", "_sync_attachment_state", "_sync_opening_state", "_sync_contract_identity", "_sync_admitted_contracts", "_sync_managed_tables"))
+            assertEquals(before.getValue(table), requeued.getValue(table), "cancelled tuple preserves complete $table")
+        assertEquals(3L, scalarLong(db, "SELECT next_source_bundle_id FROM _sync_source_state"))
+        assertEquals(1L, scalarLong(db, "SELECT last_bundle_seq_seen FROM _sync_attachment_state"))
+        client.pushPending().getOrThrow()
+        val successor = Json.parseToJsonElement(server.requestBodies.last { it.first == "/sync/push" }.second).jsonObject
+        assertEquals(JsonObject(Json.parseToJsonElement(request).jsonObject + ("source_bundle_id" to JsonPrimitive(3))), successor)
+        assertEquals(pushes + 1, server.pushRequestCount)
         assertEquals("new local intent", scalarText(db, "SELECT name FROM users WHERE id='P'"))
         assertEquals("complete child", scalarText(db, "SELECT title FROM posts WHERE id='C'"))
         assertEquals("P", scalarText(db, "SELECT user_id FROM posts WHERE id='C'"))
         assertEquals(0L, scalarLong(db, "SELECT count(*) FROM _sync_dirty_rows"))
         assertEquals(0L, scalarLong(db, "SELECT count(*) FROM _sync_outbox_rows"))
-        assertEquals(3L, scalarLong(db, "SELECT next_source_bundle_id FROM _sync_source_state"))
+        assertEquals(0L, scalarLong(db, "SELECT count(*) FROM _sync_upload_journal"))
+        assertEquals(4L, scalarLong(db, "SELECT next_source_bundle_id FROM _sync_source_state"))
         assertEquals(2L, scalarLong(db, "SELECT last_bundle_seq_seen FROM _sync_attachment_state"))
     }
 
@@ -2869,13 +3066,24 @@ internal class OrdinarySafetyPlatformTest : PlatformCrossTargetTestSupport() {
         if (!scenarioEnabled(applyCancellationName(operationName, cut))) return@runTest
         withFrozenIntent(forApply = true) { db, _, server, client, frozenRequest ->
             if (operationName == "rebuild") {
-                // Existing fixture control selects admitted checkpoint recovery
-                // with prepared intent. This is not a discovery-path witness.
+                val pending = retainedDatabaseVector(db.connection())
+                val requests = server.requestCounts.toMap()
+                assertIs<PendingPushReplayException>(client.rebuild().exceptionOrNull())
+                assertEquals(pending, retainedDatabaseVector(db.connection()), "F blocks rebuild without changing any retained owner")
+                assertEquals(requests, server.requestCounts)
+                client.pushPending().getOrThrow()
+                assertEquals(2, server.requestCounts["/sync/push-outcomes/ack"])
+                assertEquals(0L, scalarLong(db, "SELECT count(*) FROM _sync_upload_journal"))
+                assertEquals(0L, scalarLong(db, "SELECT count(*) FROM _sync_outbox_rows"))
+                assertEquals(0L, scalarLong(db, "SELECT count(*) FROM _sync_dirty_rows"))
                 OversqliteAttachmentStateStore(db.connection()).setRebuildRequired(true)
             }
             val frozen = databaseStateVector(db.connection(), listOf("users", "posts"), ignoreDerivedCharges = true)
             val attachment = OversqliteAttachmentStateStore(db.connection()).loadState()
             val source = requireNotNull(OversqliteSourceStateStore(db.connection()).loadState(attachment.currentSourceId))
+            val operationBefore = OversqliteOperationStateStore(db.connection()).loadState()
+            val operationRawBefore = operationRecord(db)
+            val journalBefore = loadUploadJournal(db.connection())
             val pushes = server.pushRequestCount
             val snapshots = server.requestCounts["/sync/snapshot-sessions"] ?: 0
             val marker = CompletableDeferred<Unit>()
@@ -2908,8 +3116,17 @@ internal class OrdinarySafetyPlatformTest : PlatformCrossTargetTestSupport() {
                 client.setSnapshotApplyFaultInjectorForTest(null)
             }
             val rolledBack = databaseStateVector(db.connection(), listOf("users", "posts"), ignoreDerivedCharges = true)
-            assertEquals(frozen.filterKeys { it != "_sync_snapshot_stage" },
-                rolledBack.filterKeys { it != "_sync_snapshot_stage" }, "$operationName/$cut complete retained A/B/L, edges, source, checkpoint, conflict, identity, plans and outbox")
+            val auxiliary = if (operationName == "rebuild") setOf("_sync_snapshot_stage", "_sync_operation_state") else emptySet()
+            assertEquals(frozen.filterKeys { it !in auxiliary },
+                rolledBack.filterKeys { it !in auxiliary }, "$operationName/$cut complete retained A/B/L, edges, source, checkpoint, conflict, identity, plans and outbox")
+            if (operationName == "rebuild") assertSealedSnapshot(db, config().copy(snapshotApplyBatchRows = 1), operationBefore, 3, 2, operationRawBefore, "explicit_rebuild")
+            else {
+                val journalAfter = requireNotNull(loadUploadJournal(db.connection()))
+                assertEquals(journalBefore!!.copy(outcomeBytes = journalAfter.outcomeBytes, outcomeHash = journalAfter.outcomeHash), journalAfter)
+                assertTrue(journalAfter.outcomeBytes > 0)
+                assertTrue(Regex("[0-9a-f]{64}").matches(journalAfter.outcomeHash))
+                assertEquals(frozenRequest, scalarText(db, "SELECT CAST(request_body AS TEXT) FROM _sync_upload_journal"))
+            }
             assertEquals(attachment, OversqliteAttachmentStateStore(db.connection()).loadState())
             assertEquals(source, OversqliteSourceStateStore(db.connection()).loadState(attachment.currentSourceId))
             assertEquals(0L, scalarLong(db, "SELECT apply_mode FROM _sync_apply_state"))
@@ -2936,7 +3153,7 @@ internal class OrdinarySafetyPlatformTest : PlatformCrossTargetTestSupport() {
             assertEquals(frozen.getValue("users"), settled.getValue("users"))
             assertEquals(frozen.getValue("posts"), settled.getValue("posts"))
             assertEquals(attachment.copy(lastBundleSeqSeen = 2, rebuildRequired = false), OversqliteAttachmentStateStore(db.connection()).loadState())
-            assertEquals(source.copy(nextSourceBundleId = source.nextSourceBundleId + 1),
+            assertEquals(source.copy(nextSourceBundleId = source.nextSourceBundleId + if (operationName == "push") 1 else 0),
                 OversqliteSourceStateStore(db.connection()).loadState(attachment.currentSourceId), "only confirmed frozen publication advances the sequence")
             assertEquals("frozen local intent", scalarText(db, "SELECT name FROM users WHERE id='P'"))
             assertEquals(0L, scalarLong(db, "SELECT count(*) FROM pragma_foreign_key_check"))
@@ -2965,7 +3182,10 @@ internal class OrdinarySafetyPlatformTest : PlatformCrossTargetTestSupport() {
             insertPost(db, "C", "P", if (forApply) "complete clean child" else "complete child")
             client.pushPending().getOrThrow()
             updateUserName(db, "P", if (forApply) "frozen local intent" else "new local intent")
-            server.beforePushCommit = {
+            if (forApply) server.beforePushResponse = {
+                server.beforePushResponse = null
+                throw CancellationException("retain committed result before local apply")
+            } else server.beforePushCommit = {
                 server.beforePushCommit = null
                 throw CancellationException("retain prepared input before remote publication")
             }
@@ -3132,7 +3352,7 @@ internal class OrdinarySafetyPlatformTest : PlatformCrossTargetTestSupport() {
             val one = client.sync().getOrThrow()
             assertEquals(PushOutcome.COMMITTED, one.pushOutcome)
             assertFalse(one.status.pending.hasPendingSyncData)
-            assertEquals(mapOf("/sync/push" to 1, "/sync/pull" to 1), delta(beforeOne), "one row requires one direct push and one pull")
+            assertEquals(mapOf("/sync/push" to 1, "/sync/push-outcomes/ack" to 1, "/sync/pull" to 1), delta(beforeOne), "one row requires one direct push, terminal ack and pull")
             val expectedBusiness = Json.parseToJsonElement("""[{"id":"U","name":"complete one-row payload"}]""")
             val businessQuery = "SELECT json_group_array(json_object('id',id,'name',name)) FROM (SELECT * FROM users ORDER BY id)"
             assertEquals(expectedBusiness, Json.parseToJsonElement(scalarText(db, businessQuery)))
@@ -3288,10 +3508,11 @@ internal class OrdinarySafetyPlatformTest : PlatformCrossTargetTestSupport() {
                     assertEquals(PushOutcome.COMMITTED, resumed.pushOutcome)
                     assertFalse(resumed.status.pending.hasPendingSyncData)
                     val finalWires = server.requestBodies.filter { it.first == "/sync/push" }
-                    assertEquals(4, finalWires.size)
-                    assertEquals(originalWire, finalWires[2].second, "exact frozen replay precedes new planning")
-                    assertEquals(listOf(1L, 2L, 2L, 3L), finalWires.map { Json.parseToJsonElement(it.second).jsonObject.getValue("source_bundle_id").jsonPrimitive.long })
-                    assertEquals(List(4) { source }, server.requestSourceIds.filter { it.first == "/sync/push" }.map { it.second })
+                    assertEquals(3, finalWires.size)
+                    assertEquals(originalWire, finalWires[1].second, "retained request is unchanged and its immutable C settles before new planning")
+                    assertEquals(3, server.requestCounts["/sync/push-outcomes/ack"])
+                    assertEquals(listOf(1L, 2L, 3L), finalWires.map { Json.parseToJsonElement(it.second).jsonObject.getValue("source_bundle_id").jsonPrimitive.long })
+                    assertEquals(List(3) { source }, server.requestSourceIds.filter { it.first == "/sync/push" }.map { it.second })
                     assertEquals(pulls + 1, server.requestCounts["/sync/pull"])
                     assertEquals(attachmentBefore.copy(lastBundleSeqSeen = 3, pendingInitializationId = ""), OversqliteAttachmentStateStore(db.connection()).loadState())
                     assertEquals(sourceBefore.copy(nextSourceBundleId = 4), OversqliteSourceStateStore(db.connection()).loadState(source))
@@ -3317,7 +3538,7 @@ internal class OrdinarySafetyPlatformTest : PlatformCrossTargetTestSupport() {
                         val viewProvenance = JsonObject(provenance + mapOf("origin_source_id" to JsonPrimitive(scalarText(viewer, "SELECT current_source_id FROM _sync_attachment_state")), "origin" to JsonPrimitive("snapshot"), "bundle_sequence" to JsonPrimitive(3)))
                         assertPublished(viewer, 6, viewProvenance, snapshot = true)
                         assertEquals(3L, scalarLong(viewer, "SELECT last_bundle_seq_seen FROM _sync_attachment_state"))
-                        assertEquals(4, server.pushRequestCount)
+                        assertEquals(3, server.pushRequestCount)
                         assertEquals(complete, databaseStateVector(db.connection(), listOf("users", "posts")))
                         println("ORDINARY_SCENARIO ${webRuntimeKind()} onePublicInvocationSharesWorkMeterAndRetainsUsefulFrozenProgress $operation/independent-readback")
                     } finally { viewerHttp.close(); viewer.close() }

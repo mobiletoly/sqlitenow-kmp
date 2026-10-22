@@ -1,7 +1,8 @@
 package dev.goquick.sqlitenow.oversqlite.realserver
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.json.*
+import dev.goquick.sqlitenow.oversqlite.realserver.runEnabledRealServerTest as runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -9,6 +10,25 @@ import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class RealServerFkTopologyTest {
+    private suspend fun frozenKeys(db: RealServerDatabase, table: String): Set<String> {
+        require(table == "_sync_dirty_rows" || table == "_sync_outbox_rows")
+        val json = scalarText(db, "SELECT json_group_array(table_name || '/' || key_json) FROM $table")
+        return Json.parseToJsonElement(json).jsonArray.map { it.jsonPrimitive.content }.toSet()
+    }
+
+    private fun assertCyclicMembership(batches: List<Set<String>>, expected: Set<String>, team: String, captain: String) {
+        val teamKey = "teams/{\"id\":\"$team\"}"
+        val captainKey = "team_members/{\"id\":\"$captain\"}"
+        assertTrue(expected.containsAll(setOf(teamKey, captainKey)))
+        assertEquals(expected, batches.flatten().toSet())
+        assertEquals(expected.size, batches.sumOf { it.size })
+        for (batch in batches) {
+            assertTrue("a dispatched bundle is nonempty", batch.isNotEmpty())
+            assertEquals("only the two-node cycle is indivisible; the other member is independent",
+                teamKey in batch, captainKey in batch)
+        }
+    }
+
     @Test
     fun byteTargetKeepsNewForeignKeyCycleInOneFrozenBundle() = runBlocking {
         val config = requireRealServerConfig()
@@ -83,12 +103,15 @@ class RealServerFkTopologyTest {
         for (target in listOf("rows", "bytes")) {
             resetRealServerState(config.baseUrl)
             val userId = randomUserId()
-            val writerHttp = newAuthenticatedHttpClient(config.baseUrl,
-                issueDummySigninToken(config.baseUrl, userId, randomSourceId("fk-delete-writer")))
-            val readerHttp = newAuthenticatedHttpClient(config.baseUrl,
-                issueDummySigninToken(config.baseUrl, userId, randomSourceId("fk-delete-reader")))
             val writerDb = newFileBackedDb()
             val readerDb = newFileBackedDb()
+            val batches = mutableListOf<Set<String>>()
+            val writerHttp = newAuthenticatedHttpClient(config.baseUrl,
+                issueDummySigninToken(config.baseUrl, userId, randomSourceId("fk-delete-writer")), beforeSend = { path ->
+                if (path == "/sync/push") batches += frozenKeys(writerDb, "_sync_outbox_rows")
+            })
+            val readerHttp = newAuthenticatedHttpClient(config.baseUrl,
+                issueDummySigninToken(config.baseUrl, userId, randomSourceId("fk-delete-reader")))
             try {
                 createBusinessRichSchemaTables(writerDb)
                 createBusinessRichSchemaTables(readerDb)
@@ -106,17 +129,24 @@ class RealServerFkTopologyTest {
                 }
                 assertEquals(0L, scalarLong(writerDb, "SELECT COUNT(*) FROM _sync_dirty_rows"))
 
+                val teamId = scalarText(writerDb, "SELECT id FROM teams")
+                val captainId = scalarText(writerDb, "SELECT captain_member_id FROM teams")
+                batches.clear()
                 writerDb.execSQL("BEGIN")
                 writerDb.execSQL("DELETE FROM teams")
                 writerDb.execSQL("DELETE FROM team_members")
                 writerDb.execSQL("COMMIT")
                 assertEquals(3L, scalarLong(writerDb, "SELECT COUNT(*) FROM _sync_dirty_rows WHERE op='DELETE'"))
                 assertEquals(0L, scalarLong(writerDb, "SELECT COUNT(*) FROM _sync_outbox_rows"))
+                val expected = frozenKeys(writerDb, "_sync_dirty_rows")
                 val sequenceBefore = scalarLong(writerDb, "SELECT next_source_bundle_id FROM _sync_source_state")
-                writer.pushPending().getOrThrow()
+                repeat(3) {
+                    if (scalarLong(writerDb, "SELECT COUNT(*) FROM _sync_dirty_rows") > 0L) writer.pushPending().getOrThrow()
+                }
                 assertEquals(0L, scalarLong(writerDb, "SELECT COUNT(*) FROM _sync_dirty_rows"))
                 assertEquals(0L, scalarLong(writerDb, "SELECT COUNT(*) FROM _sync_outbox_rows"))
-                assertEquals(sequenceBefore + 1, scalarLong(writerDb, "SELECT next_source_bundle_id FROM _sync_source_state"))
+                assertCyclicMembership(batches, expected, teamId, captainId)
+                assertEquals(sequenceBefore + batches.size, scalarLong(writerDb, "SELECT next_source_bundle_id FROM _sync_source_state"))
                 reader.pullToStable().getOrThrow()
                 assertEquals(0L, scalarLong(readerDb, "SELECT COUNT(*) FROM teams"))
                 assertEquals(0L, scalarLong(readerDb, "SELECT COUNT(*) FROM team_members"))
@@ -135,12 +165,15 @@ class RealServerFkTopologyTest {
         val config = requireRealServerConfig()
         resetRealServerState(config.baseUrl)
         val userId = randomUserId()
-        val writerHttp = newAuthenticatedHttpClient(config.baseUrl,
-            issueDummySigninToken(config.baseUrl, userId, randomSourceId("fk-base-writer")))
-        val readerHttp = newAuthenticatedHttpClient(config.baseUrl,
-            issueDummySigninToken(config.baseUrl, userId, randomSourceId("fk-base-reader")))
         val writerDb = newFileBackedDb()
         val readerDb = newFileBackedDb()
+        val batches = mutableListOf<Set<String>>()
+        val writerHttp = newAuthenticatedHttpClient(config.baseUrl,
+            issueDummySigninToken(config.baseUrl, userId, randomSourceId("fk-base-writer")), beforeSend = { path ->
+                if (path == "/sync/push") batches += frozenKeys(writerDb, "_sync_outbox_rows")
+            })
+        val readerHttp = newAuthenticatedHttpClient(config.baseUrl,
+            issueDummySigninToken(config.baseUrl, userId, randomSourceId("fk-base-reader")))
         try {
             createBusinessRichSchemaTables(writerDb)
             createBusinessRichSchemaTables(readerDb)
@@ -160,12 +193,18 @@ class RealServerFkTopologyTest {
             writerDb.execSQL("DELETE FROM team_members WHERE id='$captainId'")
             writerDb.execSQL("DELETE FROM teams WHERE id='$teamId'")
             assertEquals(captainId, scalarText(writerDb,
-                """SELECT json_extract(payload,'$[1].captain_member_id.value') FROM _sync_dirty_rows WHERE table_name='teams' AND key_json='{"id":"$teamId"}'"""))
+                """SELECT json_extract(base_payload,'$.captain_member_id.value') FROM _sync_dirty_rows WHERE table_name='teams' AND key_json='{"id":"$teamId"}'"""))
+            val expected = frozenKeys(writerDb, "_sync_dirty_rows")
+            assertEquals("the team and both original members remain delete intents", 3, expected.size)
+            batches.clear()
             val sequenceBefore = scalarLong(writerDb, "SELECT next_source_bundle_id FROM _sync_source_state")
-            writer.pushPending().getOrThrow()
+            repeat(3) {
+                if (scalarLong(writerDb, "SELECT COUNT(*) FROM _sync_dirty_rows") > 0L) writer.pushPending().getOrThrow()
+            }
             assertEquals(0L, scalarLong(writerDb, "SELECT COUNT(*) FROM _sync_dirty_rows"))
             assertEquals(0L, scalarLong(writerDb, "SELECT COUNT(*) FROM _sync_outbox_rows"))
-            assertEquals(sequenceBefore + 1, scalarLong(writerDb, "SELECT next_source_bundle_id FROM _sync_source_state"))
+            assertCyclicMembership(batches, expected, teamId, captainId)
+            assertEquals(sequenceBefore + batches.size, scalarLong(writerDb, "SELECT next_source_bundle_id FROM _sync_source_state"))
             reader.pullToStable().getOrThrow()
             assertEquals(0L, scalarLong(readerDb, "SELECT COUNT(*) FROM teams"))
             assertEquals(0L, scalarLong(readerDb, "SELECT COUNT(*) FROM team_members"))
@@ -186,10 +225,12 @@ class RealServerFkTopologyTest {
         val userId = randomUserId()
         val writerToken = issueDummySigninToken(config.baseUrl, userId, randomSourceId("fk-bounded-writer"))
         val readerToken = issueDummySigninToken(config.baseUrl, userId, randomSourceId("fk-bounded-reader"))
-        val writerHttp = newAuthenticatedHttpClient(config.baseUrl, writerToken)
-        val readerHttp = newAuthenticatedHttpClient(config.baseUrl, readerToken)
         val writerDb = newFileBackedDb()
         val readerDb = newFileBackedDb()
+        val batches = mutableListOf<Set<String>>()
+        val writerHttp = newAuthenticatedHttpClient(config.baseUrl, writerToken,
+            beforeSend = { path -> if (path == "/sync/push") batches += frozenKeys(writerDb, "_sync_outbox_rows") })
+        val readerHttp = newAuthenticatedHttpClient(config.baseUrl, readerToken)
         try {
             createBusinessRichSchemaTables(writerDb)
             createBusinessRichSchemaTables(readerDb)
@@ -198,13 +239,17 @@ class RealServerFkTopologyTest {
             writer.openAndAttach(userId).getOrThrow()
             reader.openAndAttach(userId).getOrThrow()
 
-            insertHotGraph(writerDb)
+            val ids = insertHotGraph(writerDb)
             assertEquals(10L, scalarLong(writerDb, "SELECT COUNT(*) FROM _sync_dirty_rows"))
+            val expected = frozenKeys(writerDb, "_sync_dirty_rows")
             writer.pushPending().getOrThrow()
-            assertEquals(3L, scalarLong(writerDb, "SELECT COUNT(*) FROM _sync_dirty_rows"))
+            assertTrue("one bounded push leaves a second batch", scalarLong(writerDb, "SELECT COUNT(*) FROM _sync_dirty_rows") in 1L..9L)
+            assertTrue("independent work respects the row target", batches.single().size <= 8)
             writer.pushPending().getOrThrow()
             assertEquals(0L, scalarLong(writerDb, "SELECT COUNT(*) FROM _sync_dirty_rows"))
 
+            assertCyclicMembership(batches, expected, ids.teamId, ids.captainId)
+            assertEquals(2, batches.size)
             reader.pullToStable().getOrThrow()
             assertEquals(2L, reader.syncStatus().getOrThrow().lastBundleSeqSeen)
             assertHotGraphDrivenCounts(readerDb, rounds = 0)

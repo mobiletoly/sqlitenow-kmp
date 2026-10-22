@@ -130,7 +130,7 @@ interface OversqliteClient {
     /** Atomically applies [result] to the selected durable conflict. */
     suspend fun resolveConflict(selected: PendingConflict, result: MergeResult): Result<Unit>
 
-    /** Clears only the selected conflict observation so the same frozen push can be retried. */
+    /** Requeues preserved intent from the selected rejected operation for a successor upload after acknowledgment. */
     suspend fun retryConflict(selected: PendingConflict): Result<Unit>
 
     /**
@@ -145,6 +145,9 @@ interface OversqliteClient {
      *
      * Requires successful [open] and [attach].
      */
+    suspend fun recoveryStatus(): Result<RecoveryStatus>
+    suspend fun setRecoveryMode(mode: RecoveryMode): Result<Unit>
+    suspend fun retryRecovery(): Result<Unit>
     suspend fun sync(): Result<SyncReport>
 
     /**

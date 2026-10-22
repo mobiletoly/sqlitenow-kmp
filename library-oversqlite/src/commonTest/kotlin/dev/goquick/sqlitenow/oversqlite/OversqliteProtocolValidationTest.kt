@@ -1,7 +1,8 @@
 package dev.goquick.sqlitenow.oversqlite
 
 import io.ktor.http.HttpStatusCode
-import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.*
+import kotlinx.serialization.decodeFromString
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -42,10 +43,10 @@ class OversqliteProtocolValidationTest {
     fun conflictDecoderDistinguishesMissingFromExplicitNullServerRow() {
         val missing = """{"error":"push_conflict","message":"x","conflict":{"schema":"main","table":"users","key":{"id":"1"},"op":"DELETE","base_row_version":1,"server_row_version":2,"server_row_deleted":true}}"""
         assertFailsWith<IllegalArgumentException> {
-            decodePushConflictExceptionOrNull(HttpStatusCode.Conflict, missing)
+            decodeHistoricalPushConflictFixtureOrNull(HttpStatusCode.Conflict, missing)
         }
         val explicitNull = """{"error":"push_conflict","message":"x","conflict":{"schema":"main","table":"users","key":{"id":"1"},"op":"DELETE","base_row_version":1,"server_row_version":2,"server_row_deleted":true,"server_row":null}}"""
-        assertEquals(2L, decodePushConflictExceptionOrNull(HttpStatusCode.Conflict, explicitNull)?.conflict?.serverRowVersion)
+        assertEquals(2L, decodeHistoricalPushConflictFixtureOrNull(HttpStatusCode.Conflict, explicitNull)?.conflict?.serverRowVersion)
     }
 
     @Test
@@ -132,4 +133,32 @@ class OversqliteProtocolValidationTest {
             assertFailsWith<RemoteResponseSemanticException> { validateConnectResponseWire(raw) }
         }
     }
+}
+
+// Historical fixture input only, deliberately absent from production transport.
+private val historicalConflictJson=Json {ignoreUnknownKeys=false}
+private fun decodeHistoricalPushConflictFixtureOrNull(
+    status: HttpStatusCode,
+    rawBody: String,
+): PushConflictException? {
+    if (status != HttpStatusCode.Conflict) return null
+    val root = runCatching { historicalConflictJson.parseToJsonElement(rawBody) as JsonObject }.getOrNull() ?: return null
+    if ((root["error"] as? JsonPrimitive)?.content != "push_conflict") return null
+    require(root.keys == setOf("error", "message", "conflict")) {
+        "push conflict response fields are invalid"
+    }
+    val conflictObject = root["conflict"] as? JsonObject
+        ?: throw RemoteResponseSemanticException("push conflict response")
+    val required = setOf(
+        "schema", "table", "key", "op", "base_row_version",
+        "server_row_version", "server_row_deleted", "server_row",
+    )
+    require(conflictObject.keys == required) {
+        "push conflict response fields are invalid"
+    }
+    val response = runCatching { historicalConflictJson.decodeFromString<PushConflictResponse>(rawBody) }
+        .getOrElse { throw RemoteResponseDecodeException("push conflict response") }
+    if (response.error != "push_conflict" || response.conflict == null) return null
+    validatePushConflictDetails(response.conflict)
+    return PushConflictException(rawBody = "", response = response.copy(message = ""))
 }

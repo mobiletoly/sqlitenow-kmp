@@ -16,15 +16,14 @@
 package dev.goquick.sqlitenow.core
 
 import androidx.sqlite.async.step
-import dev.goquick.sqlitenow.common.KermitSqliteNowLogger
-import dev.goquick.sqlitenow.common.LogLevel
-import dev.goquick.sqlitenow.common.originalSqliteNowLogger
-import dev.goquick.sqlitenow.common.sqliteNowLogger
 import dev.goquick.sqlitenow.core.sqlite.use
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.filter
@@ -44,12 +43,11 @@ import kotlin.concurrent.Volatile
  * transient in-memory worker, and non-web targets retain the bundled SQLite driver.
  */
 @OptIn(SqliteNowInternalApi::class)
-open class SqliteNowDatabase private constructor(
+open class SqliteNowDatabase(
     private val dbName: String,
     private val migration: DatabaseMigrations,
     private val debug: Boolean,
-    private val connectionProvider: SqliteConnectionProvider,
-    private val adjustLogger: Boolean,
+    private val connectionProvider: SqliteConnectionProvider = BundledSqliteConnectionProvider,
     private val syncManaged: Boolean,
 ) {
     @Volatile
@@ -120,7 +118,6 @@ open class SqliteNowDatabase private constructor(
         migration = migration,
         debug = false,
         connectionProvider = connectionProvider,
-        adjustLogger = false,
         syncManaged = false,
     )
 
@@ -134,13 +131,12 @@ open class SqliteNowDatabase private constructor(
         migration = migration,
         debug = false,
         connectionProvider = connectionProvider,
-        adjustLogger = false,
         syncManaged = syncManaged,
     )
 
     /**
-     * Optional constructor that allows enabling verbose debug logging.
-     * When debug is true, increases logger verbosity to Debug; otherwise uses default Info level.
+     * Enables query exception stack diagnostics. Application logging and SQL tracing are configured
+     * independently; construction never changes the process logger.
      */
     constructor(
         dbName: String,
@@ -152,34 +148,9 @@ open class SqliteNowDatabase private constructor(
         migration = migration,
         debug = debug,
         connectionProvider = connectionProvider,
-        adjustLogger = true,
         syncManaged = false,
     )
 
-    constructor(
-        dbName: String,
-        migration: DatabaseMigrations,
-        debug: Boolean,
-        connectionProvider: SqliteConnectionProvider = BundledSqliteConnectionProvider,
-        syncManaged: Boolean,
-    ) : this(
-        dbName = dbName,
-        migration = migration,
-        debug = debug,
-        connectionProvider = connectionProvider,
-        adjustLogger = true,
-        syncManaged = syncManaged,
-    )
-
-    init {
-        if (adjustLogger) {
-            sqliteNowLogger = if (originalSqliteNowLogger === sqliteNowLogger) {
-                KermitSqliteNowLogger(if (debug) LogLevel.Debug else LogLevel.Info)
-            } else {
-                sqliteNowLogger
-            }
-        }
-    }
 
     /**
      * @return The database connection
@@ -436,12 +407,29 @@ open class SqliteNowDatabase private constructor(
         queryExecutor: suspend () -> T
     ): Flow<T> = flow {
         enableTableChangeNotifications()
-        // Emit initial result
-        emit(queryExecutor())
-
-        // Listen for table changes and re-execute query
-        createTableChangeFlow(affectedTables).collect {
+        if (affectedTables.isEmpty()) {
             emit(queryExecutor())
+            return@flow
+        }
+
+        coroutineScope {
+            val invalidations = Channel<Unit>(Channel.CONFLATED)
+            // This path does not suspend before SharedFlow registers the subscription.
+            // Filter table names before coalescing so unrelated changes cannot erase a signal.
+            val listener = launch(start = CoroutineStart.UNDISPATCHED) {
+                createTableChangeFlow(affectedTables).collect {
+                    invalidations.trySend(Unit)
+                }
+            }
+            try {
+                emit(queryExecutor())
+                for (invalidation in invalidations) {
+                    emit(queryExecutor())
+                }
+            } finally {
+                listener.cancel()
+                invalidations.cancel()
+            }
         }
     }
 

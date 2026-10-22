@@ -57,6 +57,7 @@ internal class ApplyStatementCleanupTest : ApplyStatementTestSupport() {
                 repeat(population) { i -> rows += rootEffect("snapshot-$i", "S${i.toString().padStart(4, '0')}").copy(op = "INSERT") }
                 f.server.addRemoteBundleForTest(rows)
             }
+            if(operation=="snapshot") println("SNAPSHOT_CLEANUP population=$population phase=before_public_rebuild")
             val observed = ApplyStatementObservation.install(f.db)
             try {
                 when (operation) {
@@ -64,10 +65,13 @@ internal class ApplyStatementCleanupTest : ApplyStatementTestSupport() {
                     "conflict" -> f.client.resolveConflict(checkNotNull(handle), MergeResult.AcceptServer).getOrThrow()
                     else -> f.client.rebuild().getOrThrow()
                 }
+            } catch(failure: Throwable) {
+                if(operation=="snapshot") println("SNAPSHOT_CLEANUP population=$population failure=${failure::class.simpleName} plan="+scalarText(f.db,"SELECT coalesce((SELECT json_object('phase',phase,'root',root_cursor,'visit',visit_cursor,'entries',entries,'atomic_work',atomic_work) FROM _sync_apply_plan LIMIT 1),'{}')"))
+                throw failure
             } finally { observed.restore() }
             observed.assertClosed()
             val edges = if (operation == "snapshot") 0 else population
-            val rows = if (operation == "snapshot") population else population + 1
+            val rows = if (operation == "snapshot") population + 2 else population + 1 // S roots plus authoritative absence rows for Q/W
             fun probes(n: Int) = (n + 127L) / 128 + 1
             assertEquals(probes(edges), observed.steps[applyCleanupSql[0]], "edge pages including terminal probe")
             assertEquals(probes(rows), observed.steps[applyCleanupSql[1]], "row pages including terminal probe")

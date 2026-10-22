@@ -121,7 +121,7 @@ internal class ApplyIndexAccountingTest : ApplyStatementTestSupport() {
                 })
                 val config = configuration(f).let {
                     if (dimension == "entries") it.copy(maxSyncWorkspaceEntries = base.entries + 95 + 1 + 3)
-                    else it.copy(maxSyncWorkspaceBytes = base.bytes + 512 + 6 * 128 + 146 + 6 * 4096 + 255)
+                    else it.copy(maxSyncWorkspaceBytes = base.bytes + 512 + 6 * 133 + 146 + 6 * 4096 + 255)
                 }
                 try {
                     val observed = prepareIndex(f, config, cached, probe = probe)
@@ -154,8 +154,8 @@ internal class ApplyIndexAccountingTest : ApplyStatementTestSupport() {
         withApplyFixture(3) { f ->
             for (kind in listOf("snapshot", "settlement")) {
                 val observed = prepareIndex(f, configuration(f), cached = true, kind = kind, discover = kind == "snapshot")
-                assertEquals(0L, observed.steps.filterKeys(::eligibility).values.sum())
-                assertEquals(0L, observed.steps.filterKeys { it.startsWith("INSERT OR IGNORE INTO _sync_apply_edges") }.values.sum())
+                assertEquals(if(kind=="snapshot") 1L else 0L, observed.steps.filterKeys(::eligibility).values.sum())
+                assertEquals(if(kind=="snapshot") 3L else 0L, observed.steps.filterKeys { it.startsWith("INSERT OR IGNORE INTO _sync_apply_edges") }.values.sum(),"snapshot indexes the three related rows; ordinary acknowledgement below retains no index")
             }
             f.db.execSQL("UPDATE nodes SET name='acknowledged' WHERE id='W'")
             val observed = ApplyStatementObservation.install(f.db)
@@ -358,7 +358,7 @@ internal class ApplyIndexAccountingTest : ApplyStatementTestSupport() {
         var bytes = 0L
         fun visit(extraEntries: Long = 0, extraBytes: Long = 0) {
             entries = maxOf(entries, external.entries + 1 + edges + extraEntries)
-            bytes = maxOf(bytes, external.bytes + edgeBytes + 512 + 6 * (128 + utf8Size(cursor)) + extraBytes)
+            bytes = maxOf(bytes, external.bytes + edgeBytes + 512 + 6 * (133 + utf8Size(cursor)) + extraBytes)
         }
         visit()
         for (key in listOf("Q", "W") + (0 until rows).map { "Z${it.toString().padStart(5, '0')}" }) {

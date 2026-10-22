@@ -112,7 +112,7 @@ public struct SQLiteNowSyncConfig: Equatable, Sendable {
         generationId: Int64,
         databaseId: String,
         serviceId: String,
-        maxSyncWorkspaceEntries: Int64 = 100_000,
+        maxSyncWorkspaceEntries: Int64 = 131_072,
         maxSyncWorkspaceBytes: Int64 = 256 * 1_024 * 1_024,
         maxSyncWorkUnitsPerInvocation: Int64 = 1_000_000,
         transferTargets: SQLiteNowTransferTargets = .init(),
@@ -472,18 +472,36 @@ public struct SQLiteNowSyncReport: Equatable, Sendable {
 }
 
 public struct SQLiteNowSyncThenDetachResult: Equatable, Sendable {
-    public let lastSync: SQLiteNowSyncReport
+    public let lastSync: SQLiteNowSyncReport?
     public let detach: SQLiteNowDetachOutcome
     public let syncRounds: Int32
     public let remainingPendingRowCount: Int64
+    public let blockedReason: SQLiteNowSyncThenDetachBlockedReason?
     public let success: Bool
 
     internal init(_ runtime: SQLiteNowSyncRuntimeSyncThenDetachResult) {
-        lastSync = SQLiteNowSyncReport(runtime.lastSync)
+        lastSync = runtime.lastSync.map(SQLiteNowSyncReport.init)
         detach = SQLiteNowDetachOutcome(runtime.detach.outcome)
         syncRounds = runtime.syncRounds
         remainingPendingRowCount = runtime.remainingPendingRowCount
+        blockedReason = runtime.blockedReason.map(SQLiteNowSyncThenDetachBlockedReason.init)
         success = runtime.success
+    }
+}
+
+public enum SQLiteNowSyncThenDetachBlockedReason: Equatable, Sendable {
+    case pushAttemptLimit
+    case noProgress
+    case syncRoundLimit
+    case unknown(String)
+
+    internal init(_ raw: String) {
+        switch raw {
+        case "PUSH_ATTEMPT_LIMIT": self = .pushAttemptLimit
+        case "NO_PROGRESS": self = .noProgress
+        case "SYNC_ROUND_LIMIT": self = .syncRoundLimit
+        default: self = .unknown(raw)
+        }
     }
 }
 
@@ -651,6 +669,7 @@ public struct SQLiteNowSyncResolver: @unchecked Sendable {
 
 public struct SQLiteNowPendingConflict: Equatable, Sendable {
     public let revision: Int64
+    public let baselineRevision: Int64
     public let sourceId: String
     public let sourceBundleId: Int64
     public let canonicalRequestHash: String
@@ -660,6 +679,7 @@ public struct SQLiteNowPendingConflict: Equatable, Sendable {
 
     internal init(_ runtime: SQLiteNowSyncRuntimePendingConflict) {
         revision = runtime.revision
+        baselineRevision = runtime.baselineRevision
         sourceId = runtime.sourceId
         sourceBundleId = runtime.sourceBundleId
         canonicalRequestHash = runtime.canonicalRequestHash
@@ -672,7 +692,8 @@ public struct SQLiteNowPendingConflict: Equatable, Sendable {
         SQLiteNowSyncRuntimePendingConflict(
             revision: revision, sourceId: sourceId, sourceBundleId: sourceBundleId,
             canonicalRequestHash: canonicalRequestHash, generationId: generationId,
-            generationFingerprint: generationFingerprint, conflict: conflict.runtimeConflict
+            generationFingerprint: generationFingerprint, conflict: conflict.runtimeConflict,
+            baselineRevision: baselineRevision
         )
     }
 }
@@ -1210,7 +1231,12 @@ public final class SQLiteNowSyncClient {
 
     public func pushPending() async throws -> SQLiteNowPushReport {
         try await mapRuntimeErrors {
-            let report = try await runtime.pushPending()
+            let operation = try await awaitSyncOpeningOperation { completion in
+                self.runtime.startPushPending(completion: completion)
+            }
+            guard let report = operation.pushReport else {
+                throw SQLiteNowError.sync(message: "KMP omitted the push report.")
+            }
             return SQLiteNowPushReport(report)
         }
     }
@@ -1226,43 +1252,68 @@ public final class SQLiteNowSyncClient {
         result: SQLiteNowSyncResolverResult
     ) async throws {
         _ = try await mapRuntimeErrors {
-            try await runtime.resolveConflict(
-                selected: selected.runtimePendingConflict,
-                result: result.runtimeResult
-            )
+            try await awaitSyncOpeningOperation { completion in
+                self.runtime.startResolveConflict(
+                    selected: selected.runtimePendingConflict,
+                    result: result.runtimeResult,
+                    completion: completion
+                )
+            }
         }
     }
 
     public func retryConflict(_ selected: SQLiteNowPendingConflict) async throws {
         _ = try await mapRuntimeErrors {
-            try await runtime.retryConflict(selected: selected.runtimePendingConflict)
+            try await awaitSyncOpeningOperation { completion in
+                self.runtime.startRetryConflict(selected: selected.runtimePendingConflict, completion: completion)
+            }
         }
     }
 
     public func pullToStable() async throws -> SQLiteNowRemoteSyncReport {
         try await mapRuntimeErrors {
-            let report = try await runtime.pullToStable()
+            let operation = try await awaitSyncOpeningOperation { completion in
+                self.runtime.startPullToStable(completion: completion)
+            }
+            guard let report = operation.remoteReport else {
+                throw SQLiteNowError.sync(message: "KMP omitted the pull report.")
+            }
             return SQLiteNowRemoteSyncReport(report)
         }
     }
 
     public func sync() async throws -> SQLiteNowSyncReport {
         try await mapRuntimeErrors {
-            let report = try await runtime.sync()
+            let operation = try await awaitSyncOpeningOperation { completion in
+                self.runtime.startSync(completion: completion)
+            }
+            guard let report = operation.syncReport else {
+                throw SQLiteNowError.sync(message: "KMP omitted the sync report.")
+            }
             return SQLiteNowSyncReport(report)
         }
     }
 
     public func syncThenDetach() async throws -> SQLiteNowSyncThenDetachResult {
         try await mapRuntimeErrors {
-            let result = try await runtime.syncThenDetach()
+            let operation = try await awaitSyncOpeningOperation { completion in
+                self.runtime.startSyncThenDetach(completion: completion)
+            }
+            guard let result = operation.syncThenDetachResult else {
+                throw SQLiteNowError.sync(message: "KMP omitted the sync then detach result.")
+            }
             return SQLiteNowSyncThenDetachResult(result)
         }
     }
 
     public func rebuild() async throws -> SQLiteNowRemoteSyncReport {
         try await mapRuntimeErrors {
-            let report = try await runtime.rebuild()
+            let operation = try await awaitSyncOpeningOperation { completion in
+                self.runtime.startRebuild(completion: completion)
+            }
+            guard let report = operation.remoteReport else {
+                throw SQLiteNowError.sync(message: "KMP omitted the rebuild report.")
+            }
             return SQLiteNowRemoteSyncReport(report)
         }
     }

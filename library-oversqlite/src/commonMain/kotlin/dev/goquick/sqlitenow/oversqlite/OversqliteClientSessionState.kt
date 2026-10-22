@@ -224,10 +224,15 @@ internal class OversqliteClientSessionState(
         sessionConnected = false
     }
 
-    internal suspend fun pendingLocalChangeCount(): Long = OversqliteCountEvaluation(
-        dirtyRowCount = syncStateStore.countDirtyRows(),
-        outboundRowCount = outboxStateStore.countRows(),
-    ).totalPendingRowCount
+    internal suspend fun pendingLocalChangeCount(): Long {
+        val rows = OversqliteCountEvaluation(
+            dirtyRowCount = syncStateStore.countDirtyRows(),
+            outboundRowCount = outboxStateStore.countRows(),
+        ).totalPendingRowCount
+        // A settled upload can have no dirty/outbox rows while its original
+        // binding still owns a durable acknowledgment obligation.
+        return if (rows == 0L && loadUploadJournal(db) != null) 1L else rows
+    }
 
     internal suspend fun pendingSyncStatus(): PendingSyncStatus {
         val total = pendingLocalChangeCount()

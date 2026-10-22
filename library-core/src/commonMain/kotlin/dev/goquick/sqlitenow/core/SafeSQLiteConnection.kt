@@ -62,9 +62,11 @@ class SafeSQLiteConnection internal constructor(
     private val persistenceController: PersistenceController = NoopPersistenceController(),
     private val executionContextHook: SqliteNowContextHook? = null,
     private val executionContext: SqliteConnectionExecutionContext,
+    sqlTrace: SqlTracePolicy? = null,
     private val ordinaryCloseCleanupTimeoutMillis: Long =
         DEFAULT_ORDINARY_CLOSE_CLEANUP_TIMEOUT_MILLIS,
 ) {
+    private val sqlTraceSession = sqlTrace?.let(::SqlTraceSession)
     val dispatcher: CoroutineDispatcher = executionContext.dispatcher
     private var activeTransactionDepth: Int = 0
     private var activeTransactionToken: Any? = null
@@ -275,8 +277,8 @@ class SafeSQLiteConnection internal constructor(
 
     suspend fun execSQL(sql: String) {
         migrationSqlValidator?.invoke(sql)
-        sqliteNowLogger.d { "SafeSQLiteConnection.execSQL: $sql" }
         withDispatcherContext {
+            sqlTraceSession?.record("execute", sql)
             wrapAndroidxSqliteAsyncCall { executeSqliteNowSql(ref, sql) }
             notifyOperationComplete()
         }
@@ -284,8 +286,8 @@ class SafeSQLiteConnection internal constructor(
 
     suspend fun prepare(sql: String): SQLiteStatement {
         migrationSqlValidator?.invoke(sql)
-        sqliteNowLogger.d { "SafeSQLiteConnection.prepare: $sql" }
         return withDispatcherContext {
+            sqlTraceSession?.record("prepare", sql)
             registerStatement(wrapAndroidxSqliteAsyncCall { ref.prepare(sql) })
         }
     }

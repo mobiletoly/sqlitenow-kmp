@@ -9,7 +9,7 @@ import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.plugins.defaultRequest
-import io.ktor.client.plugins.observer.ResponseObserver
+import io.ktor.client.statement.HttpReceivePipeline
 import io.ktor.client.request.HttpRequestPipeline
 import io.ktor.client.request.get
 import io.ktor.client.request.header
@@ -39,18 +39,20 @@ internal open class RealServerHarnessSupport : PlatformCrossTargetTestSupport() 
     private val realServerJson = Json { ignoreUnknownKeys = true }
     private val expectedRealServerAppName = "nethttp-server-example"
 
-    protected suspend fun requireRealServerConfig(): RealServerHarnessConfig? {
+    protected suspend fun requireRealServerConfig(
+        profileUrlEnvironment: String = "OVERSQLITE_REAL_SERVER_SMOKE_BASE_URL",
+    ): RealServerHarnessConfig? {
         if (!realServerFlagEnabled("OVERSQLITE_REALSERVER_TESTS")) {
             println(
                 "Skipping realserver tests; set OVERSQLITE_REALSERVER_TESTS=true to enable them locally.",
             )
             return null
         }
-        val baseUrl = realServerEnv("OVERSQLITE_REAL_SERVER_SMOKE_BASE_URL")
+        val baseUrl = realServerEnv(profileUrlEnvironment)
             ?.trim()
             .takeUnless { it.isNullOrEmpty() }
         check(baseUrl != null) {
-            "Realserver tests require an explicit OVERSQLITE_REAL_SERVER_SMOKE_BASE_URL for their owned fixture"
+            "Realserver tests require an explicit $profileUrlEnvironment for their owned fixture"
         }
         check(serverHealthAvailable(baseUrl)) {
             "Realserver tests are enabled, but /syncx/health is unavailable at $baseUrl"
@@ -83,8 +85,10 @@ internal open class RealServerHarnessSupport : PlatformCrossTargetTestSupport() 
                     proceed()
                 }
             }
-            install(ResponseObserver) {
-                onResponse { response ->
+            // Await fixture writes before the SDK can settle this response. A
+            // background observer cannot establish a response/settlement barrier.
+            install("RealServerResponseBarrier") {
+                receivePipeline.intercept(HttpReceivePipeline.Before) { response ->
                     afterResponse(response.call.request.url.encodedPath)
                 }
             }
@@ -355,6 +359,9 @@ private class CoordinatedRealServerClient(
     override suspend fun releasePushDependencyDiagnostic(diagnosticId: String) =
         requireDelegate().releasePushDependencyDiagnostic(diagnosticId)
     override suspend fun syncStatus() = requireDelegate().syncStatus()
+    override suspend fun recoveryStatus() = requireDelegate().recoveryStatus()
+    override suspend fun setRecoveryMode(mode: RecoveryMode) = requireDelegate().setRecoveryMode(mode)
+    override suspend fun retryRecovery() = requireDelegate().retryRecovery()
     override suspend fun detach() = requireDelegate().detach()
     override suspend fun pushPending() = requireDelegate().pushPending()
     override suspend fun pendingConflict() = requireDelegate().pendingConflict()

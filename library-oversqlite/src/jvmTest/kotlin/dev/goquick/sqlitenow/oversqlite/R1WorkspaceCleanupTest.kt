@@ -16,7 +16,8 @@ internal class R1WorkspaceCleanupTest : CrossTargetSyncTestSupport() {
         for (mode in JvmCleanupFailureMode.entries) {
             val db = newDb()
             try {
-                db.execSQL(oversqliteRetainedTableDdl.getValue("_sync_operation_state")); db.execSQL(applyPlanDdl); db.execSQL(pushPlanDdl)
+                db.execSQL(oversqliteRetainedTableDdl.getValue("_sync_operation_state"))
+            db.execSQL(oversqliteRetainedTableDdl.getValue("_sync_upload_journal")); db.execSQL(applyPlanDdl); db.execSQL(pushPlanDdl)
                 db.execSQL("INSERT INTO _sync_operation_state(singleton_key) VALUES(1)")
                 db.execSQL("INSERT INTO _sync_apply_plan(singleton_key,unit,guard,phase,root_cursor,visit_cursor,table_cursor,fk_cursor,entries,bytes) VALUES(1,'u','g','ready',0,0,0,0,0,0)")
                 mutation?.let { db.execSQL(it) }

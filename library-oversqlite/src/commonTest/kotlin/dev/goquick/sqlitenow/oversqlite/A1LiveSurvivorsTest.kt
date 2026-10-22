@@ -6,14 +6,16 @@ import dev.goquick.sqlitenow.core.SafeSQLiteConnection
 import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.*
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
+import kotlin.test.assertNotNull
 
 internal class A1LiveSurvivorsTest : RealServerSupport() {
     @Test
     fun baselineConfirmedTombstoneReinsertion() = runRealServerTest {
-        val config = requireRealServerConfig() ?: return@runRealServerTest
+        val config = requireRealServerConfig("OVERSQLITE_CATEGORIES_REAL_SERVER_SMOKE_BASE_URL") ?: return@runRealServerTest
         val tables = listOf(SyncTable("categories",syncKeyColumnName="id"))
         val db = newDb()
         val user = randomRealServerId("baseline-tombstone")
@@ -61,6 +63,7 @@ internal class A1LiveSurvivorsTest : RealServerSupport() {
             assertTextPayload(baselineLiveVector(db).row("_sync_row_state",id).payload("server_payload"),mapOf("id" to id,"name" to "reinserted","parent_id" to null))
             println("baseline-live: confirmed tombstone reinsertion settled")
         } finally { client?.closeFromCoordinatedOwner();http?.close();db.close() }
+        println("RECOVERY_HTTP_BODY A1LiveSurvivorsTest.baselineConfirmedTombstoneReinsertion PASS")
     }
 
     @Test
@@ -76,7 +79,7 @@ internal class A1LiveSurvivorsTest : RealServerSupport() {
     fun baselineLostResponseTransientReplay() = runRealServerTest { baselineLiveReplay(false) }
 
     private suspend fun baselineLiveReplay(physicalRestart: Boolean) {
-        val config = requireRealServerConfig() ?: return
+        val config = requireRealServerConfig("OVERSQLITE_CATEGORIES_REAL_SERVER_SMOKE_BASE_URL") ?: return
         val tables = listOf(SyncTable("categories",syncKeyColumnName="id"))
         val path = if (physicalRestart) createTempSqliteNowTestDbPath("baseline-live-replay") else null
         var db = if (path == null) newDb() else newFileBackedDb(path)
@@ -154,65 +157,82 @@ internal class A1LiveSurvivorsTest : RealServerSupport() {
             client?.closeFromCoordinatedOwner();http?.close();db.close()
             if (path != null) deleteTempSqliteNowTestDbArtifacts(path)
         }
+        val method = if (physicalRestart) "baselineLostResponsePhysicalReopen" else "baselineLostResponseTransientReplay"
+        println("RECOVERY_HTTP_BODY A1LiveSurvivorsTest.$method PASS")
     }
 
     private suspend fun createBaselineTable(db: SafeSQLiteConnection) {
         db.execSQL("CREATE TABLE categories(id TEXT PRIMARY KEY NOT NULL,name TEXT NOT NULL,parent_id TEXT REFERENCES categories(id) ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED)")
     }
 
-    private suspend fun baselineRemoteRows(config: RealServerConfig,user: String,tables: List<SyncTable>): String {
-        val db = newDb()
-        var http: HttpClient? = null
-        var client: DefaultOversqliteClient? = null
+    // Observation-only wire projection. The primary/second attached SDK clients
+    // below remain the physical apply witnesses; this oracle needs no snapshot.
+    private suspend fun baselineRemoteRows(config:RealServerConfig,user:String,tables:List<SyncTable>):String {
+        val source=randomRealServerId("baseline-observer")
+        val http=newRealServerHttpClient(config.baseUrl,issueDummySigninToken(config.baseUrl,user,source))
+        lateinit var generation:SyncGeneration
+        val remote=OversqliteRemoteApi(http,Json {ignoreUnknownKeys=false},generation={generation},log={})
         try {
-            createBaselineTable(db)
-            val source = bootstrapManagedSourceId(db,config.baseUrl,syncTables=tables)
-            http = newRealServerHttpClient(config.baseUrl,issueDummySigninToken(config.baseUrl,user,source))
-            client = newRealServerClient(db,http,syncTables=tables)
-            client.open().getOrThrow();client.attach(user).getOrThrow();client.pullToStable().getOrThrow()
-            return scalarText(db,"SELECT json_group_array(json_array(id,name,parent_id)) FROM (SELECT * FROM categories ORDER BY id)")
-        } finally { client?.closeFromCoordinatedOwner();http?.close();db.close() }
+            val admitted=remote.fetchGeneration(source,1);generation=admitted.generation
+            assertEquals(tables.map {it.tableName},generation.tables.map {it.table})
+            remote.connect(source,false)
+            val rows=mutableMapOf<String,JsonObject>();var after=0L
+            do {
+                val page=remote.sendPullRequest(after,admitted.limits.maxPullBundles,0,source,admitted.limits.maxPullDecodedBytes)
+                for(bundle in page.bundles) {
+                    for(row in bundle.rows) {
+                        val key=row.key.getValue("id")
+                        if(row.op=="DELETE")rows.remove(key) else rows[key]=row.payload!!.jsonObject
+                    }
+                    after=bundle.bundleSeq
+                }
+            } while(page.hasMore)
+            return JsonArray(rows.entries.sortedBy {it.key}.map {it.value}.map {JsonArray(listOf(it.getValue("id"),it.getValue("name"),it.getValue("parent_id")))}).toString()
+        } finally {http.close()}
     }
 
     private suspend fun baselineLiveVector(db: SafeSQLiteConnection) = baselineQualificationVector(db,listOf("categories"))
 
-    @Test fun baselineSourceRecoverySnapshotPreservesFrozenOwners() = runRealServerTest {
-        val config=requireRealServerConfig() ?: return@runRealServerTest
-        val db=newDb();val tables=listOf(SyncTable("categories",syncKeyColumnName="id"));val user=randomRealServerId("baseline-recovery");val id=randomRealServerUuid()
-        var http:HttpClient?=null;var client:DefaultOversqliteClient?=null;var lose=false
+    // Replaces the obsolete snapshot-based prepared-source rebind assertion.
+    // C03 settles and acknowledges F on its original source; C04 owns clean T.
+    @Test fun baselineSourceRecoveryCannotBypassFrozenOutcome() = runRealServerTest {
+        val config=requireRealServerConfig("OVERSQLITE_CATEGORIES_REAL_SERVER_SMOKE_BASE_URL") ?: return@runRealServerTest
+        val db=newDb();val user=randomRealServerId("baseline-recovery");val id=randomRealServerUuid()
+        val tables=listOf(SyncTable("categories",syncKeyColumnName="id"))
+        var http:HttpClient?=null;var client:DefaultOversqliteClient?=null;var lose=false;var snapshots=0
         try {
             createBaselineTable(db);val source=bootstrapManagedSourceId(db,config.baseUrl,syncTables=tables)
-            val transport=newRealServerHttpClient(config.baseUrl,issueDummySigninToken(config.baseUrl,user,source))
+            val transport=newRealServerHttpClient(config.baseUrl,issueDummySigninToken(config.baseUrl,user,source),beforeRequest={if(it=="/sync/snapshot-sessions")snapshots++})
             http=transport.config {install("BaselineRecoveryResponseLoss") {receivePipeline.intercept(HttpReceivePipeline.Before) {response ->
                 if(lose && response.call.request.url.encodedPath=="/sync/push") {assertTrue(response.status.value in 200..299);lose=false;throw CancellationException("lost committed recovery response")}
-            } } };transport.close()
+            }}};transport.close()
             client=newRealServerClient(db,http,syncTables=tables,transientRetryPolicy=OversqliteTransientRetryPolicy(maxAttempts=1))
             client.open().getOrThrow();client.attach(user).getOrThrow();db.execSQL("INSERT INTO categories VALUES('$id','original',NULL)");client.pushPending().getOrThrow()
             db.execSQL("UPDATE categories SET name='frozen' WHERE id='$id'");lose=true
-            var failed=false;try {failed=client.pushPending().isFailure} catch(_:CancellationException) {failed=true}
-            assertTrue(failed && !lose);val frozen=baselineLiveVector(db)
-            assertTrue(frozen.rows("_sync_dirty_rows").isEmpty())
-            val original=frozen.row("_sync_row_state",id);val outbox=frozen.row("_sync_outbox_rows",id)
-            assertTextPayload(original.payload("server_payload"),mapOf("id" to id,"name" to "original","parent_id" to null))
-            assertEquals(original.payload("server_payload"),outbox.payload("base_payload"));assertEquals(original.payload("server_provenance"),outbox.payload("base_provenance"))
-            assertEquals("[[\"$id\",\"frozen\",null]]",baselineRemoteRows(config,user,tables))
-            val replacement=randomRealServerUuid();markSourceRecoveryRequired(db,replacementSourceId=replacement);client.rebuild().getOrThrow()
-            val recovered=baselineLiveVector(db);val a=recovered.row("_sync_row_state",id);val retained=recovered.row("_sync_outbox_rows",id)
-            assertTextPayload(a.payload("server_payload"),mapOf("id" to id,"name" to "frozen","parent_id" to null));assertEquals("2",a.text("row_version"))
-            assertEquals("snapshot",a.payload("server_provenance")!!.jsonObject["origin"]!!.jsonPrimitive.content)
-            for(c in listOf("key_json","wire_key_json","op","base_row_version","base_kind","base_payload","base_provenance","wire_payload","local_payload","row_ordinal")) assertEquals(outbox[c],retained[c],c)
-            assertEquals(frozen.rows("_sync_outbox_bundle").single().text("canonical_request_hash"),recovered.rows("_sync_outbox_bundle").single().text("canonical_request_hash"))
-            assertEquals(frozen.rows("categories"),recovered.rows("categories"));assertTrue(recovered.rows("_sync_dirty_rows").isEmpty());assertTrue(recovered.rows("_sync_relationships").isEmpty())
-            assertBaselineCounters(recovered,replacement,2,2)
-            assertEquals("1",recovered.rows("_sync_outbox_bundle").single().text("source_bundle_id"));assertEquals(replacement,recovered.rows("_sync_outbox_bundle").single().text("source_id"))
-            assertEquals("[[\"$id\",\"frozen\",null]]",baselineRemoteRows(config,user,tables))
-            println("baseline-live: public recovery newer A and immutable original frozen B/wire verified")
+            var failed=false;try {failed=client.pushPending().isFailure}catch(_:CancellationException){failed=true}
+            assertTrue(failed && !lose)
+            val originalF=scalarText(db,"SELECT hex(request_body) FROM _sync_upload_journal")
+            val before=baselineLiveVector(db);val old=before.row("_sync_row_state",id);val capture=before.row("_sync_outbox_rows",id)
+            assertTextPayload(old.payload("server_payload"),mapOf("id" to id,"name" to "original","parent_id" to null))
+            assertEquals(old.payload("server_payload"),capture.payload("base_payload"));assertEquals(old.payload("server_provenance"),capture.payload("base_provenance"))
+            markSourceRecoveryRequired(db,replacementSourceId=randomRealServerUuid())
+            val guarded=baselineQualificationVector(db,listOf("categories","_sync_upload_journal"))
+            assertTrue(client.rebuild().isFailure);assertEquals(guarded,baselineQualificationVector(db,listOf("categories","_sync_upload_journal")))
+            assertEquals(originalF,scalarText(db,"SELECT hex(request_body) FROM _sync_upload_journal"));assertEquals(0,snapshots)
+            client.pushPending().getOrThrow()
+            val settled=baselineLiveVector(db)
+            assertTrue(settled.rows("_sync_outbox_rows").isEmpty());assertTrue(settled.rows("_sync_dirty_rows").isEmpty())
+            assertBaselineCounters(settled,source,3,2);assertEquals(0L,scalarLong(db,"SELECT count(*) FROM _sync_upload_journal"))
+            assertTextPayload(settled.row("_sync_row_state",id).payload("server_payload"),mapOf("id" to id,"name" to "frozen","parent_id" to null))
+            assertEquals(before.rows("categories"),settled.rows("categories"));assertEquals(0,snapshots)
+            println("A1_C03_REPLACEMENT_COMPLETE source_recovery_did_not_retarget_F original_source=$source resolve_ack_complete=true snapshot=0")
         } finally {client?.closeFromCoordinatedOwner();http?.close();db.close()}
+        println("RECOVERY_HTTP_BODY A1LiveSurvivorsTest.baselineSourceRecoveryCannotBypassFrozenOutcome PASS")
     }
 
     @Test
     fun settlementAndPullPreserveGrandchild() = runRealServerTest {
-        val config = requireRealServerConfig() ?: return@runRealServerTest
+        val config = requireRealServerConfig("OVERSQLITE_CATEGORIES_REAL_SERVER_SMOKE_BASE_URL") ?: return@runRealServerTest
         val tables = listOf(SyncTable("categories", syncKeyColumnName = "id"))
         val user = randomRealServerId("a1")
         val databases = listOf(newDb(), newDb())
@@ -254,5 +274,6 @@ internal class A1LiveSurvivorsTest : RealServerSupport() {
             transports.forEach { it.close() }
             databases.forEach { it.close() }
         }
+        println("RECOVERY_HTTP_BODY A1LiveSurvivorsTest.settlementAndPullPreserveGrandchild PASS")
     }
 }

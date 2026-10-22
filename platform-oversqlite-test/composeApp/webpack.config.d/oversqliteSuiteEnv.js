@@ -9,6 +9,9 @@ const realServerHeavyEnabled =
 const realServerBaseUrl =
   process.env.OVERSQLITE_REAL_SERVER_SMOKE_BASE_URL ?? null;
 
+const categoriesRealServerBaseUrl =
+  process.env.OVERSQLITE_CATEGORIES_REAL_SERVER_SMOKE_BASE_URL ?? null;
+
 config.plugins = Array.isArray(config.plugins) ? config.plugins : [];
 config.plugins.push(
   new webpack.BannerPlugin({
@@ -19,6 +22,7 @@ globalThis.OVERSQLITE_PLATFORM_TESTS = ${JSON.stringify(platformEnabled)};
 globalThis.OVERSQLITE_REALSERVER_TESTS = ${JSON.stringify(realServerEnabled)};
 globalThis.OVERSQLITE_REALSERVER_HEAVY = ${JSON.stringify(realServerHeavyEnabled)};
 globalThis.OVERSQLITE_REAL_SERVER_SMOKE_BASE_URL = ${JSON.stringify(realServerBaseUrl)};
+globalThis.OVERSQLITE_CATEGORIES_REAL_SERVER_SMOKE_BASE_URL = ${JSON.stringify(categoriesRealServerBaseUrl)};
 `,
   }),
 );

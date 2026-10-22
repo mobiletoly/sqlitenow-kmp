@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import copy
+import shutil
 import os
 from pathlib import Path
 import signal
@@ -408,6 +410,264 @@ class CampaignTests(FixtureCase):
         self.assertTrue(locks["compiler"].isdisjoint(locks["go-client-upgrade-conformance"]))
         self.assertIn("live-authority", locks["oversqlite-realserver-jvm"])
         self.assertIn("measurement-exclusive", locks["kmp-resource"])
+
+
+class ProfileCampaignTests(FixtureCase):
+    def setUp(self):
+        super().setUp()
+        self.root = self.parent / 'sqlitenow-kmp'
+        self.go = self.parent / 'go-oversync'
+        tooling = self.root / 'tools/qualification'
+        tooling.mkdir(parents=True)
+        (tooling / 'campaign.py').write_text('# controlled export input\n')
+        (tooling / 'profiles').mkdir()
+        (tooling / 'profiles/oversqlite-full.json').write_text('{}\n')
+        self.profile = dict(roots=dict(kotlin=str(self.root), go=str(self.go)), schedule=dict(
+            entries={'leaf': dict(id='leaf', kind='native', task=':fixture:jvmTest', wall_seconds=300, environment={}),
+                     'prep': dict(id='prep', kind='preparation', wall_seconds=300, environment={}, environment_contexts={'ctx': {}})},
+            command_aliases={}, logical_roots={}, native_contracts={'load-sequence': {'members': []}}))
+        worker = dict(root=str(self.root), go=str(self.go), freeze=str(self.parent / 'freeze.json'),
+                      bindings=str(self.parent / 'bindings.json'), profile=str(tooling / 'profiles/oversqlite-full.json'), environment={})
+        self.selection = dict(profile_sha256='a'*64, selection_reason='Controlled export; no SDK execution', requests=['leaf', 'prep'],
+            workers={'host': worker}, jobs=[dict(id='prepare', entry='prep', worker='host', context='ctx'),
+            dict(id='native', entry='leaf', worker='host', depends_on=['prepare'], preparation_jobs=['prepare'])])
+        own = Path(campaign.__file__).resolve()
+        self.freeze = self.parent / 'freeze.json'
+        self.freeze.write_text(json.dumps(dict(files={str(own): planner.sha256_file(own)})))
+
+    def export(self, selection=None):
+        from tools.qualification import oversqlite_platform as runner
+        selected = self.selection if selection is None else selection
+        with mock.patch.object(planner, 'load_full_profile', return_value=(self.profile, 'a'*64)), \
+             mock.patch.object(runner, 'profile_activation', return_value=('b'*64, selected)), \
+             mock.patch.object(campaign, '_profile_worker', return_value=dict(private=False, roots={}, freeze_sha256='c'*64, source_sha256='d'*64, lease_locks={})), \
+             mock.patch.object(campaign, '_profile_job_paths'), \
+             mock.patch.object(campaign, 'DEFAULT_MANIFEST', self.manifest_path):
+            return campaign.prepare_profile_campaign(self.parent / 'selection.json', self.root / 'tools/qualification/profiles/oversqlite-full.json',
+                self.freeze, self.parent / 'export', self.root, self.go)
+
+    def test_export_preserves_existing_scheduler_dependencies_caps_and_readonly_go(self):
+        result = self.export()
+        manifest, _ = planner.load_manifest(Path(result['manifest']))
+        self.assertEqual(manifest['campaign_max_workers'], 2)
+        self.assertEqual([lane['timeout_seconds'] for lane in manifest['lanes']], [300, 300])
+        self.assertEqual(manifest['resources']['gradle-build'], 1)
+        self.assertTrue(next(repo for repo in manifest['repositories'] if repo['id'] == 'go-oversync')['read_only'])
+        self.assertEqual(manifest['lanes'][1]['depends_on'], ['prepare'])
+        argv = manifest['lanes'][1]['argv']
+        self.assertEqual(argv[argv.index('--expected-freeze-sha256') + 1], 'c'*64)
+        self.assertEqual(argv[argv.index('--expected-source-sha256') + 1], 'd'*64)
+        self.assertEqual(argv[argv.index('--prepared') + 1], str((self.parent / 'export/native/prepare/preparation.json').resolve()))
+        saved = campaign._load_plan(Path(result['plan']), planner.sha256_file(Path(result['manifest'])))
+        self.assertEqual(campaign._selected(saved, manifest, [], True), ['prepare', 'native'])
+
+    def test_export_rejects_missing_coverage_unsafe_paths_context_and_long_jobs(self):
+        for change in ('missing', 'path', 'context', 'producer', 'long', 'orchestration'):
+            selection = copy.deepcopy(self.selection)
+            profile = copy.deepcopy(self.profile)
+            if change == 'missing': selection['jobs'] = selection['jobs'][:1]
+            if change == 'path': selection['jobs'][1]['id'] = '../outside'
+            if change == 'context': del selection['jobs'][0]['context']
+            if change == 'producer': selection['jobs'][1]['preparation_jobs'] = ['absent']
+            if change == 'long': profile['schedule']['entries']['leaf']['wall_seconds'] = 301
+            if change == 'orchestration': profile['schedule']['entries']['leaf']['orchestration_only'] = True
+            with self.subTest(change=change), mock.patch.object(self, 'profile', profile), self.assertRaises(planner.QualificationError):
+                self.export(selection)
+            self.assertFalse((self.parent / 'export').exists())
+
+    def test_retained_focused_selectors_bind_complete_adopted_census(self):
+        entry = dict(parent_command='core-jvm-focused', argv=['wrapper', '270', '--', './gradlew', ':library-core:jvmTest', '--tests', '*ReactiveTest'])
+        profile = dict(schedule=dict(entries={'owner': dict(task=':library-core:jvmTest', expected_source_owners=['p.ReactiveTest.a', 'p.ReactiveTest.b', 'p.OtherTest.c'], preparation_tasks=[':compile'])}))
+        resolved = planner.effective_profile_entry(profile, entry)
+        self.assertEqual(resolved['expected_source_owners'], ['p.ReactiveTest.a', 'p.ReactiveTest.b'])
+        self.assertEqual(resolved['preparation_tasks'], [':compile'])
+        entry['argv'][-1] = '*MissingTest'
+        with self.assertRaises(planner.QualificationError): planner.effective_profile_entry(profile, entry)
+
+    def test_focused_owner_missing_from_release_leaf_uses_only_pinned_jvm_source_census(self):
+        import csv
+        packet=self.go/'reviewed'
+        packet.mkdir()
+        coverage=packet/'coverage.csv'
+        with coverage.open('w',newline='') as stream:
+            writer=csv.DictWriter(stream,fieldnames=['kind','owner','path','source_set'])
+            writer.writeheader()
+            writer.writerows([
+                dict(kind='source-entry',owner='p.ReactiveTest.a',path='library-core/src/jvmTest/ReactiveTest.kt',source_set='jvmTest'),
+                dict(kind='source-entry',owner='p.ReactiveTest.b',path='library-core/src/commonTest/ReactiveTest.kt',source_set='commonTest'),
+                dict(kind='source-entry',owner='p.ReactiveTest.androidOnly',path='library-core/src/androidDeviceTest/ReactiveTest.kt',source_set='androidDeviceTest'),
+                dict(kind='source-entry',owner='p.ReactiveTest.otherModule',path='other/src/jvmTest/ReactiveTest.kt',source_set='jvmTest')])
+        profile=dict(roots=dict(go=str(self.go)),reviewed_inputs=dict(packet='reviewed',files={'coverage.csv':planner.sha256_file(coverage)}),
+            schedule=dict(entries={'other':dict(task=':library-core:jvmTest',expected_source_owners=['p.OtherTest.x'],preparation_tasks=[':compile'])}))
+        entry=dict(parent_command='core-jvm-focused',argv=['wrapper','270','--','./gradlew',':library-core:jvmTest','--tests','*ReactiveTest'])
+        self.assertEqual(planner.effective_profile_entry(profile,entry)['expected_source_owners'],['p.ReactiveTest.a','p.ReactiveTest.b'])
+        coverage.write_text(coverage.read_text().replace('p.ReactiveTest.a','p.ReactiveTest.changed'))
+        with self.assertRaises(planner.QualificationError): planner.effective_profile_entry(profile,entry)
+
+    def test_isolation_recipe_becomes_only_its_exact_short_bounded_child(self):
+        owner = 'dev.goquick.sqlitenow.oversqlite.realserver.OrdinarySafetyLiveTest.committedReplayWith1000RowsWidth16'
+        entry = dict(parent_command='isolation-browser', orchestration_only=True, wall_seconds=None,
+            argv=['wrapper', '270', '--', 'binding.worker_browser_kotlin/gradlew', ':platform:jsBrowserTest', '--tests', owner])
+        profile = dict(schedule=dict(entries={'owner': dict(runtime='browser', task=':platform:jsBrowserTest', expected_source_owners=[owner], preparation_tasks=[':compile'])}))
+        resolved = planner.effective_profile_entry(profile, entry)
+        self.assertEqual((resolved['wall_seconds'], resolved['native_seconds'], resolved['cleanup_seconds']), (300, 270, 30))
+        self.assertEqual(resolved['expected_source_owners'], [owner])
+        self.assertTrue(resolved['isolation_only'])
+        for change in ('wrapper', 'selector'):
+            altered = copy.deepcopy(entry)
+            if change == 'wrapper': altered['argv'][1] = '1800'
+            else: altered['argv'][-1] = owner.replace('1000Rows', '10000Rows')
+            with self.subTest(change=change), self.assertRaises(planner.QualificationError): planner.effective_profile_entry(profile, altered)
+
+    def test_source_anchor_rejects_new_file_modified_file_and_staged_state(self):
+        before = planner.profile_source_anchor(self.root, self.go)
+        added = self.root / 'new.kt'
+        added.write_text('new source\n')
+        self.assertNotEqual(before, planner.profile_source_anchor(self.root, self.go))
+        added.unlink()
+        self.assertEqual(before, planner.profile_source_anchor(self.root, self.go))
+        existing = self.root / 'src/a.py'
+        existing.write_text('changed\n')
+        modified = planner.profile_source_anchor(self.root, self.go)
+        self.assertNotEqual(before, modified)
+        subprocess.run(['git','-C',str(self.root),'add','src/a.py'],check=True)
+        self.assertNotEqual(modified, planner.profile_source_anchor(self.root, self.go))
+
+    def test_source_anchor_uses_registered_probe_and_shared_file_budget(self):
+        expected = planner.profile_source_anchor(self.root,self.go)
+        original_git = planner.git
+        calls = []
+        deadline = time.monotonic()+5
+        def inspect(argv,seconds,**kwargs):
+            calls.append(seconds)
+            return original_git(kwargs['cwd'],*argv[1:]).decode().strip()
+        with mock.patch.object(planner,'git',side_effect=AssertionError('unregistered helper must not run')):
+            self.assertEqual(planner.profile_source_anchor(self.root,self.go,inspector=inspect,deadline=deadline),expected)
+        self.assertTrue(calls)
+        self.assertTrue(all(0 < seconds <= 5 for seconds in calls))
+        with mock.patch.object(planner.time,'monotonic',return_value=deadline+1), mock.patch.object(planner.subprocess,'run') as run:
+            with self.assertRaises(planner.QualificationError): planner.profile_source_anchor(self.root,self.go,deadline=deadline)
+            run.assert_not_called()
+        now = [0]
+        def expires(argv,seconds,**kwargs):
+            now[0] = 2
+            return original_git(kwargs['cwd'],*argv[1:]).decode().strip()
+        with mock.patch.object(planner.time,'monotonic',side_effect=lambda:now[0]):
+            with self.assertRaises(planner.QualificationError): planner.profile_source_anchor(self.root,self.go,inspector=expires,deadline=1)
+
+    def test_worker_source_cache_metadata_and_output_separation_use_actual_files(self):
+        from tools.qualification import oversqlite_platform as runner
+        folder = (self.parent / 'worker').resolve()
+        folder.mkdir(mode=0o700)
+        deep = self.root / 'swift/fixtures/package/sync'
+        deep.mkdir(parents=True)
+        (deep / 'build.gradle.kts').write_text('// controlled deep project\n')
+        (deep / 'Package.swift').write_text('// controlled Swift package\n')
+        roots = {'root': folder / 'sqlitenow-kmp', 'go': folder / 'go-oversync'}
+        original = {'root': self.root.resolve(), 'go': self.go.resolve()}
+        for key in roots:
+            shutil.copytree(original[key], roots[key])
+        copy_files = {}
+        canonical_files = {}
+        for key in roots:
+            for relative in planner.git(original[key], 'ls-files', '-z', '--cached', '--others', '--exclude-standard').decode().split('\0'):
+                if relative:
+                    canonical_files[str(original[key] / relative)] = planner.sha256_file(original[key] / relative)
+                    copy_files[str(roots[key] / relative)] = planner.sha256_file(roots[key] / relative)
+        freeze = folder / 'freeze.json'
+        freeze.write_text(json.dumps(dict(files=copy_files, root_rebindings={str(self.root): str(roots['root']), str(self.go): str(roots['go'])})))
+        frozen = dict(files=canonical_files | {str(freeze): planner.sha256_file(freeze)})
+        names = ('GRADLE_USER_HOME', 'KONAN_DATA_DIR', 'KOTLIN_USER_HOME', 'YARN_CACHE_FOLDER', 'NPM_CONFIG_CACHE', 'GOCACHE', 'GOMODCACHE', 'TMPDIR')
+        worker = dict(root=str(roots['root']), go=str(roots['go']), freeze=str(freeze), profile=str(roots['root'] / 'tools/qualification/profiles/oversqlite-full.json'),
+            bindings=str(folder / 'bindings.json'), private=True, directory=str(folder), environment={name: str(folder / name.lower()) for name in names})
+        with mock.patch.object(planner, 'load_full_profile', return_value=(self.profile, 'a'*64)), mock.patch.object(runner, 'profile_activation',return_value=(None,{})):
+            proof = campaign._profile_worker('copy', worker, self.profile, frozen, self.root, self.go)
+            self.assertTrue(proof['private'])
+            from types import SimpleNamespace
+            binding_path=Path(worker['bindings'])
+            binding_path.write_text(json.dumps(dict(values={})))
+            self.profile['schedule']['entries']['leaf'].update(cwd=str(self.root),environment={},
+                argv=['wrapper','270','--','./gradlew',':fixture:jvmTest'])
+            contract=folder/'dispatch.json'
+            contract.write_bytes(planner.canonical_bytes(dict(entry='leaf',context=None,worker=worker,layout=proof)))
+            contract.chmod(0o600)
+            options=SimpleNamespace(worker_contract=contract,expected_worker_contract_sha256=planner.sha256_file(contract),
+                root=roots['root'],go_repo=roots['go'],freeze=freeze,bindings=binding_path,entry='leaf',context=None)
+            def inspect(argv,seconds,**kwargs): return str(kwargs['cwd']/'.git')
+            resources=SimpleNamespace(command_deadline=time.monotonic()+30,output=folder/'out',inspect=inspect)
+            self.assertTrue(runner.verify_worker_contract(resources,options,self.profile)['private'])
+            source_anchor=planner.profile_source_anchor(roots['root'],roots['go'])
+            for change in ('source', 'cache', 'cache-link', 'metadata', 'output', 'deep-output', 'swift-output'):
+                altered = copy.deepcopy(worker)
+                target = roots['root'] / 'src/a.py'
+                before = target.read_bytes()
+                if change == 'source': target.write_text('drift\n')
+                if change == 'cache': altered['environment']['GRADLE_USER_HOME'] = str(self.parent / 'shared')
+                if change == 'cache-link': Path(worker['environment']['GRADLE_USER_HOME']).symlink_to(original['root'])
+                if change == 'metadata':
+                    (roots['root'] / '.git/index').unlink()
+                    os.link(original['root'] / '.git/index', roots['root'] / '.git/index')
+                if change == 'output': (roots['root'] / 'build').symlink_to(original['root'] / 'build')
+                deep_copy = roots['root'] / 'swift/fixtures/package/sync'
+                if change == 'deep-output': (deep_copy / 'build').symlink_to(original['root'] / 'build')
+                if change == 'swift-output': (deep_copy / '.build').symlink_to(original['root'] / 'build')
+                try:
+                    with self.subTest(change=change), self.assertRaises(planner.QualificationError):
+                        campaign._profile_worker('copy', altered, self.profile, frozen, self.root, self.go)
+                    if change in ('cache-link','metadata','output','deep-output','swift-output'):
+                        if change=='cache-link': self.assertEqual(planner.profile_source_anchor(roots['root'],roots['go']),source_anchor)
+                        with self.subTest(dispatch=change), self.assertRaises((planner.QualificationError,runner.smoke.SmokeError)):
+                            runner.verify_worker_contract(resources,options,self.profile)
+                finally:
+                    target.write_bytes(before)
+                    if change == 'metadata':
+                        (roots['root'] / '.git/index').unlink()
+                        shutil.copy2(original['root'] / '.git/index', roots['root'] / '.git/index')
+                    if change == 'output': (roots['root'] / 'build').unlink()
+                    if change == 'deep-output': (deep_copy / 'build').unlink()
+                    if change == 'swift-output': (deep_copy / '.build').unlink()
+                    if change == 'cache-link': Path(worker['environment']['GRADLE_USER_HOME']).unlink()
+
+    def test_effective_binding_overrides_cannot_escape_private_caches_or_builds(self):
+        folder = (self.parent / 'private').resolve()
+        folder.mkdir(mode=0o700)
+        root, go = folder / 'sqlitenow-kmp', folder / 'go-oversync'
+        names = ('GRADLE_USER_HOME','KONAN_DATA_DIR','KOTLIN_USER_HOME','YARN_CACHE_FOLDER','NPM_CONFIG_CACHE','GOCACHE','GOMODCACHE','TMPDIR')
+        environment = {name:str(folder/name.lower()) for name in names}
+        binding = folder / 'bindings.json'
+        frozen = folder / 'freeze.json'
+        frozen.write_text(json.dumps(dict(root_rebindings={str(self.root):str(root),str(self.go):str(go)})))
+        values = {'binding.worker_browser_kotlin':str(root),'binding.worker_browser_gradle_home':environment['GRADLE_USER_HOME'],
+                  'binding.worker_browser_konan':environment['KONAN_DATA_DIR']}
+        worker = dict(root=str(root),go=str(go),private=True,directory=str(folder),bindings=str(binding),freeze=str(frozen),environment=environment)
+        entry = dict(id='isolation',task=':platform:jsBrowserTest',runtime='browser',isolation_only=True,
+            cwd='binding.worker_browser_kotlin',environment={'GRADLE_USER_HOME':'binding.worker_browser_gradle_home'},
+            argv=['wrapper','270','--','binding.worker_browser_kotlin/gradlew',':platform:jsBrowserTest',
+                  '-Pkonan.data.dir=binding.worker_browser_konan','-Pkotlin.compiler.execution.strategy=in-process'])
+        binding.write_text(json.dumps(dict(values=values)))
+        campaign._profile_job_paths(entry,worker,self.profile,folder/'out')
+        for key in values:
+            bad = dict(values)
+            bad[key] = str(self.parent / 'shared')
+            binding.write_text(json.dumps(dict(values=bad)))
+            with self.subTest(key=key), self.assertRaises(planner.QualificationError): campaign._profile_job_paths(entry,worker,self.profile,folder/'out')
+
+    def test_parallel_isolation_refuses_same_live_authority_and_reset_domain(self):
+        from tools.qualification import oversqlite_platform as runner
+        selected = copy.deepcopy(self.selection)
+        entry = dict(id='iso',kind='native',wall_seconds=300,environment={},isolation_only=True)
+        self.profile['schedule']['entries']={'iso':entry,'iso2':dict(entry,id='iso2')}
+        selected.update(requests=['iso','iso2'],jobs=[dict(id='one',entry='iso',worker='one'),dict(id='two',entry='iso2',worker='two')],
+                        workers={'one':self.selection['workers']['host'],'two':self.selection['workers']['host']})
+        def proof(name,*args):
+            return dict(private=True,directory=str(self.parent/name),freeze_sha256='c'*64,source_sha256='d'*64,
+                lease_locks={kind:['same-'+kind] for kind in ('authority','listener','database','reset','storage')})
+        with mock.patch.object(planner,'load_full_profile',return_value=(self.profile,'a'*64)), \
+             mock.patch.object(runner,'profile_activation',return_value=('b'*64,selected)), \
+             mock.patch.object(campaign,'_profile_worker',side_effect=proof):
+            with self.assertRaises(planner.QualificationError) as raised:
+                campaign.prepare_profile_campaign(self.parent/'selection.json',self.root/'profile.json',self.freeze,self.parent/'export',self.root,self.go)
+            self.assertEqual(raised.exception.code,'isolation_live_identity_shared')
 
 
 class ContainmentTests(unittest.TestCase):

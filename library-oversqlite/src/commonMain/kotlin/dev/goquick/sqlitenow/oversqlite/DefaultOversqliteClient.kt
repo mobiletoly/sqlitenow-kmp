@@ -103,6 +103,7 @@ class DefaultOversqliteClient private constructor(
         outboxStateStore = outboxStateStore,
     )
     private val remoteApi = OversqliteRemoteApi(
+        beforeRecoveryExchange = operationController::chargeRecoveryExchange,
         http = resourceOwner.http,
         json = json,
         requestGzipEngine = requestGzipEngine,
@@ -129,7 +130,9 @@ class DefaultOversqliteClient private constructor(
         OversqliteApplySurvivors(db, localStore, config, operationController, json))
     private val stageStore = OversqliteStageStore(db, localStore, syncStateStore, json, config, operationController)
     private val applyExecutor = OversqliteApplyExecutor(db, applyStateStore, operationController)
+    private val automaticRecovery = OversqliteAutomaticRecovery(db,config,operationController)
     private val snapshotGate = OversqliteSnapshotGate(
+        automaticRecovery = automaticRecovery,
         db = db,
         syncStateStore = syncStateStore,
         outboxStateStore = outboxStateStore,
@@ -155,6 +158,8 @@ class DefaultOversqliteClient private constructor(
         json = json,
     ) { message -> verboseLog(message) }
     private val downloadWorkflow = OversqliteDownloadWorkflow(
+        automaticRecovery = automaticRecovery,
+        operations = operationController,
         db = db,
         config = config,
         remoteApi = remoteApi,
@@ -276,6 +281,29 @@ class DefaultOversqliteClient private constructor(
     override suspend fun syncStatus(): Result<SyncStatus> = syncCoordinator.syncStatus()
     override suspend fun detach(): Result<DetachOutcome> = lifecycleCoordinator.detach()
     override suspend fun pushPending(): Result<PushReport> = syncCoordinator.pushPending()
+    // Discharge only the already frozen operation before mutable U0 admission.
+    internal suspend fun finishExistingUploadForOpening(): Result<Unit> =
+        operationController.runSyncOperation("finish existing upload") {
+            val journal=loadUploadJournal(db) ?: return@runSyncOperation
+            val state=sessionState.requireConnectedRuntimeState("finish existing upload")
+            if(journal.phase=="ack_pending") pushWorkflow.acknowledgePending(state)
+            else try {
+                notifyUpdatedTables(pushWorkflow.pushPending(state).updatedTables)
+            } catch(failure:Throwable) {
+                val outbox=outboxStateStore.loadBundleState()
+                val original=journal.binding.operation
+                val policyFailure=when(failure) {
+                    is ConflictNeedsResolutionException -> conflictStateStore.load()!=null
+                    is OversqliteRemoteContractException -> failure.httpStatus==200 && !failure.retryable && conflictStateStore.applicationRejection()!=null
+                    else -> false
+                }
+                if(!policyFailure || failure.suppressedExceptions.isNotEmpty() || loadUploadJournal(db)!=null ||
+                    outbox.state!=outboxStateRejected || outbox.sourceId!=original.sourceId ||
+                    outbox.sourceBundleId!=original.sourceBundleId || outbox.canonicalRequestHash!=original.canonicalRequestHash) throw failure
+                // Only protocol completion is consumed here. Existing U0 and
+                // old-intent policy owners still decide whether work may continue.
+            }
+        }
     override suspend fun readPushDependencyDiagnostic(diagnosticId: String,cursor: String?,pageSize: Int): Result<PushDependencyDiagnosticPage> =
         operationController.runExclusiveOperation {
             val attachment=attachmentStateStore.loadState()
@@ -292,6 +320,9 @@ class DefaultOversqliteClient private constructor(
     override suspend fun resolveConflict(selected: PendingConflict, result: MergeResult): Result<Unit> =
         syncCoordinator.resolveConflict(selected, result)
     override suspend fun pullToStable(): Result<RemoteSyncReport> = syncCoordinator.pullToStable()
+    override suspend fun recoveryStatus(): Result<RecoveryStatus> = operationController.runRecoveryControl { automaticRecovery.status() }
+    override suspend fun setRecoveryMode(mode: RecoveryMode): Result<Unit> = operationController.runRecoveryControl { automaticRecovery.setMode(mode) }
+    override suspend fun retryRecovery(): Result<Unit> = operationController.runRecoveryControl { automaticRecovery.retry() }
     override suspend fun sync(): Result<SyncReport> = syncCoordinator.sync()
     override suspend fun syncThenDetach(): Result<SyncThenDetachResult> = syncCoordinator.syncThenDetach()
     override suspend fun rebuild(): Result<RemoteSyncReport> = syncCoordinator.rebuild()
@@ -345,6 +376,12 @@ class DefaultOversqliteClient private constructor(
 
     internal suspend fun createGenerationRecoverySnapshot(newSourceId: String): SnapshotSession =
         lifecycleCoordinator.createGenerationRecoverySnapshot(newSourceId)
+
+    internal suspend fun retainGenerationSnapshot(snapshot: SnapshotSession, newSourceId: String) =
+        lifecycleCoordinator.retainGenerationSnapshot(snapshot, newSourceId)
+
+    internal suspend fun retainedGenerationSnapshot(newSourceId: String): SnapshotSession =
+        lifecycleCoordinator.retainedGenerationSnapshot(newSourceId)
 
     internal suspend fun stageGenerationSnapshot(
         session: SnapshotSession,

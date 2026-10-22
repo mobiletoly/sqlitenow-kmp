@@ -58,6 +58,7 @@ internal class OversqliteConflictExecutor(
             else ApplySurvivor(tableName, conflictingRow.localPk, desiredText,
                 wire = upsert?.payloadSource == PayloadSource.AUTHORITATIVE_WIRE, role = "intended")
         }
+        survivors.installUniqueFinalState(state,statementCache)
         if (!hasNewerIntent) when (val action = plan.localRowAction) {
             is LocalRowAction.Upsert -> localStore.upsertRow(tableName, action.payload, action.payloadSource, statementCache)
             LocalRowAction.Delete -> localStore.deleteLocalRow(state, tableName, conflictingRow.localPk, statementCache)

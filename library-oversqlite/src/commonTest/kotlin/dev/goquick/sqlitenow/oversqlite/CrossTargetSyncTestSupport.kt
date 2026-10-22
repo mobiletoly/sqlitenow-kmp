@@ -33,6 +33,7 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.encodeToJsonElement
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -84,27 +85,6 @@ internal fun computePushRequestHashForTest(
 )
 
 internal open class CrossTargetSyncTestSupport {
-    protected suspend fun requeueDefinitelyUncommittedBaselineOutbox(db: SafeSQLiteConnection) {
-        val config = OversqliteConfig(generationId=1, databaseId="fixture", serviceId="main",
-            syncTables=listOf(SyncTable("users",syncKeyColumnName="id"),SyncTable("posts",syncKeyColumnName="id")))
-        val validated = SyncRuntimeInitializer(config,TableInfoCache()).validateConfig(db)
-            .withGeneration(OversqliteContractStore(db).readGeneration(1))
-        val local = OversqliteLocalStore(db,Json) { validated }
-        val state = OversqliteSyncStateStore(db) { local }
-        val outbox = OversqliteOutboxStateStore(db)
-        val bundle = outbox.loadBundleState()
-        val rows = outbox.loadRows()
-        val captures = rows.map { row ->
-            val key = Json.parseToJsonElement(row.wireKeyJson).jsonObject.mapValues { it.value.jsonPrimitive.content }
-            DirtyRowCapture(row.schemaName,row.tableName,row.keyJson,key.getValue("id"),key,row.op,
-                row.baseRowVersion,row.localPayload,row.rowOrdinal,row.base)
-        }
-        db.transaction(TransactionMode.IMMEDIATE) {
-            state.requeueSnapshotRows(PushOutboundSnapshot(bundle.sourceBundleId,captures,rows,bundle.canonicalRequestHash))
-            outbox.clearBundleAndRows()
-        }
-    }
-
     private companion object {
         const val sourceIdHeaderName = "Oversync-Source-ID"
         var webDatabaseSequence: Long = 0
@@ -222,6 +202,7 @@ internal open class CrossTargetSyncTestSupport {
         workUnits: Long = 1000000,
         leaseGroup: Any = Any(),
         maxSnapshotChunkRows: Int = 1000,
+        maxSnapshotChunkDecodedBytes: Long = 4L * 1024L * 1024L,
     ): DefaultOversqliteClient {
         return DefaultOversqliteClient.forOpening(
             db = db,
@@ -235,6 +216,7 @@ internal open class CrossTargetSyncTestSupport {
                     maxPushDecodedBytes = maxPushDecodedBytes,
                     maxPullBundles = maxPullBundles,
                     maxSnapshotChunkRows = maxSnapshotChunkRows,
+                    maxSnapshotChunkDecodedBytes = maxSnapshotChunkDecodedBytes,
                 ),
             ),
             http = http,
@@ -310,12 +292,15 @@ internal open class CrossTargetSyncTestSupport {
 
     protected class MockSyncServer {
         internal var generationOverride: SyncGeneration? = null
+        internal val generationDiscoveryOverrides=mutableMapOf<String,SyncGeneration>()
         internal var wireLimits = testWireLimits()
         internal var beforePushResponse: (suspend () -> Unit)? = null
         internal var beforePushCommit: (suspend () -> Unit)? = null
         internal var beforePullResponse: (suspend () -> Unit)? = null
         internal var remainingTransientPullFailures: Int = 0
         internal var beforeSnapshotChunkResponse: (suspend () -> Unit)? = null
+        internal var snapshotChunkTooSmallOnceForTest: Boolean = false
+        internal var beforeSnapshotChunkRequest: (suspend () -> Unit)? = null
         internal var beforeSnapshotCreateRequest: (suspend () -> Unit)? = null
         internal var beforeSnapshotCreateResponse: (suspend () -> Unit)? = null
         internal var extraPushEffects: ((List<PushRequestRow>, Long) -> List<BundleRow>)? = null
@@ -325,6 +310,23 @@ internal open class CrossTargetSyncTestSupport {
         private val liveRows = linkedMapOf<String, LiveRow>()
         private val bundles = mutableListOf<StoredBundle>()
         private val committedBySourceBundle = linkedMapOf<String, StoredBundle>()
+        private val terminalOutcomes = linkedMapOf<String, TerminalPushOutcome>()
+        private val terminalBytes = linkedMapOf<String, String>()
+        private val originalGenerations = linkedMapOf<String, SyncGeneration>()
+        private val latestAck = linkedMapOf<String, Pair<PushOperationBinding,PushOutcomeAckRequest>>()
+        val terminalStatuses = linkedMapOf<String,String>()
+        val resolveRequests = mutableListOf<PushOutcomeResolveRequest>()
+        val ackRequests = mutableListOf<PushOutcomeAckRequest>()
+        internal var beforeResolve: (suspend () -> Unit)? = null
+        internal var beforeAck: (suspend () -> Unit)? = null
+        internal var afterAck: (suspend () -> Unit)? = null
+        internal var outcomeResponseOverride: ((String) -> String)? = null
+        internal var applicationRejectionCode: String? = null
+        internal var rejectMutableAdmission = false
+        internal var retireOldGeneration = false
+        internal var unavailableSecondGeneration = false
+        internal var resolveCapacityUnavailable = false
+
         private val snapshotSessions = linkedMapOf<String, SnapshotSessionState>()
         private var scopeInitialized = false
         private var initializingSourceId: String? = null
@@ -368,6 +370,9 @@ internal open class CrossTargetSyncTestSupport {
         fun newHttpClient(): HttpClient {
             return HttpClient(MockEngine { request ->
                 requestTrace += "${request.method.value} ${request.url.encodedPath}"
+                if (request.method.value == "GET" && request.url.encodedPath.startsWith("/sync/snapshot-sessions/")) {
+                    beforeSnapshotChunkRequest?.let { hook -> beforeSnapshotChunkRequest = null; hook() }
+                }
                 if (request.method.value == "POST" && request.url.encodedPath == "/sync/snapshot-sessions") {
                     beforeSnapshotCreateRequest?.let { hook -> beforeSnapshotCreateRequest = null; hook() }
                 }
@@ -457,15 +462,17 @@ internal open class CrossTargetSyncTestSupport {
         }
 
         private suspend fun MockRequestHandleScope.handle(request: HttpRequestData) = when {
-            request.method.value == "GET" && request.url.encodedPath == "/sync/generations/1" ->
+            request.method.value == "GET" && (request.url.encodedPath == "/sync/generations/1" || request.url.encodedPath.removePrefix("/sync/generations/") in generationDiscoveryOverrides) ->
                 run {
                     discoverySourceIds += request.headers[sourceIdHeaderName].orEmpty()
-                    jsonResponse(
+                    if(unavailableSecondGeneration && request.url.encodedPath=="/sync/generations/2") jsonResponse("""{"error":"unknown_schema_generation","message":"unavailable","retryable":false,"remediation":"upgrade_or_reconfigure_client","schema_generation_id":"2"}""",HttpStatusCode.Conflict)
+                    else if(retireOldGeneration && request.url.encodedPath=="/sync/generations/1") jsonResponse("""{"error":"retired_schema_generation","message":"retired","retryable":false,"remediation":"upgrade_application","schema_generation_id":"1"}""",HttpStatusCode.UpgradeRequired)
+                    else jsonResponse(
                         json.encodeToString(
                             GenerationDiscovery.serializer(),
                             GenerationDiscovery(
                                 protocolVersion = protocolVersion,
-                                generation = generationOverride ?: testGeneration(registeredTableSpecs),
+                                generation = generationDiscoveryOverrides[request.url.encodedPath.removePrefix("/sync/generations/")] ?: generationOverride ?: testGeneration(registeredTableSpecs),
                                 limits = wireLimits,
                                 watchEnabled = bundleChangeWatchSupported,
                             ),
@@ -475,11 +482,12 @@ internal open class CrossTargetSyncTestSupport {
 
             request.method.value == "POST" && request.url.encodedPath == "/sync/connect" -> {
                 connectRequestCount++
-                handleConnect(request)
+                if(rejectMutableAdmission) errorResponse("schema_generation_retired","retired",HttpStatusCode.Gone) else handleConnect(request)
             }
 
-            request.method.value == "POST" && request.url.encodedPath == "/sync/push" ->
-                handlePush(request)
+            request.method.value == "POST" && request.url.encodedPath == "/sync/push" -> handlePush(request)
+            request.method.value == "POST" && request.url.encodedPath == "/sync/push-outcomes/resolve" -> handleResolve(request)
+            request.method.value == "POST" && request.url.encodedPath == "/sync/push-outcomes/ack" -> handleAck(request)
 
             request.method.value == "POST" && request.url.encodedPath == "/sync/snapshot-sessions" -> {
                 snapshotSessionCreateRequestCount++
@@ -608,6 +616,7 @@ internal open class CrossTargetSyncTestSupport {
                 val sourceId = request.headers[sourceIdHeaderName].orEmpty()
                 sourceRetiredOnPush?.let { return sourceRetiredResponse(it) }
                 val selectedGeneration = generationOverride ?: testGeneration(registeredTableSpecs)
+                originalGenerations[selectedGeneration.fingerprint]=selectedGeneration
                 val rows = OversqliteCompactCodec.decodeBundleRows(selectedGeneration, push.rows).map { row ->
                     PushRequestRow(row.schema, row.table, row.key, row.op, row.rowVersion, row.payload)
                 }
@@ -616,12 +625,11 @@ internal open class CrossTargetSyncTestSupport {
                     return errorResponse("push_invalid", "canonical request hash mismatch")
                 }
                 val replayKey = "$sourceId\u0000${push.sourceBundleId}"
-                val existing = committedBySourceBundle[replayKey]
-                if (existing != null) {
-                    if (existing.canonicalRequestHash != push.canonicalRequestHash) {
-                        return errorResponse("push_replay_mismatch", "replay hash mismatch", HttpStatusCode.Conflict)
-                    }
-                    return completePushResponse(existing, selectedGeneration)
+                latestAck[sourceId]?.let { if(push.sourceBundleId<=it.second.sourceBundleId) return errorResponse("push_outcome_acknowledged","acked",HttpStatusCode.Gone) }
+                terminalOutcomes[replayKey]?.let { existing ->
+                    if(existing.canonicalRequestHash!=push.canonicalRequestHash || existing.initializationId!=push.initializationId)
+                        return errorResponse("push_outcome_mismatch","mismatch",HttpStatusCode.Conflict)
+                    return jsonResponse(checkNotNull(terminalBytes[replayKey]))
                 }
                 val expectedInitializationId = initializationId
                 if (expectedInitializationId != null && push.initializationId != expectedInitializationId) {
@@ -631,6 +639,7 @@ internal open class CrossTargetSyncTestSupport {
                     return errorResponse("initialization_stale", "scope is no longer initializing", HttpStatusCode.Conflict)
                 }
                 beforePushCommit?.let { hook -> beforePushCommit = null; hook() }
+                applicationRejectionCode?.let { code -> return terminalRejection(sourceId,push,selectedGeneration,PushOutcomeRejection(code)) }
                 for (row in rows) {
                     val key = liveKey(row.table, row.key)
                     val liveRow = liveRows[key]
@@ -649,10 +658,10 @@ internal open class CrossTargetSyncTestSupport {
                                 payload = forcedConflict.serverRow,
                             )
                         }
-                        return pushConflictResponse(forcedConflict)
+                        return terminalRejection(sourceId,push,selectedGeneration,PushOutcomeRejection("push_conflict",wireConflict(forcedConflict)))
                     }
                     if (currentVersion != row.baseRowVersion) {
-                        return pushConflictResponse(
+                        return terminalRejection(sourceId,push,selectedGeneration,PushOutcomeRejection("push_conflict",wireConflict(
                             PushConflictDetails(
                                 schema = row.schema,
                                 table = row.table,
@@ -663,7 +672,7 @@ internal open class CrossTargetSyncTestSupport {
                                 serverRowDeleted = false,
                                 serverRow = liveRow?.payload,
                             ),
-                        )
+                        )))
                     }
                 }
 
@@ -701,6 +710,7 @@ internal open class CrossTargetSyncTestSupport {
                     rows = committedRows,
                     bundleHash = computeCommittedBundleHash(committedRows),
                     canonicalRequestHash = push.canonicalRequestHash,
+                    initializationId = push.initializationId,
                 )
                 bundles += stored
                 committedBySourceBundle[replayKey] = stored
@@ -709,23 +719,74 @@ internal open class CrossTargetSyncTestSupport {
                     initializingSourceId = null
                     initializationId = null
                 }
+                val response=completePushResponse(stored, selectedGeneration)
                 beforePushResponse?.let { hook -> beforePushResponse = null; hook() }
-                completePushResponse(stored, selectedGeneration)
+                response
             } catch (t: Throwable) {
                 if (t is CancellationException) throw t
                 errorResponse("invalid_request", t.message ?: "push failed")
             }
 
-        private fun MockRequestHandleScope.completePushResponse(
-            bundle: StoredBundle,
-            generation: SyncGeneration,
-        ) = jsonResponse(
-            buildJsonObject {
-                put("bundle_seq", JsonPrimitive(bundle.bundleSeq))
-                put("bundle_hash", JsonPrimitive(bundle.bundleHash))
-                put("rows", OversqliteCompactCodec.encodeBundleRows(generation, bundle.rows))
-            }.toString(),
-        )
+        private fun MockRequestHandleScope.completePushResponse(bundle: StoredBundle,generation: SyncGeneration) = publishOutcome(
+            TerminalPushOutcome(bundle.sourceId,generation.id,generation.fingerprint,bundle.sourceBundleId,bundle.canonicalRequestHash,bundle.initializationId,"committed","",
+                committed=CommittedPushEffect(bundle.bundleSeq,bundle.bundleHash,bundle.rows.size.toLong(),OversqliteCompactCodec.encodeBundleRows(generation,bundle.rows))),generation)
+
+        private fun wireConflict(local: PushConflictDetails)=local.copy(op=mapOf("INSERT" to "i","UPDATE" to "u","DELETE" to "d").getValue(local.op))
+
+        private suspend fun MockRequestHandleScope.terminalRejection(sourceId: String,push: CompletePushRequest,generation: SyncGeneration,rejection: PushOutcomeRejection): io.ktor.client.request.HttpResponseData {
+            val response=publishOutcome(TerminalPushOutcome(sourceId,generation.id,generation.fingerprint,push.sourceBundleId,push.canonicalRequestHash,push.initializationId,"rejected","",rejection=rejection),generation)
+            beforePushResponse?.let {beforePushResponse=null;it()}
+            return response
+        }
+
+        private fun MockRequestHandleScope.publishOutcome(value: TerminalPushOutcome,generation: SyncGeneration): io.ktor.client.request.HttpResponseData {
+            originalGenerations[generation.fingerprint]=generation
+            val outcome=value.copy(outcomeHash=hashPushOutcome(value,generation))
+            val fields=json.encodeToJsonElement(outcome).jsonObject.toMutableMap()
+            if(outcome.committed==null)fields.remove("committed")
+            if(outcome.rejection==null)fields.remove("rejection")
+            else if(outcome.rejection.conflict==null) fields["rejection"]=buildJsonObject{put("code",JsonPrimitive(outcome.rejection.code))}
+            val raw=JsonObject(fields).toString()
+            val key="${outcome.sourceId}\u0000${outcome.sourceBundleId}"
+            terminalOutcomes[key]=outcome;terminalBytes[key]=raw;terminalStatuses[key]=outcome.status
+            val override=outcomeResponseOverride;outcomeResponseOverride=null
+            return jsonResponse(override?.invoke(raw) ?: raw)
+        }
+
+        private suspend fun MockRequestHandleScope.handleResolve(request: HttpRequestData): io.ktor.client.request.HttpResponseData {
+            val selected=decodeOutcomeResolve(request.bodyText());resolveRequests+=selected
+            val source=request.headers[sourceIdHeaderName].orEmpty()
+            beforeResolve?.let { beforeResolve=null;it() }
+            if(resolveCapacityUnavailable)return jsonResponse("""{"error":"history_projection_capacity_exceeded","message":"capacity unavailable","retryable":true,"remediation":"retry"}""",HttpStatusCode.ServiceUnavailable)
+            latestAck[source]?.let {if(selected.sourceBundleId<=it.second.sourceBundleId)return errorResponse("push_outcome_acknowledged","acked",HttpStatusCode.Gone)}
+            val key="$source\u0000${selected.sourceBundleId}"
+            terminalOutcomes[key]?.let { existing ->
+                if(existing.canonicalRequestHash!=selected.canonicalRequestHash || existing.initializationId!=selected.initializationId)
+                    return errorResponse("push_outcome_mismatch","mismatch",HttpStatusCode.Conflict)
+                return jsonResponse(checkNotNull(terminalBytes[key]))
+            }
+            val generation=originalGenerations[request.headers["Oversync-Schema-Generation-Fingerprint"]] ?: generationOverride ?: testGeneration(registeredTableSpecs)
+            return publishOutcome(TerminalPushOutcome(source,generation.id,generation.fingerprint,selected.sourceBundleId,selected.canonicalRequestHash,selected.initializationId,"cancelled",""),generation)
+        }
+
+        private suspend fun MockRequestHandleScope.handleAck(request: HttpRequestData): io.ktor.client.request.HttpResponseData {
+            val selected=decodeOutcomeAck(request.bodyText());ackRequests+=selected
+            val source=request.headers[sourceIdHeaderName].orEmpty()
+            beforeAck?.let { beforeAck=null;it() }
+            val key="$source\u0000${selected.sourceBundleId}"
+            val outcome=terminalOutcomes[key]
+            if(outcome!=null) {
+                require(outcome.canonicalRequestHash==selected.canonicalRequestHash && outcome.outcomeHash==selected.outcomeHash)
+                require(request.headers["Oversync-Schema-Generation-ID"]==outcome.generationId && request.headers["Oversync-Schema-Generation-Fingerprint"]==outcome.generationFingerprint)
+                latestAck[source]=PushOperationBinding(source,outcome.generationId,outcome.generationFingerprint,outcome.sourceBundleId,outcome.canonicalRequestHash,outcome.initializationId) to selected
+                terminalOutcomes.remove(key);terminalBytes.remove(key)
+            } else {
+                val latest=checkNotNull(latestAck[source]);require(latest.second==selected)
+                require(request.headers["Oversync-Schema-Generation-ID"]==latest.first.generationId && request.headers["Oversync-Schema-Generation-Fingerprint"]==latest.first.generationFingerprint)
+            }
+            afterAck?.let {afterAck=null;it()}
+            return respond("",HttpStatusCode.NoContent)
+        }
 
         private suspend fun MockRequestHandleScope.handleCreateSnapshotSession(
             request: HttpRequestData,
@@ -748,6 +809,9 @@ internal open class CrossTargetSyncTestSupport {
             val snapshotRows = currentSnapshotRows()
             val snapshotId = "snapshot-${nextSnapshotId++}"
             val stableBundleSeq = bundles.lastOrNull()?.bundleSeq ?: if (scopeInitialized) 0L else 0L
+            if (createRequest?.recovery?.minimumBundleSeq?.let { it > stableBundleSeq } == true)
+                return errorResponse("recovery_floor_ahead", "minimum boundary is ahead", HttpStatusCode.Conflict)
+            val effectiveSource = createRequest?.sourceReplacement?.newSourceId ?: request.headers[sourceIdHeaderName].orEmpty()
             snapshotSessions[snapshotId] = SnapshotSessionState(
                 snapshotId = snapshotId,
                 snapshotBundleSeq = stableBundleSeq,
@@ -755,18 +819,10 @@ internal open class CrossTargetSyncTestSupport {
                 rows = snapshotRows,
             )
             beforeSnapshotCreateResponse?.let { hook -> beforeSnapshotCreateResponse = null; hook() }
-            jsonResponse(
-                json.encodeToString(
-                    SnapshotSession.serializer(),
-                    SnapshotSession(
-                        snapshotId = snapshotId,
-                        snapshotBundleSeq = stableBundleSeq,
-                        rowCount = snapshotRows.size.toLong(),
-                        logicalByteCount = snapshotLogicalByteCount(snapshotRows),
-                        expiresAt = "2099-01-01T00:00:00Z",
-                    ),
-                ),
-            )
+            val sealed=sealedSnapshotForTest(generationOverride ?: testGeneration(registeredTableSpecs),effectiveSource,snapshotId,stableBundleSeq,snapshotRows,createRequest?.recovery)
+            val fields=json.encodeToJsonElement(SnapshotSession.serializer(),sealed).jsonObject.toMutableMap()
+            if(sealed.recovery==null)fields.remove("recovery")
+            jsonResponse(JsonObject(fields).toString())
         } catch (t: Throwable) {
             errorResponse("invalid_request", t.message ?: "snapshot create failed")
         }
@@ -779,6 +835,13 @@ internal open class CrossTargetSyncTestSupport {
                 require(session.sourceId == request.headers[sourceIdHeaderName]) { "snapshot chunks require effective source" }
                 val afterRowOrdinal = request.url.parameters["after_row_ordinal"]?.toLongOrNull() ?: 0L
                 snapshotChunkRequests += snapshotId to afterRowOrdinal
+                if (snapshotChunkTooSmallOnceForTest) {
+                    snapshotChunkTooSmallOnceForTest = false
+                    val requested = checkNotNull(request.url.parameters["max_bytes"]).toLong()
+                    return jsonResponse(json.encodeToString(ErrorResponse.serializer(), ErrorResponse(
+                        error = "snapshot_chunk_too_small", message = "synthetic one-row fallback",
+                        requiredDecodedBodyBytes = requested + 1L)), HttpStatusCode.BadRequest)
+                }
                 val maxRows = request.url.parameters["max_rows"]?.toIntOrNull() ?: 1000
                 val startIndex = afterRowOrdinal.toInt()
                 val rows = session.rows.drop(startIndex).take(maxRows)
@@ -998,6 +1061,7 @@ internal open class CrossTargetSyncTestSupport {
             val rows: List<BundleRow>,
             val bundleHash: String,
             val canonicalRequestHash: String = "",
+            val initializationId: String? = null,
         )
 
         private data class SnapshotSessionState(

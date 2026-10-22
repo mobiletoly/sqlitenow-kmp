@@ -63,13 +63,6 @@ internal data class CompletePushRequest(
     val rows: JsonElement,
 )
 
-@Serializable
-internal data class CompletePushResponseWire(
-    @SerialName("bundle_seq") val bundleSeq: Long,
-    @SerialName("bundle_hash") val bundleHash: String,
-    val rows: JsonElement,
-)
-
 internal data class CompletePushResult(
     val bundleSeq: Long,
     val bundleHash: String,
@@ -123,6 +116,7 @@ internal data class OversqliteWireLimits(
     @SerialName("max_snapshot_rows") val maxSnapshotRows: Long,
     @SerialName("max_snapshot_logical_bytes") val maxSnapshotLogicalBytes: Long,
     @SerialName("max_row_decoded_bytes") val maxRowDecodedBytes: Long,
+    @SerialName("max_push_outcome_decoded_bytes") val maxPushOutcomeDecodedBytes: Long,
 )
 
 @Serializable
@@ -141,11 +135,14 @@ data class SnapshotSession(
     @SerialName("row_count") val rowCount: Long,
     @SerialName("logical_byte_count") val logicalByteCount: Long,
     @SerialName("expires_at") val expiresAt: String,
+    @SerialName("snapshot_hash") val snapshotHash: String = "",
+    val recovery: SnapshotRecovery? = null,
 )
 
 @Serializable
 data class SnapshotSessionCreateRequest(
     @SerialName("source_replacement") val sourceReplacement: SnapshotSourceReplacement? = null,
+    val recovery: SnapshotRecovery? = null,
 )
 
 @Serializable
@@ -228,6 +225,8 @@ data class OversqliteConfig(
     val snapshotApplyBatchRows: Int = 256,
     val snapshotApplyBatchBytes: Long = 4L * 1024L * 1024L,
     val verboseLogs: Boolean = false,
+    // Initial mode for a fresh coordinator. setRecoveryMode changes its persisted mode.
+    val recoveryMode: RecoveryMode = RecoveryMode.AUTOMATIC_CLEAN,
     val transientRetryPolicy: OversqliteTransientRetryPolicy = OversqliteTransientRetryPolicy(),
     val snapshotCapacityRetryPolicy: OversqliteSnapshotCapacityRetryPolicy =
         OversqliteSnapshotCapacityRetryPolicy(),

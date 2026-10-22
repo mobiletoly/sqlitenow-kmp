@@ -38,6 +38,7 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonArray
@@ -1020,6 +1021,53 @@ class OversqliteOpeningJvmTest {
             openingAdmissionReservationForTest = null
             opening.close()
             http.close()
+        }
+    }
+
+
+    @Test
+    fun generationSnapshotRetainsMinimumAndInstallsAbsentObservations() = runTest {
+        for (boundary in listOf(1L,3L)) {
+            val root = createTempDirectory("snapshot-generation-floor").toFile()
+            val path = File(root,"database.sqlite3").path
+            val oldId = "11111111-1111-4111-8111-111111111111"
+            val newId = "33333333-3333-4333-8333-333333333333"
+            val initialHttp = generationHttp(generation(1),includeConnect=true)
+            val initialDb = database(path,2)
+            val initial = initialDb.openForSync(config(),initialHttp)
+            initial.advance()
+            initial.readyOrNull()!!.client.attach("user-a").getOrThrow()
+            val connection = initialDb.connection()
+            connection.execSQL("UPDATE _sync_apply_state SET apply_mode=1")
+            connection.execSQL("INSERT INTO notes VALUES('$oldId','migrated local value')")
+            connection.execSQL("UPDATE _sync_apply_state SET apply_mode=0")
+            connection.execSQL("UPDATE _sync_attachment_state SET last_bundle_seq_seen=2")
+            initial.close(); initialHttp.close()
+            val paths = mutableListOf<String>()
+            val http = generationHttp(generation(2),requestPaths=paths,snapshotBoundary=boundary,
+                snapshotRows=listOf(SnapshotRow("business","notes",mapOf("id" to newId),boundary,
+                    buildJsonObject { put("id",newId);put("title","target value") })))
+            val targetDb = database(path,2)
+            val opening = targetDb.openForSync(config().copy(generationId=2),http,
+                upgradePlan=OversqliteUpgradePlan("generation-floor-$boundary",1,2,2,2,emptySet()))
+            try {
+                if (boundary == 1L) {
+                    val refusal = assertFailsWith<IllegalStateException> { opening.advance() }
+                    assertTrue(refusal.message.orEmpty().contains("installed observation floor"))
+                    assertEquals(OversqliteOpeningOutcome.TARGET_GENERATION_UNAVAILABLE,opening.status().outcome)
+                    assertEquals(2L,externalScalarLong(path,"SELECT last_bundle_seq_seen FROM _sync_attachment_state"))
+                    assertEquals("migrated local value",externalText(path,"SELECT title FROM notes WHERE id='$oldId'"))
+                    assertEquals(0,paths.count { it.startsWith("/sync/snapshot-sessions/") })
+                } else {
+                    assertEquals(OversqliteOpeningOutcome.READY,opening.advance().outcome)
+                    assertEquals(3L,targetDb.connection().scalarLong("SELECT last_bundle_seq_seen FROM _sync_attachment_state"))
+                    assertEquals(0L,targetDb.connection().scalarLong("SELECT count(*) FROM notes WHERE id='$oldId'"))
+                    assertEquals(1L,targetDb.connection().scalarLong("SELECT count(*) FROM _sync_row_state WHERE table_name='notes' AND json_extract(key_json,'$.id')='$oldId' AND server_kind='absent' AND row_version=0 AND json_extract(server_provenance,'$.bundle_sequence')=3"))
+                    assertEquals("target value",targetDb.connection().withPreparedStatement("SELECT title FROM notes WHERE id='$newId'") { st -> check(st.step());st.getText(0) })
+                }
+            } finally {
+                opening.close();http.close();check(root.deleteRecursively())
+            }
         }
     }
 
@@ -2658,8 +2706,8 @@ class OversqliteOpeningJvmTest {
             val afterRetry = opening.retryRejected(first)
             assertEquals(OversqliteOpeningNextAction.ADVANCE, afterRetry.nextAction)
             assertNull(opening.pendingRejection())
-            assertEquals(0L, opening.status().pendingDirtyCount)
-            assertEquals(1L, opening.status().pendingFrozenCount)
+            assertEquals(1L, opening.status().pendingDirtyCount)
+            assertEquals(0L, opening.status().pendingFrozenCount)
 
             assertEquals(OversqliteOpeningOutcome.NEEDS_RESOLUTION, opening.advance().outcome)
             val second = assertNotNull(opening.pendingRejection())
@@ -2940,6 +2988,7 @@ class OversqliteOpeningJvmTest {
         requestCount: AtomicInteger = AtomicInteger(),
         requestPaths: MutableList<String> = mutableListOf(),
         snapshotRows: List<SnapshotRow> = emptyList(),
+        snapshotBoundary: Long = if (snapshotRows.isEmpty()) 0 else 1,
         expireFirstSnapshot: Boolean = false,
         snapshotRequestBodies: MutableList<String> = mutableListOf(),
         rejectPushCommits: AtomicInteger? = null,
@@ -2956,6 +3005,7 @@ class OversqliteOpeningJvmTest {
         val snapshotCreationCount = AtomicInteger()
         val expiredFirstSnapshot = AtomicInteger()
         val generationDiscoveryCallbackCount = AtomicInteger()
+        val terminalReplies=linkedMapOf<Long,Pair<TerminalPushOutcome,String>>()
         var conflictRow: kotlinx.serialization.json.JsonObject? = null
         val snapshotBundleRows = snapshotRows.map { row ->
             BundleRow(row.schema, row.table, row.key, "INSERT", row.rowVersion, row.payload)
@@ -3021,34 +3071,35 @@ class OversqliteOpeningJvmTest {
                         put("base_row_version", row.rowVersion)
                         put("payload", checkNotNull(row.payload))
                     } }
-                    if (conflictPushCommits?.getAndDecrement()?.let { it > 0 } == true) {
-                        val row = checkNotNull(conflictRow)
-                        respond(
-                            buildJsonObject {
-                                put("error", "push_conflict")
-                                put("message", "fixture conflict")
-                                put("conflict", buildJsonObject {
-                                    put("schema", row.getValue("schema"))
-                                    put("table", row.getValue("table"))
-                                    put("key", row.getValue("key"))
-                                    put("op", row.getValue("op"))
-                                    put("base_row_version", row.getValue("base_row_version"))
-                                    put("server_row_version", 1)
-                                    put("server_row_deleted", false)
-                                    put("server_row", row.getValue("payload"))
-                                })
-                            }.toString(),
-                            status = HttpStatusCode.Conflict,
-                            headers = headersOf(HttpHeaders.ContentType, "application/json"),
-                        )
+                    val pushGeneration=if(request.headers["Oversync-Schema-Generation-ID"]==installedGeneration.id) installedGeneration else generation
+                    val first=expanded.single()
+                    val rejection=if(conflictPushCommits?.getAndDecrement()?.let {it>0}==true) {
+                        PushOutcomeRejection("push_conflict",PushConflictDetails(first.schema,first.table,first.key,
+                            mapOf("INSERT" to "i","UPDATE" to "u","DELETE" to "d").getValue(first.op),first.rowVersion,1,false,first.payload))
                     } else {
-                        check(rejectPushCommits?.getAndDecrement()?.let { it > 0 } == true)
-                        respond(
-                            """{"error":"push_effect_coverage_incomplete","message":"fixture definitive rejection","remediation":"correct_server_write_logic","retryable":false}""",
-                            status = HttpStatusCode.UnprocessableEntity,
-                            headers = headersOf(HttpHeaders.ContentType, "application/json"),
-                        )
+                        check(rejectPushCommits?.getAndDecrement()?.let {it>0}==true)
+                        PushOutcomeRejection("push_effect_coverage_incomplete")
                     }
+                    val rawOutcome=TerminalPushOutcome(checkNotNull(request.headers["Oversync-Source-ID"]),pushGeneration.id,pushGeneration.fingerprint,
+                        body.getValue("source_bundle_id").jsonPrimitive.content.toLong(),body.getValue("canonical_request_hash").jsonPrimitive.content,
+                        body["initialization_id"]?.jsonPrimitive?.contentOrNull,"rejected","",rejection=rejection)
+                    val outcome=rawOutcome.copy(outcomeHash=hashPushOutcome(rawOutcome,pushGeneration))
+                    val encoded=Json.encodeToString(outcome)
+                    terminalReplies[outcome.sourceBundleId]=outcome to encoded
+                    respond(encoded,headers=headersOf(HttpHeaders.ContentType,"application/json"))
+                }
+                "/sync/push-outcomes/ack" -> {
+                    val ack=Json.decodeFromString<PushOutcomeAckRequest>(request.bodyText())
+                    val outcome=checkNotNull(terminalReplies[ack.sourceBundleId]).first
+                    check(outcome.canonicalRequestHash==ack.canonicalRequestHash && outcome.outcomeHash==ack.outcomeHash)
+                    terminalReplies.remove(ack.sourceBundleId)
+                    respond("",status=HttpStatusCode.NoContent)
+                }
+                "/sync/push-outcomes/resolve" -> {
+                    val resolve=Json.decodeFromString<PushOutcomeResolveRequest>(request.bodyText())
+                    val outcome=checkNotNull(terminalReplies[resolve.sourceBundleId])
+                    check(outcome.first.canonicalRequestHash==resolve.canonicalRequestHash)
+                    respond(outcome.second,headers=headersOf(HttpHeaders.ContentType,"application/json"))
                 }
                 "/sync/snapshot-sessions" -> {
                     snapshotRequestBodies += request.bodyText()
@@ -3058,17 +3109,13 @@ class OversqliteOpeningJvmTest {
                     ) {
                         error("injected lost source replacement response")
                     }
+                    val raw = request.bodyText()
+                    val create = if (raw.isEmpty()) null else Json.decodeFromString<SnapshotSessionCreateRequest>(raw)
+                    val source = create?.sourceReplacement?.newSourceId ?: checkNotNull(request.headers["Oversync-Source-ID"])
                     respond(
-                        Json.encodeToString(
-                            SnapshotSession(
-                                snapshotId = "snapshot-g${generation.id}-$sequence",
-                                snapshotBundleSeq = if (snapshotRows.isEmpty()) 0 else 1,
-                                rowCount = snapshotRows.size.toLong(),
-                                logicalByteCount = snapshotByteCount,
-                                expiresAt = "2099-01-01T00:00:00Z",
-                            ),
-                        ),
-                        headers = headersOf(HttpHeaders.ContentType, "application/json"),
+                        Json.encodeToString(sealedSnapshotForTest(generation,source,"snapshot-g${generation.id}-$sequence",
+                            snapshotBoundary,snapshotRows,create?.recovery)),
+                        headers = headersOf(HttpHeaders.ContentType,"application/json"),
                     )
                 }
                 "/sync/snapshot-sessions/snapshot-g${generation.id}-1",

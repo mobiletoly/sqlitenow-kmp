@@ -42,6 +42,7 @@ internal class WorkerCrashReplayTest : PlatformCrossTargetTestSupport() {
         var terminated = false
         var frozenRequest = ""
         var frozenState: Map<String, List<String>>? = null
+        var frozenJournal: String? = null
         var primary: Throwable? = null
         try {
             val client = interrupted.openClient(config, http, ServerWinsResolver)
@@ -60,6 +61,7 @@ internal class WorkerCrashReplayTest : PlatformCrossTargetTestSupport() {
                 frozenRequest = server.requestBodies.last { it.first == "/sync/push" }.second
                 frozenState = databaseStateVector(interrupted.connection(), listOf("users", "posts"),
                     ignoreDerivedCharges = true)
+                frozenJournal = scalarText(interrupted, "SELECT json_array(binding,lower(hex(request_body)),request_digest,lower(hex(outcome_body)),outcome_hash,phase) FROM _sync_upload_journal")
                 assertEquals(2L, scalarLong(interrupted, "SELECT source_bundle_id FROM _sync_outbox_bundle"))
                 (interrupted.connection().ref as SqliteWorkerSQLiteConnection).forceTerminateOwnerForTest()
                 terminated = true
@@ -84,6 +86,10 @@ internal class WorkerCrashReplayTest : PlatformCrossTargetTestSupport() {
             assertNotSame(interruptedConnection, reopened.connection())
             assertEquals(frozenState, databaseStateVector(reopened.connection(), listOf("users", "posts"),
                 ignoreDerivedCharges = true), "same stored database and frozen replay state")
+            val beforeResume = server.requestCounts.toMap()
+            val frozenBinding = Json.parseToJsonElement(frozenRequest).jsonObject
+            assertNotNull(frozenJournal)
+            assertEquals(frozenJournal, scalarText(reopened, "SELECT json_array(binding,lower(hex(request_body)),request_digest,lower(hex(outcome_body)),outcome_hash,phase) FROM _sync_upload_journal"), "complete original F bytes/binding/digest/outcome/phase survive the dead worker")
             resumed.attach("user-1").getOrThrow()
             resumed.pushPending().getOrThrow()
             assertEquals(frozenRequest, server.requestBodies.last { it.first == "/sync/push" }.second)
@@ -95,7 +101,15 @@ internal class WorkerCrashReplayTest : PlatformCrossTargetTestSupport() {
             assertEquals(3L, scalarLong(reopened, "SELECT next_source_bundle_id FROM _sync_source_state"))
             assertEquals(2L, scalarLong(reopened, "SELECT last_bundle_seq_seen FROM _sync_attachment_state"))
             assertEquals(0L, scalarLong(reopened, "SELECT count(*) FROM pragma_foreign_key_check"))
-            assertEquals(3, server.pushRequestCount, "seed, committed loss, exact replay")
+            assertEquals(2, server.pushRequestCount, "seed and committed loss only; original tuple resolves without resend")
+            assertEquals((beforeResume["/sync/push-outcomes/resolve"] ?: 0) + 1, server.requestCounts["/sync/push-outcomes/resolve"])
+            val resolved = Json.parseToJsonElement(server.requestBodies.last { it.first == "/sync/push-outcomes/resolve" }.second).jsonObject
+            for (field in listOf("source_bundle_id", "canonical_request_hash")) assertEquals(frozenBinding.getValue(field), resolved.getValue(field), "original resolve $field")
+            assertEquals(frozenBinding["initialization_id"]?.jsonPrimitive?.contentOrNull, resolved["initialization_id"]?.jsonPrimitive?.contentOrNull, "original nullable initialization binding; push may omit absent while resolve requires explicit null")
+            assertEquals((beforeResume["/sync/push-outcomes/ack"] ?: 0) + 1, server.requestCounts["/sync/push-outcomes/ack"])
+            val ack = Json.parseToJsonElement(server.requestBodies.last { it.first == "/sync/push-outcomes/ack" }.second).jsonObject
+            for (field in listOf("source_bundle_id", "canonical_request_hash")) assertEquals(frozenBinding.getValue(field), ack.getValue(field), "original ack $field")
+            assertEquals(0L, scalarLong(reopened, "SELECT count(*) FROM _sync_upload_journal"))
         } catch (failure: Throwable) {
             primary = failure
             throw failure

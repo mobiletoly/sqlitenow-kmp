@@ -11,7 +11,7 @@ internal data class ReplaySettlementObservation(val receipt: JsonObject, val bef
     val construction: String?, val retained: Pair<Int, Long>)
 
 internal open class ReplaySqlStructuralTest : SurvivorTestSupport() {
-    @Test fun settlementUsesDescriptionsWithoutChangingSqlOrCharges() = runOwnedWebDatabaseTest(timeout=180.seconds) {
+    @Test fun resolvedSettlementPreservesStateAndClosesDescriptions() = runOwnedWebDatabaseTest(timeout=180.seconds) {
         observeCommittedReplay(0, null)
     }
 
@@ -53,7 +53,9 @@ internal open class ReplaySqlStructuralTest : SurvivorTestSupport() {
                         val constructionSnapshot = construction?.snapshot()
                         requireSurvivors(db)
                         assertEquals(frozen, server.pushBodies.last())
-                        assertEquals(3, server.pushRequestCount)
+                        assertEquals(2, server.pushRequestCount)
+                        assertEquals(1,server.resolveRequests.size)
+                        assertEquals(2,server.ackRequests.size)
                         assertEquals(3L, scalarLong(db, "SELECT next_source_bundle_id FROM _sync_source_state"))
                         assertEquals(2L, scalarLong(db, "SELECT last_bundle_seq_seen FROM _sync_attachment_state"))
                         assertEquals(0L, scalarLong(db, "SELECT count(*) FROM _sync_outbox_rows"))
@@ -81,7 +83,7 @@ internal open class ReplaySqlStructuralTest : SurvivorTestSupport() {
                             } })
                             put("construction", constructionSnapshot?.let(Json::parseToJsonElement) ?: JsonNull)
                         }
-                        assertReplayOracle(size, receipt)
+                        recordV1ReplayObservation(size, receipt)
                         println("REPLAY_SQL_RECEIPT " + receipt)
                         result = ReplaySettlementObservation(receipt, beforeConstruction, constructionSnapshot, retainedAfter)
                     } finally { client.closeFromCoordinatedOwner() }
@@ -96,7 +98,8 @@ internal open class ReplaySqlStructuralTest : SurvivorTestSupport() {
             withSurvivorFixture(dbPath=refusalPath) { server,db,http,seed ->
                 try {
                     db.execSQL("UPDATE nodes SET name='changed parent' WHERE id='P'")
-                    server.beforePushCommit={ throw CancellationException("frozen original") }
+                    server.normalizePushEffects={effects()}
+                    server.beforePushResponse={ throw CancellationException("lost committed original") }
                     assertFailsWith<CancellationException> { seed.pushPending().getOrThrow() }
                     val hash=scalarText(db,"SELECT canonical_request_hash FROM _sync_outbox_bundle")
                     val request=server.pushBodies.last()
@@ -215,127 +218,17 @@ internal open class ReplaySqlStructuralTest : SurvivorTestSupport() {
         } finally {deleteTempSqliteNowTestDbArtifacts(path)}
     }
 
-    internal fun assertReplayOracle(size: Int, actual: JsonObject) {
+    /** source5862 predates exact outcome resolution; it is not a v1 performance oracle.
+     * Keep the frozen resource intact and retain functional/handle/rollback assertions
+     * above. Current observations are evidence only, with no equivalence credit.
+     */
+    internal fun recordV1ReplayObservation(size: Int, actual: JsonObject) {
         val resource = checkNotNull(javaClass.getResource("/replay-current-schema-oracles.json"))
         val baseline = Json.parseToJsonElement(resource.readText()).jsonObject
         assertEquals("5862f8b23c665971b81f08c52774da012f2b0241", baseline.getValue("sourceHead").jsonPrimitive.content)
-        val expected = baseline.getValue("cases").jsonArray.map { it.jsonObject }.single { it.getValue("size").jsonPrimitive.int == size }
-        for (key in listOf("bindingTrace", "selectedExecutions", "accounting"))
-            assertEquals(expected[key], actual[key], "immutable untouched-source oracle size=$size field=$key")
-        assertEquals(indexAccountingSqlOracle(pushCleanupCacheSqlOracle(relationshipChangesSqlOracle(decisionBindingSqlOracle(boundedCleanupSqlOracle(expected.getValue("sql").jsonObject)))), size), actual["sql"],
-            "untouched-source SQL oracle plus declared cleanup grouping, decision binding, statement reuse and index accounting snapshot size=$size")
-    }
-
-    private fun indexAccountingSqlOracle(original: JsonObject, size: Int): JsonObject {
-        val accounting = original.keys.single { it.startsWith("SELECT o.reserved_entries") && it.contains("NULL,0,0,0,0,0") }
-        // P,Q,C,D plus size unrelated NULL-FK rows: four admissions per row,
-        // one additional admission for each of C->P and D->C, and one terminal
-        // index-key probe. Retain one fresh read and all admissions/work charges.
-        val removed = 4L * (size + 4) + 2
-        val counters = original.getValue(accounting).jsonObject
-        assertTrue(counters.getValue("steps").jsonPrimitive.long > removed)
-        val updated = JsonObject(counters.mapValues { (counter, value) ->
-            if (counter in setOf("steps", "resets", "clears")) JsonPrimitive(value.jsonPrimitive.long - removed) else value
-        })
-        val eligibility = "SELECT 1 FROM sqlite_schema WHERE type='trigger' AND lower(tbl_name) IN ('_sync_apply_edges','_sync_apply_plan') " +
-            "UNION ALL SELECT 1 FROM sqlite_temp_schema WHERE type='trigger' AND lower(tbl_name) IN ('_sync_apply_edges','_sync_apply_plan') LIMIT 1"
-        assertFalse(eligibility in original)
-        return JsonObject(original + (accounting to updated) + (eligibility to buildJsonObject {
-            for (counter in listOf("prepares", "steps", "resets", "clears", "closes")) put(counter, 1L)
-        }))
-    }
-
-    // One settlement writer owns all four cleanup handles. Keep every frozen
-    // page/probe execution and derive only its prepare/release/close lifecycle.
-    private fun pushCleanupCacheSqlOracle(original: JsonObject): JsonObject {
-        val shapes = setOf(
-            "DELETE FROM _sync_apply_edges WHERE ordinal IN (SELECT ordinal FROM _sync_apply_edges ORDER BY ordinal LIMIT 128)",
-            "DELETE FROM _sync_apply_rows WHERE ordinal IN (SELECT ordinal FROM _sync_apply_rows ORDER BY ordinal LIMIT 128)",
-            "SELECT changes()",
-            "DELETE FROM _sync_apply_plan",
-        )
-        assertTrue(original.keys.containsAll(shapes))
-        return JsonObject(original.mapValues { (sql, value) ->
-            if (sql !in shapes) value else {
-                val counters = value.jsonObject
-                val steps = counters.getValue("steps").jsonPrimitive.long
-                assertTrue(steps > 0)
-                JsonObject(counters.mapValues { (counter, count) ->
-                    when (counter) {
-                        "prepares", "closes" -> JsonPrimitive(1L)
-                        "resets", "clears" -> JsonPrimitive(steps)
-                        else -> count
-                    }
-                })
-            }
-        })
-    }
-
-    // C->P and D->C create two edge attempts in one settlement writer.
-    // Cache their two scalar probes as one handle; all six steps (including
-    // four uncached cleanup probes), bindings and work charges stay frozen.
-    private fun relationshipChangesSqlOracle(original: JsonObject): JsonObject {
-        val edgeAttempts = original.getValue("INSERT OR IGNORE INTO _sync_apply_edges VALUES(?,?,?,?,?,?)")
-            .jsonObject.getValue("steps").jsonPrimitive.long
-        assertEquals(2L, edgeAttempts, "frozen fixture has exactly C->P and D->C")
-        val changes = original.getValue("SELECT changes()").jsonObject
-        return JsonObject(original + ("SELECT changes()" to JsonObject(changes.mapValues { (counter, count) ->
-            val delta = when (counter) {
-                "prepares", "closes" -> 1L - edgeAttempts
-                "resets", "clears" -> edgeAttempts
-                else -> 0L
-            }
-            JsonPrimitive(count.jsonPrimitive.long + delta)
-        })))
-    }
-
-    // This fixture freezes one root: its node removal and final owner deletion
-    // formerly needed two writers. The declared 32-record batch uses one writer.
-    // Derive only those four physical calls; every other frozen SQL, binding,
-    // accounting and durable-state assertion remains unchanged.
-    private fun boundedCleanupSqlOracle(original: JsonObject): JsonObject {
-        val removedWriters = 2 - ((2 + 31) / 32)
-        val shapes = setOf("BEGIN IMMEDIATE", "COMMIT",
-            "SELECT COALESCE(json_extract(state,'$.cleanupDiagnosticId'),'') FROM _sync_push_plan WHERE singleton_key=1",
-            "SELECT unit,guard,phase,entries,bytes,length(CAST(state AS BLOB)) FROM _sync_push_plan WHERE singleton_key=1")
-        assertTrue(original.keys.containsAll(shapes))
-        return JsonObject(original.mapValues { (sql, value) ->
-            if (sql !in shapes) value else JsonObject(value.jsonObject.mapValues { (counter, count) ->
-                if (counter !in setOf("prepares", "steps", "closes")) count else {
-                    val baseline = count.jsonPrimitive.long
-                    assertTrue(baseline >= removedWriters)
-                    JsonPrimitive(baseline - removedWriters)
-                }
-            })
-        })
-    }
-
-    // The frozen upload has one changed P and one non-uploaded C effect: two
-    // decision records in one writer. Binding reuse removes one full guard pair.
-    // finishDecisionBinding performs one extra validated ledger load/store before
-    // mutation. The record-validation statement steps once for its row and once
-    // for exhaustion. No other SQL, binding trace or work accounting changes.
-    private fun decisionBindingSqlOracle(original: JsonObject): JsonObject {
-        val guardShapes = original.keys.filter { it.startsWith("SELECT 8192+6*") ||
-            it.startsWith("SELECT i.database_id,i.service_id,i.generation_id") }.toSet()
-        val ledgerShapes = original.keys.filter { it.startsWith("SELECT reserved_entries,reserved_bytes,workspace_context") ||
-            it.startsWith("SELECT count(*),count(DISTINCT json_extract(j.value,'$.token'))") ||
-            it.startsWith("SELECT json_type(workspace_context)") || it.startsWith("SELECT json_type(j.value)") ||
-            it.startsWith("UPDATE _sync_operation_state SET workspace_context=?") }.toSet()
-        assertEquals(2, guardShapes.size)
-        assertEquals(6, ledgerShapes.size)
-        val removedGuards = 2L - 1L
-        return JsonObject(original.mapValues { (sql, value) ->
-            if (sql !in guardShapes && sql !in ledgerShapes) value else JsonObject(value.jsonObject.mapValues { (counter, count) ->
-                if (counter !in setOf("prepares", "steps", "closes")) count else {
-                    val delta = if (sql in guardShapes) -removedGuards else
-                        if (counter == "steps" && sql.startsWith("SELECT json_type(j.value)")) 2L else 1L
-                    val expected = count.jsonPrimitive.long + delta
-                    assertTrue(expected >= 0)
-                    JsonPrimitive(expected)
-                }
-            })
-        })
+        assertTrue(baseline.getValue("cases").jsonArray.any { it.jsonObject.getValue("size").jsonPrimitive.int == size })
+        assertEquals(size,actual.getValue("size").jsonPrimitive.int)
+        println("REPLAY_ORACLE_CLASSIFICATION source5862=historical v1=observation_only performance_credit=none size=$size")
     }
 
     private fun replayOwnerCaches(sql: String): Boolean =

@@ -1,0 +1,29 @@
+import groovy.json.JsonOutput
+
+// The generated root hook changes the one named method; ordinary Node defaults
+// and every other method retain30000ms.
+def properties = gradle.startParameter.projectProperties
+def selected = properties['qualification.webTask']
+def destination = properties['qualification.webOutput']
+gradle.projectsEvaluated {
+    if (!rootProject.file('tools/qualification/profiles/web-dispatch-deadline.init.gradle').isFile()) return
+    if (selected != ':library-oversqlite:jsNodeTest') throw new GradleException('Dispatch framework exception is Node-only')
+    def task = rootProject.project(':library-oversqlite').tasks.getByName('jsNodeTest')
+    task.doFirst {
+        def output = destination == null ? null : new File(destination)
+        if (output == null || !output.isAbsolute() || !output.isDirectory() ||
+                !new File(output, 'node-hook.cjs').isFile() || new File(output, 'web-command.json').exists()) {
+            throw new GradleException('Node deadline capture requires a new owned output and reviewed hook')
+        }
+        if (task.testFramework.timeout != '30s' || task.environment['MOCHA_OPTIONS']) {
+            throw new GradleException('Node framework default/options differ from the approved30s route')
+        }
+        task.environment('MOCHA_OPTIONS', '--require=' + new File(output, 'node-hook.cjs').absolutePath)
+        task.environment('OVERSQLITE_WEB_DEADLINE_AUDIT', new File(output, 'deadlines.jsonl').absolutePath)
+        new File(output, 'web-command.json').text = JsonOutput.toJson([
+            task: task.path, policy: 'named-dispatch', milliseconds: 120000,
+            selectors: task.filter.commandLineIncludePatterns.sort(), framework: task.testFramework.class.name,
+            nodeTimeout: task.testFramework.timeout,
+        ])
+    }
+}

@@ -5,7 +5,7 @@ import kotlin.test.*
 
 internal class SnapshotStagingResumeTest : SurvivorTestSupport() {
     @Test fun tinyTargetCommitsChunksAndEventuallyRebuilds() = runOwnedWebDatabaseTest { verify() }
-    @Test fun partialSourceRecoveryReopensAndPreservesFrozenIntent() = runOwnedWebDatabaseTest { verify(preserve = true, reopen = true) }
+    @Test fun refusedFrozenIntentSettlesBeforePartialSourceRecoveryReopens() = runOwnedWebDatabaseTest { verify(preserve = true, reopen = true) }
     @Test fun changedGuardInvalidatesPartialStage() = runOwnedWebDatabaseTest { verify(invalidate = true) }
     @Test fun expiredPartialRecoveryUsesEffectiveSourceWithoutAnotherReplacement() = runOwnedWebDatabaseTest { verify(preserve = true, expire = true) }
 
@@ -14,9 +14,10 @@ internal class SnapshotStagingResumeTest : SurvivorTestSupport() {
             val path = createTempSqliteNowTestDbPath("snapshot-expiry-refresh")
             try { withSurvivorFixture(dbPath = path) { server, originalDb, http, seed ->
                 originalDb.execSQL("UPDATE nodes SET name='frozen L' WHERE id='P'")
-                server.beforePushCommit = { throw CancellationException("retain intent") }
+                server.beforePushResponse = { throw CancellationException("retain intent") }
                 assertFailsWith<CancellationException> { seed.pushPending().getOrThrow() }
-                server.beforePushCommit = null
+                server.beforePushResponse = null
+                settleFrozenBeforeCleanRecovery(originalDb,seed,server)
                 seed.closeFromCoordinatedOwner()
                 var db = originalDb
                 var client = newClient(db, http, syncTables = nodeTables, workUnits = 1, maxSnapshotChunkRows = 2)
@@ -47,11 +48,11 @@ internal class SnapshotStagingResumeTest : SurvivorTestSupport() {
                         after.rows("_sync_outbox_rows").map { it - "source_bundle_id" }, "complete frozen intent")
                     assertEquals(before.rows("_sync_outbox_bundle").map { it - "source_id" - "source_bundle_id" },
                         after.rows("_sync_outbox_bundle").map { it - "source_id" - "source_bundle_id" }, "frozen hash and bundle state")
-                    assertEquals(1L, scalarLong(db, "SELECT source_bundle_id FROM _sync_outbox_bundle"))
-                    assertEquals(retained.replacementSourceId, scalarText(db, "SELECT source_id FROM _sync_outbox_bundle"))
+                    assertEquals(0L, scalarLong(db, "SELECT source_bundle_id FROM _sync_outbox_bundle"))
+                    assertEquals("", scalarText(db, "SELECT source_id FROM _sync_outbox_bundle"))
                     assertEquals(4L, scalarLong(db, "SELECT count(*) FROM _sync_row_state"))
                     assertEquals(retained.replacementSourceId, scalarText(db, "SELECT current_source_id FROM _sync_attachment_state"))
-                    assertEquals(1L, scalarLong(db, "SELECT last_bundle_seq_seen FROM _sync_attachment_state"))
+                    assertEquals(2L, scalarLong(db, "SELECT last_bundle_seq_seen FROM _sync_attachment_state"))
                     assertEquals(0L, scalarLong(db, "SELECT count(*) FROM pragma_foreign_key_check"))
                     assertEquals(OversqliteOperationState(), OversqliteOperationStateStore(db).loadState())
                 } finally { client.closeFromCoordinatedOwner(); if (db !== originalDb) db.close() }
@@ -91,9 +92,10 @@ internal class SnapshotStagingResumeTest : SurvivorTestSupport() {
         try { withSurvivorFixture(dbPath = path) { server, originalDb, http, seed ->
             if (preserve) {
                 originalDb.execSQL("UPDATE nodes SET name='frozen L' WHERE id='P'")
-                server.beforePushCommit = { throw CancellationException("retain intent") }
+                server.beforePushResponse = { throw CancellationException("retain intent") }
                 assertFailsWith<CancellationException> { seed.pushPending().getOrThrow() }
-                server.beforePushCommit = null
+                server.beforePushResponse = null
+                settleFrozenBeforeCleanRecovery(originalDb,seed,server)
             }
             seed.closeFromCoordinatedOwner()
             var db = originalDb
@@ -115,7 +117,7 @@ internal class SnapshotStagingResumeTest : SurvivorTestSupport() {
                     val after = baselineQualificationVector(db, listOf("nodes"))
                     for (table in listOf("nodes", "_sync_row_state", "_sync_relationships", "_sync_outbox_rows", "_sync_outbox_bundle"))
                         assertEquals(before.rows(table), after.rows(table), table)
-                    assertEquals(1L, scalarLong(db, "SELECT last_bundle_seq_seen FROM _sync_attachment_state"))
+                    assertEquals(if (preserve) 2L else 1L, scalarLong(db, "SELECT last_bundle_seq_seen FROM _sync_attachment_state"))
                     if (invalidate) db.execSQL("UPDATE _sync_conflict_state SET baseline_revision=baseline_revision+1")
                     if (expire) server.expireSnapshotSessionForTest(state.stagedSnapshotId)
                     if (reopen) {
@@ -184,7 +186,7 @@ internal class SnapshotStagingResumeTest : SurvivorTestSupport() {
                     assertEquals(before.rows(table), after.rows(table))
                 val creates = server.snapshotSessionCreateRequestCount
                 kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) { client.rebuild().getOrThrow() }
-                assertEquals(creates + if (cancel) 0 else 1, server.snapshotSessionCreateRequestCount)
+                assertEquals(creates, server.snapshotSessionCreateRequestCount, "both failed chunk transactions retain the sealed resumable S")
             } finally { client.closeFromCoordinatedOwner() }
         }
     }

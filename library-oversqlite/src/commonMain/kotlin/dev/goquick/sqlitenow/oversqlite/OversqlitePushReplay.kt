@@ -190,6 +190,7 @@ internal class OversqlitePushReplayExecutor(
             bundleApplier.survivors.finishDecisionBinding(reservationToken, base, decisions.held, statementCache)
         }
         val updatedTables = linkedSetOf<String>()
+        bundleApplier.survivors.installUniqueFinalState(state,statementCache)
         for (row in committedRows) {
             val bundleRow = BundleRow(
                 schema = row.schemaName,
@@ -235,9 +236,8 @@ internal class OversqlitePushReplayExecutor(
         bundleApplier.survivors.restorePrimaryIntent(state, statementCache, verifyOnly = true, workspaceStatementCache = statementCache, replayStatementCache = statementCache)
         bundleApplier.survivors.finish(replayStatementCache = statementCache)
 
-        sourceStateStore.advanceAfterCommittedPush(state.sourceId, committed.sourceBundleId)
         attachmentStateStore.advanceAfterCommittedPush(committed.bundleSeq, statementCache)
-        outboxStateStore.clearBundleAndRows(statementCache, pagedSettlement = true)
+        outboxStateStore.clearBundleAndRows(statementCache, pagedSettlement = true, terminalDisposition = true)
         assertReplayResidualDirtyState(uploadedRows, plans, statementCache)
         return updatedTables
     }
@@ -280,7 +280,7 @@ internal class OversqlitePushReplayExecutor(
         return true
     }
 
-    private fun requireCommittedEffectCoverage(
+    fun requireCommittedEffectCoverage(
         uploadedRows: List<DirtyRowCapture>,
         committedRows: List<CommittedReplayRow>,
     ) {

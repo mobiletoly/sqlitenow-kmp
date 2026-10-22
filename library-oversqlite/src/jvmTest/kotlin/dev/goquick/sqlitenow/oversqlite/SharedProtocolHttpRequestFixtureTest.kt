@@ -22,6 +22,11 @@ class SharedProtocolHttpRequestFixtureTest {
 
     @Test
     fun currentRequestMatrixUsesOnlyDirectProtocolRoutes() {
+        assertEquals(setOf("formatVersion", "baseUri", "cases", "removedOperations", "requiredProtocolHeader"), root.keys)
+        val protocol = root.getValue("requiredProtocolHeader").jsonObject
+        assertEquals(setOf("name", "value"), protocol.keys)
+        assertEquals("Oversync-Protocol-Version", protocol.getValue("name").jsonPrimitive.content)
+        assertEquals(OVERSQLITE_PROTOCOL_VERSION, protocol.getValue("value").jsonPrimitive.content)
         assertEquals(2, root.getValue("formatVersion").jsonPrimitive.int)
         val expectedOperations = setOf(
             "discovery", "connect", "push", "pull", "snapshotSession", "snapshotChunk", "snapshotRelease", "watch",

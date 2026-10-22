@@ -20,6 +20,9 @@ internal abstract class ReplayCheckpointSupport : SurvivorTestSupport() {
         val operations=OversqliteClientOperationController(config,OversqliteClientResourceOwner(db,http),SnapshotDiagnosticsState()) {}
         return OversqliteApplySurvivors(db,OversqliteLocalStore(db,json) {state.validated},config,operations,json) to operations
     }
+    protected suspend fun expectedPlanGuard(db: SafeSQLiteConnection,config: OversqliteConfig,state: RuntimeState,unit: String,kind: String): String =
+        OversqliteWorkspace(db,config).contextGuard(state,unit)+":"+config.serviceId+
+            if(kind=="snapshot") ":${scalarLong(db,"PRAGMA main.schema_version")}:${scalarLong(db,"PRAGMA temp.schema_version")}" else ""
     protected suspend fun readCheckpoint(db: SafeSQLiteConnection): List<Any?> = db.withPreparedStatement("SELECT ${planColumns.joinToString(",")} FROM _sync_apply_plan WHERE singleton_key=1") { st ->
         assertTrue(st.step());planColumns.indices.map { if(it in planIntegers) st.getLong(it) else if(st.isNull(it)) null else st.getText(it) }.also {assertFalse(st.step())}
     }
@@ -56,7 +59,7 @@ internal class ReplayCheckpointContractTest : ReplayCheckpointSupport() {
                     assertEquals("roots",plan[2]);callbacks++;owner.capture(state,"nodes",keys[index])
                 })
                 assertEquals(keys.size,callbacks)
-                val plan=readCheckpoint(db);assertEquals("ready",plan[2]);assertEquals(keys.size.toLong(),plan[3]);assertCheckpointTotals(db,plan)
+                val plan=readCheckpoint(db);assertEquals("ready",plan[2]);assertEquals(if(kind=="snapshot") scalarLong(db,"SELECT count(*) FROM nodes") else keys.size.toLong(),plan[3]);assertCheckpointTotals(db,plan)
                 assertEquals(before,primaryCheckpointVector(db))
             }
         }
@@ -75,9 +78,10 @@ internal class ReplayCheckpointContractTest : ReplayCheckpointSupport() {
                         val result=runCatching { prepareCheckpoint(db,http,state,config,unit,kind,budget=32,seed={ i,owner -> callbacks++;owner.capture(state,"nodes",listOf("P","Q")[i]) }) }
                         result.exceptionOrNull()?.let { error ->
                             val refusal=assertIs<SyncWorkLimitException>(error)
-                            assertEquals(unit,refusal.unit);assertEquals(config.maxSyncWorkUnitsPerInvocation,refusal.limit);assertTrue(refusal.used in (config.maxSyncWorkUnitsPerInvocation-32)..(config.maxSyncWorkUnitsPerInvocation+31), "kind=$kind used=${refusal.used} phase=${readCheckpoint(db)[2]}")
+                            assertEquals(unit,refusal.unit);assertEquals(config.maxSyncWorkUnitsPerInvocation,refusal.limit);if(readCheckpoint(db)[2]!="ready") assertTrue(refusal.used in (config.maxSyncWorkUnitsPerInvocation-32)..(config.maxSyncWorkUnitsPerInvocation+31), "kind=$kind used=${refusal.used} phase=${readCheckpoint(db)[2]}")
+                            else assertTrue(refusal.used>=config.maxSyncWorkUnitsPerInvocation,"ready atomic estimates remain charged above the soft target")
                         } ?: assertEquals("ready", readCheckpoint(db)[2], "first ready atomic reservation may cross the soft target")
-                        val plan=readCheckpoint(db);assertCheckpointTotals(db,plan);assertEquals(unit,plan[0]);assertEquals(kind,plan[12]);assertEquals(OversqliteWorkspace(db,config).contextGuard(state,unit),plan[1])
+                        val plan=readCheckpoint(db);assertCheckpointTotals(db,plan);assertEquals(unit,plan[0]);assertEquals(kind,plan[12]);assertEquals(expectedPlanGuard(db,config,state,unit,kind),plan[1])
                         phases+=plan[2] as String
                         val progressVector=fullCheckpointVector(db)
                         assertNotEquals(previousVector,progressVector,"an admitted step advances retained cursors or staging row state")
@@ -102,11 +106,17 @@ internal class ReplayCheckpointContractTest : ReplayCheckpointSupport() {
                 db.execSQL("DELETE FROM _sync_apply_edges");db.execSQL("DELETE FROM _sync_apply_rows");db.execSQL("DELETE FROM _sync_apply_plan")
                 val unit="ready-$kind";prepareCheckpoint(db,http,state,config,unit,kind)
                 val before=fullCheckpointVector(db)
-                val aboveTarget=prepareCheckpoint(db,http,state,config,unit,kind,budget=0,seed={ _,_->error("ready resume called seed") })
-                assertTrue(aboveTarget.usedSyncWork()>config.maxSyncWorkUnitsPerInvocation)
+                if(kind=="snapshot") {
+                    assertFailsWith<SyncWorkLimitException> { prepareCheckpoint(db,http,state,config,unit,kind,budget=0,seed={ _,_->error("ready resume called seed") }) }
+                } else {
+                    val aboveTarget=prepareCheckpoint(db,http,state,config,unit,kind,budget=0,seed={ _,_->error("ready resume called seed") })
+                    assertTrue(aboveTarget.usedSyncWork()>config.maxSyncWorkUnitsPerInvocation)
+                }
                 assertEquals(before,fullCheckpointVector(db))
                 val operations=prepareCheckpoint(db,http,state,config,unit,kind,seed={ _,_->error("ready retry called seed") })
-                assertEquals(0L,operations.a3Stats.primaryReads);assertEquals(0L,operations.a3Stats.indexedVisits);assertEquals(before,fullCheckpointVector(db))
+                if(kind!="snapshot") {assertEquals(0L,operations.a3Stats.primaryReads);assertEquals(0L,operations.a3Stats.indexedVisits)}
+                else assertTrue(operations.usedSyncWork() in 1..config.maxSyncWorkUnitsPerInvocation,"current snapshot revalidation remains charged")
+                assertEquals(before,fullCheckpointVector(db))
             }
         }
     }

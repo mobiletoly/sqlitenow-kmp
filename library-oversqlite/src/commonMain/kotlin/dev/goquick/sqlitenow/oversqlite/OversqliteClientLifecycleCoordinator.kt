@@ -88,6 +88,27 @@ internal class OversqliteClientLifecycleCoordinator(
                 val state = session.loadDurableLifecycleView()
                 val sourceId = session.resolveSourceIdOrCurrent(state.sourceId)
 
+                if (state.isAttached && state.attachedUserId != requestedUserId) {
+                    throw ConnectBindingConflictException(state.attachedUserId, requestedUserId)
+                }
+
+                // Recovery owns the original admitted generation even after its
+                // remote binding is retired. Local retained admission is integrity
+                // checked; no current-generation discovery/Connect gates old ack.
+                val upload=loadUploadJournal(db)
+                val policy=outboxStateStore.loadBundleState().state==outboxStateRejected
+                if(state.isAttached && state.attachedUserId==requestedUserId && (upload!=null || policy)) {
+                    val retained=checkNotNull(OversqliteContractStore(db).readAdmission(config.generationId)) { "missing original upload admission" }
+                    val local=checkNotNull(validated.generation)
+                    check(retained.generation.id==local.id && retained.generation.fingerprint==local.fingerprint)
+                    session.admittedContract=retained
+                    session.currentUserId=requestedUserId;session.pendingInitializationId=state.pendingInitializationId;session.sessionConnected=true
+                    val original=session.requireConnectedRuntimeState("attach(userId)")
+                    if(upload!=null) OversqliteUploadJournal(db,config).guard(original,upload)
+                    return@withOperationProgress AttachResult.Connected(AttachOutcome.RESUMED_ATTACHED_STATE,session.syncStatus(original))
+                }
+                val reconnect=attachmentStateStore.loadState().initializationReconnectRequired
+
                 // Each opened client admits one immutable discovery contract before any attached
                 // state can be published back to callers, including durable resume paths.
                 contractGateway.verifyConnectLifecycleSupported()
@@ -101,9 +122,6 @@ internal class OversqliteClientLifecycleCoordinator(
                     )
                 }
 
-                if (state.isAttached && state.attachedUserId != requestedUserId) {
-                    throw ConnectBindingConflictException(state.attachedUserId, requestedUserId)
-                }
 
                 // Snapshot creation retires the old source remotely before local
                 // atomic publication. Reattach through its reserved replacement
@@ -126,11 +144,12 @@ internal class OversqliteClientLifecycleCoordinator(
                     val resumesRetainedInitialization = response.resolution == "initialize_local" &&
                         state.pendingInitializationId.isNotEmpty() &&
                         response.initializationId == state.pendingInitializationId
-                    require(response.resolution == "remote_authoritative" || resumesRetainedInitialization) {
+                    require(response.resolution == "remote_authoritative" || resumesRetainedInitialization || (reconnect && response.resolution in setOf("initialize_local","initialize_empty"))) {
                         "resumed attached state requires remote_authoritative resolution or its retained initialization lease"
                     }
+                    if(reconnect) persistConnectedLifecycleState(requestedUserId,if(response.resolution=="initialize_local") response.initializationId else "")
                     session.currentUserId = requestedUserId
-                    session.pendingInitializationId = state.pendingInitializationId
+                    session.pendingInitializationId = if(reconnect) attachmentStateStore.loadState().pendingInitializationId else state.pendingInitializationId
                     session.sessionConnected = true
                     return@withOperationProgress AttachResult.Connected(
                         outcome = AttachOutcome.RESUMED_ATTACHED_STATE,
@@ -290,8 +309,15 @@ internal class OversqliteClientLifecycleCoordinator(
             val statementCache = StatementCache(db)
             try {
                 precondition()
+                requireCleanSnapshotWork(db)
+                val minimumSnapshot = snapshotObservationFloor(db)
                 applyStateStore.setApplyMode(true, statementCache)
-                clearFullLocalSyncState(validated, statementCache)
+                attachmentStateStore.advanceAttachmentEpoch()
+                // A completed local migration owns the business values. Keep
+                // them for the shared snapshot delta; invalidate old A only.
+                for (table in validated.tables) syncStateStore.clearStructuredRowState(
+                    validated.schemaForTable(table.tableName), table.tableName, statementCache)
+                stageStore.clearAllSnapshotStages(statementCache)
                 db.execSQL("DELETE FROM _sync_conflict_state")
                 db.execSQL("INSERT INTO _sync_conflict_state(singleton_key) VALUES(1)")
                 sourceStateStore.ensureSource(oldSourceId, statementCache = statementCache)
@@ -300,7 +326,7 @@ internal class OversqliteClientLifecycleCoordinator(
                     sourceId = oldSourceId,
                     userId = userId,
                     schemaName = validated.generation!!.tables.first().schema,
-                    lastBundleSeqSeen = 0,
+                    lastBundleSeqSeen = minimumSnapshot,
                     rebuildRequired = true,
                     pendingInitializationId = "",
                     statementCache = statementCache,
@@ -323,15 +349,29 @@ internal class OversqliteClientLifecycleCoordinator(
         newSourceId: String,
         reason: String,
     ): SnapshotSession {
-        return remoteApi.createSnapshotSession(
-            oldSourceId,
-            SnapshotSessionCreateRequest(SnapshotSourceReplacement(oldSourceId, newSourceId, reason)),
-        )
+        requireCleanSnapshotWork(db)
+        val state = RuntimeState(session.requireValidatedConfig(), session.requireAdmittedContract(),
+            checkNotNull(session.currentUserId), oldSourceId)
+        return downloadWorkflow.createGuardedSnapshotSession(state, oldSourceId,
+            SnapshotSessionCreateRequest(SnapshotSourceReplacement(oldSourceId, newSourceId, reason)))
     }
 
     internal suspend fun createGenerationRecoverySnapshot(newSourceId: String): SnapshotSession {
-        return remoteApi.createSnapshotSession(newSourceId, SnapshotSessionCreateRequest())
+        val state = RuntimeState(session.requireValidatedConfig(),session.requireAdmittedContract(),
+            checkNotNull(session.currentUserId),newSourceId)
+        val retained = retainedGenerationSnapshot(newSourceId)
+        return remoteApi.createSnapshotSession(newSourceId, downloadWorkflow.generationRecoveryRequest()) {
+            downloadWorkflow.validateSnapshotDispatch(state, retained)
+        }
     }
+
+    internal suspend fun retainGenerationSnapshot(snapshot: SnapshotSession, newSourceId: String) {
+        downloadWorkflow.retainGenerationSnapshot(RuntimeState(session.requireValidatedConfig(), session.requireAdmittedContract(),
+            checkNotNull(session.currentUserId), checkNotNull(session.currentSourceId)), snapshot, newSourceId)
+    }
+
+    internal suspend fun retainedGenerationSnapshot(newSourceId: String): SnapshotSession =
+        downloadWorkflow.retainedSnapshotSession(operationStateStore.loadState(), newSourceId)
 
     internal suspend fun stageGenerationSnapshot(
         snapshotSession: SnapshotSession,
@@ -340,14 +380,38 @@ internal class OversqliteClientLifecycleCoordinator(
         initialTotals: SnapshotTransferTotals = SnapshotTransferTotals(),
         onChunkStaged: suspend (SnapshotTransferTotals) -> Unit,
     ): SnapshotTransferTotals {
+        snapshotDiagnosticsState.current()?.markRestoreAttempt()
         val contract = session.requireAdmittedContract()
         val limits = negotiateSnapshotLimits(contract, config)
+        val state = RuntimeState(session.requireValidatedConfig(), contract, userId, newSourceId)
+        val operation = operationStateStore.loadState()
+        require(downloadWorkflow.retainedSnapshotSession(operation, newSourceId) == snapshotSession)
+        require(operation.snapshotStagedRowCount == initialTotals.rows && operation.snapshotStagedByteCount == initialTotals.bytes)
+        if (operation.snapshotStageComplete) {
+            // Completed staging has no caller-owned transaction. Recheck the exact retained
+            // operation and current admission under a short writer scope; no transport is called.
+            db.transaction(TransactionMode.DEFERRED) {
+                requireCleanSnapshotWork(db)
+                require(session.requireAdmittedContract() == contract) { "generation admission changed" }
+                require(operationStateStore.loadState() == operation) { "generation staging operation changed" }
+                require(downloadWorkflow.retainedSnapshotSession(operation, newSourceId) == snapshotSession)
+                downloadWorkflow.verifyGenerationSnapshot(state, snapshotSession, newSourceId, "verification_resume")
+            }
+            return initialTotals
+        }
         return downloadWorkflow.downloadSnapshotSession(
-            state = RuntimeState(session.requireValidatedConfig(), contract, userId, newSourceId),
+            state = state,
             session = snapshotSession,
             limits = limits,
             initialTotals = initialTotals,
-            onChunkStaged = onChunkStaged,
+            onChunkStaged = { totals ->
+                requireCleanSnapshotWork(db)
+                val complete = totals.rows == snapshotSession.rowCount && totals.bytes == snapshotSession.logicalByteCount
+                if (complete) downloadWorkflow.verifyGenerationSnapshot(state, snapshotSession, newSourceId, "verification_last_chunk")
+                operationStateStore.persistState(operationStateStore.loadState().copy(snapshotStagedRowCount = totals.rows,
+                    snapshotStagedByteCount = totals.bytes, snapshotStageComplete = complete))
+                onChunkStaged(totals)
+            },
         )
     }
 
@@ -364,7 +428,7 @@ internal class OversqliteClientLifecycleCoordinator(
             ),
             session = snapshotSession,
             rotatedSourceId = newSourceId,
-            outboxMode = SnapshotRebuildOutboxMode.CLEAR_ALL,
+            outboxMode = SnapshotRebuildOutboxMode.CLEAN,
             finalizer = finalizer,
         )
         session.currentSourceId = newSourceId
@@ -400,16 +464,10 @@ internal class OversqliteClientLifecycleCoordinator(
             "cannot finalize durable operation ${state.operation.kind} as remote_replace"
         }
         val refreshedState = ensureRemoteReplaceSnapshotStaged(state, operation)
-        val snapshotSession = SnapshotSession(
-            snapshotId = refreshedState.operation.stagedSnapshotId,
-            snapshotBundleSeq = refreshedState.operation.snapshotBundleSeq,
-            rowCount = refreshedState.operation.snapshotRowCount,
-            logicalByteCount = refreshedState.operation.snapshotByteCount,
-            expiresAt = "",
-        )
+        val snapshotSession = downloadWorkflow.retainedSnapshotSession(refreshedState.operation, refreshedState.sourceId)
         operations.setProgress(operation, OversqlitePhase.APPLYING_REMOTE_STATE)
         val guard = snapshotGate.pin(
-            mode = SnapshotRebuildOutboxMode.CLEAR_ALL,
+            mode = SnapshotRebuildOutboxMode.CLEAN,
             remoteReplace = true,
             remoteTargetUserId = refreshedState.operation.targetUserId,
         )
@@ -422,7 +480,7 @@ internal class OversqliteClientLifecycleCoordinator(
             ),
             session = snapshotSession,
             rotatedSourceId = null,
-            outboxMode = SnapshotRebuildOutboxMode.CLEAR_ALL,
+            outboxMode = SnapshotRebuildOutboxMode.CLEAN,
             pinnedGuard = guard,
         )
         session.applyDownloadResult(result)
@@ -441,7 +499,7 @@ internal class OversqliteClientLifecycleCoordinator(
         val source = session.resolveSourceIdOrCurrent(state.sourceId)
         val (snapshot, _) = downloadWorkflow.ensureOperationSnapshotStaged(
             RuntimeState(session.requireValidatedConfig(), session.requireAdmittedContract(),
-                state.operation.targetUserId, source), SnapshotRebuildOutboxMode.CLEAR_ALL,
+                state.operation.targetUserId, source), SnapshotRebuildOutboxMode.CLEAN,
             remoteReplace = true)
         diagnostics.recordStagedRows(snapshot.rowCount)
         return state.copy(operation = operationStateStore.loadState())

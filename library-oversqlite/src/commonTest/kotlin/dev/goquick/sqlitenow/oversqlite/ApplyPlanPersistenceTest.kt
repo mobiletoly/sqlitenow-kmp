@@ -20,7 +20,8 @@ internal class ApplyPlanPersistenceTest : SurvivorTestSupport() {
             for (kind in listOf("pull", "settlement", "snapshot", "conflict")) {
                 db.execSQL("DELETE FROM _sync_apply_plan")
                 val unit = "plan-é-猫-$kind"
-                val guard = OversqliteWorkspace(db, config).contextGuard(state, unit)
+                val guard = OversqliteWorkspace(db, config).contextGuard(state, unit) + ":" + config.serviceId +
+                    if (kind == "snapshot") ":${scalarLong(db, "PRAGMA main.schema_version")}:${scalarLong(db, "PRAGMA temp.schema_version")}" else ""
                 checkpoint(db, http, state, unit, kind, exhaustBudget = true)
                 assertEquals(listOf(unit, guard, "roots", 0L, 0L, 0L, 0L, null,
                     0L, 0L, 0L, 0L, kind, "", "", "", 0L, 0L), readPlan(db))
@@ -33,7 +34,7 @@ internal class ApplyPlanPersistenceTest : SurvivorTestSupport() {
         withSurvivorFixture { _, db, http, _ ->
             val state = runtimeState(db)
             val unit = "loaded-é-猫"
-            val guard = OversqliteWorkspace(db, config).contextGuard(state, unit)
+            val guard = OversqliteWorkspace(db, config).contextGuard(state, unit) + ":" + config.serviceId
             val values = listOf(unit, guard, "roots", 3L, 9_007_199_254_740_993L, 7L, -1L, "",
                 9L, 113L, 2L, 31L, "conflict", "schéma", "表", "{\"id\":\"🙂\"}", 1234L, 1L)
             db.withPreparedStatement("INSERT INTO _sync_apply_plan(singleton_key,${columns.joinToString(",")}) VALUES(1,${columns.joinToString(",") { "?" }})") { st ->
@@ -53,7 +54,7 @@ internal class ApplyPlanPersistenceTest : SurvivorTestSupport() {
             assertEquals(values.toMutableList().also { it[7] = "é🙂" }, readPlan(db))
 
             val nextUnit = "changed-context"
-            val nextGuard = OversqliteWorkspace(db, config).contextGuard(state, nextUnit)
+            val nextGuard = OversqliteWorkspace(db, config).contextGuard(state, nextUnit) + ":" + config.serviceId
             checkpoint(db, http, state, nextUnit, "pull", exhaustBudget = false)
             assertEquals(listOf(nextUnit, nextGuard, "roots", 0L, 0L, 0L, 0L, null,
                 0L, 0L, 0L, 0L, "pull", "", "", "", 0L, 0L), readPlan(db),

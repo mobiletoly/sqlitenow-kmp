@@ -12,6 +12,9 @@ import kotlin.test.assertEquals
 internal class SnapshotStatementObservation {
     val preparedSql = mutableListOf<String>()
     val closedSql = mutableListOf<String>()
+    val cachePreparedSql = mutableListOf<List<String>>()
+    private var preparedOffset = 0
+    private var closedOffset = 0
     var logicalSteps: Map<String, Long> = emptyMap()
         private set
     var physicalPrepares: Map<String, Long> = emptyMap()
@@ -43,7 +46,15 @@ internal class SnapshotStatementObservation {
             statementCacheOperations = operations,
             afterApplyPageLoaded = { if (firstPage == 0L) firstPage = System.nanoTime() },
             afterAppliedRow = { rows++; lastRow = System.nanoTime() },
-            afterStatementCacheClosed = { closed = System.nanoTime() },
+            afterStatementCacheClosed = {
+                val prepared=preparedSql.drop(preparedOffset)
+                assertEquals(prepared.asReversed(),closedSql.drop(closedOffset),"reverse disposal within each transaction-owned cache")
+                assertEquals(prepared.distinct().size,prepared.size,"one handle per SQL shape within its actual owner")
+                check(handles.isEmpty()) { "writer cache left handles live" }
+                cachePreparedSql += prepared
+                preparedOffset=preparedSql.size;closedOffset=closedSql.size
+                closed = System.nanoTime()
+            },
         ))
         var outcome = "complete"
         try {
@@ -83,7 +94,9 @@ internal class SnapshotStatementObservation {
                     } })
                 }
             })
-            assertEquals(preparedSql.asReversed(), closedSql, "reverse transaction-owned handle disposal")
+            assertEquals(preparedSql.size,closedSql.size,"all operation handles close exactly once")
+            assertEquals(preparedSql.size,preparedOffset,"every observed handle belongs to a checked writer cache")
+            assertEquals(closedSql.size,closedOffset)
             check(handles.isEmpty()) { "transaction left cached handles live" }
         }
     }

@@ -25,7 +25,10 @@ import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 import kotlinx.coroutines.async
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.*
+import kotlinx.serialization.decodeFromString
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.test.runTest
 
@@ -218,7 +221,24 @@ internal class MigratedOversqliteStateTest : PlatformCrossTargetTestSupport() {
                         val requestHash =
                             scalarText(worker, "SELECT canonical_request_hash FROM _sync_outbox_bundle")
                         assertEquals(FROZEN_WORKER_REQUEST_HASH, requestHash)
-                        client.pushPending().getOrThrow()
+                        assertEquals(dev.goquick.sqlitenow.oversqlite.PushOutcome.NO_CHANGE, client.pushPending().getOrThrow().outcome)
+                        assertEquals(1L, scalarLong(worker, "SELECT count(*) FROM _sync_dirty_rows"), "cancelled F requeues the original intent")
+                        assertEquals("none", scalarText(worker, "SELECT state FROM _sync_outbox_bundle"))
+                        assertEquals(0L, scalarLong(worker, "SELECT count(*) FROM _sync_upload_journal"))
+                        assertEquals(1L, scalarLong(worker, "SELECT initialization_reconnect_required FROM _sync_attachment_state"))
+                        val requeuedState = captureMigrationBoundary(worker, expectedUserVersion = 6)
+                        val requestsBeforeReconnectGuard = server.requestCounts.toMap()
+                        assertTrue(client.pushPending().exceptionOrNull() is dev.goquick.sqlitenow.oversqlite.ConnectRequiredException)
+                        assertEquals(requestsBeforeReconnectGuard, server.requestCounts, "reconnect guard must refuse before network")
+                        assertEquals(requeuedState, captureMigrationBoundary(worker, expectedUserVersion = 6), "reconnect guard preserves the full requeued state")
+                        client.attach("worker-user").getOrThrow()
+                        assertEquals(0L, scalarLong(worker, "SELECT initialization_reconnect_required FROM _sync_attachment_state"))
+                        assertEquals(sourceId, scalarText(worker, "SELECT current_source_id FROM _sync_attachment_state"))
+                        val reconnectedState = captureMigrationBoundary(worker, expectedUserVersion = 6)
+                        assertEquals(requeuedState.dirtyRows, reconnectedState.dirtyRows, "reconnect retains the original requeued intent")
+                        assertEquals(requeuedState.rowState, reconnectedState.rowState)
+                        assertEquals(requeuedState.sourceState, reconnectedState.sourceState)
+                        assertEquals(dev.goquick.sqlitenow.oversqlite.PushOutcome.COMMITTED, client.pushPending().getOrThrow().outcome)
                         client.pullToStable().getOrThrow()
                         client.sync().getOrThrow()
                         assertEquals(sourceId, scalarText(worker, "SELECT current_source_id " +
@@ -231,7 +251,7 @@ internal class MigratedOversqliteStateTest : PlatformCrossTargetTestSupport() {
                             sourceId = sourceId,
                             expectedUserVersion = 6,
                             expectedLastBundleSeq = 1,
-                            expectedNextSourceBundleId = 2,
+                            expectedNextSourceBundleId = 3,
                             expectedUserId = "local-1",
                             expectedUserName = "Ada",
                             expectedRowVersion = 1,
@@ -375,7 +395,24 @@ internal class MigratedOversqliteStateTest : PlatformCrossTargetTestSupport() {
             )
             server.rejectPush = false
             resumedClient.attach("worker-user").getOrThrow()
-            resumedClient.pushPending().getOrThrow()
+            assertEquals(dev.goquick.sqlitenow.oversqlite.PushOutcome.NO_CHANGE, resumedClient.pushPending().getOrThrow().outcome)
+            assertEquals(1L, scalarLong(worker, "SELECT count(*) FROM _sync_dirty_rows"), "cancelled F requeues the original intent")
+            assertEquals("none", scalarText(worker, "SELECT state FROM _sync_outbox_bundle"))
+            assertEquals(0L, scalarLong(worker, "SELECT count(*) FROM _sync_upload_journal"))
+            assertEquals(1L, scalarLong(worker, "SELECT initialization_reconnect_required FROM _sync_attachment_state"))
+            val requeuedState = captureMigrationBoundary(worker, expectedUserVersion = 6)
+            val requestsBeforeReconnectGuard = server.requestCounts.toMap()
+            assertTrue(resumedClient.pushPending().exceptionOrNull() is dev.goquick.sqlitenow.oversqlite.ConnectRequiredException)
+            assertEquals(requestsBeforeReconnectGuard, server.requestCounts, "reconnect guard must refuse before network")
+            assertEquals(requeuedState, captureMigrationBoundary(worker, expectedUserVersion = 6), "reconnect guard preserves the full requeued state")
+            resumedClient.attach("worker-user").getOrThrow()
+            assertEquals(0L, scalarLong(worker, "SELECT initialization_reconnect_required FROM _sync_attachment_state"))
+            assertEquals(sourceId, scalarText(worker, "SELECT current_source_id FROM _sync_attachment_state"))
+            val reconnectedState = captureMigrationBoundary(worker, expectedUserVersion = 6)
+            assertEquals(requeuedState.dirtyRows, reconnectedState.dirtyRows, "reconnect retains the original requeued intent")
+            assertEquals(requeuedState.rowState, reconnectedState.rowState)
+            assertEquals(requeuedState.sourceState, reconnectedState.sourceState)
+            assertEquals(dev.goquick.sqlitenow.oversqlite.PushOutcome.COMMITTED, resumedClient.pushPending().getOrThrow().outcome)
             assertEquals("none", scalarText(worker, "SELECT state FROM _sync_outbox_bundle"))
             assertEquals(0L, scalarLong(worker, "SELECT COUNT(*) FROM _sync_outbox_rows"))
             assertEquals(0L, scalarLong(worker, "SELECT COUNT(*) FROM _sync_dirty_rows"))
@@ -385,7 +422,7 @@ internal class MigratedOversqliteStateTest : PlatformCrossTargetTestSupport() {
                 sourceId = sourceId,
                 expectedUserVersion = 6,
                 expectedLastBundleSeq = 1,
-                expectedNextSourceBundleId = 2,
+                expectedNextSourceBundleId = 3,
                 expectedUserId = "local-1",
                 expectedUserName = "Ada",
                 expectedRowVersion = 1,
@@ -441,31 +478,20 @@ internal class MigratedOversqliteStateTest : PlatformCrossTargetTestSupport() {
             connection = admitted
             val preImportState = try {
                 legacyClient.attach("worker-user").getOrThrow()
-                // Seed a post-admission interrupted initial replacement before binding publication.
+                // Seed the same version7 canonical stage through the actual sealed
+                // protocol before modelling a worker death with persisted apply ownership.
+                repeat(6) { server.addRemoteBundleForTest(emptyList()) }
+                assertEquals(7L, server.addRemoteBundleForTest(listOf(interruptedSnapshotRow())))
                 admitted.execSQL("UPDATE _sync_attachment_state SET binding_state='anonymous', attached_user_id='', schema_name='' WHERE singleton_key=1")
-                admitted.execSQL(
-                    """
-                    INSERT INTO _sync_snapshot_stage(
-                      snapshot_id, row_ordinal, schema_name, table_name, key_json, row_version, payload
-                    ) VALUES (
-                      'worker-interrupted', 1, 'main', 'users', '{"id":"remote-1"}', 7,
-                      '{"id":"remote-1","name":"Remote Ada"}'
-                    )
-                    """.trimIndent(),
+                legacyClient.setSnapshotApplyFaultInjectorForTest(
+                    dev.goquick.sqlitenow.oversqlite.SnapshotApplyFaultInjector(afterAppliedRow = {
+                        throw kotlinx.coroutines.CancellationException("seed sealed interrupted apply")
+                    }),
                 )
-                admitted.execSQL(
-                    """
-                    UPDATE _sync_operation_state
-                    SET kind = 'remote_replace',
-                        target_user_id = 'worker-user',
-                        staged_snapshot_id = 'worker-interrupted',
-                        snapshot_bundle_seq = 7,
-                        snapshot_row_count = 1,
-                        snapshot_byte_count = 39,
-                        snapshot_stage_complete = 1
-                    WHERE singleton_key = 1
-                    """.trimIndent(),
-                )
+                kotlin.test.assertFailsWith<kotlinx.coroutines.CancellationException> {
+                    legacyClient.attach("worker-user")
+                }
+                legacyClient.setSnapshotApplyFaultInjectorForTest(null)
                 admitted.execSQL("UPDATE _sync_apply_state SET apply_mode = 1 WHERE singleton_key = 1")
                 assertInterruptedMigrationBoundary(
                     db = admitted,
@@ -507,10 +533,24 @@ internal class MigratedOversqliteStateTest : PlatformCrossTargetTestSupport() {
             worker.close()
             connection = null
             coordinatedDatabase = importedDatabase(dbName, workerConfig)
-            val resumedHttp = server.newHttpClient()
+            val resumedSnapshotRoutes = mutableListOf<Pair<String, String>>()
+            val resumedBaseHttp = server.newHttpClient()
+            val resumedHttp = resumedBaseHttp.config {
+                install("MigratedRetainedSnapshotRouteObserver") {
+                    sendPipeline.intercept(io.ktor.client.request.HttpSendPipeline.Monitoring) {
+                        val path = context.url.build().encodedPath
+                        if (path.startsWith("/sync/snapshot-sessions")) {
+                            resumedSnapshotRoutes += context.method.value to path
+                        }
+                        proceed()
+                    }
+                }
+            }
+            resumedBaseHttp.close()
             val resumedClient = newClient(coordinatedDatabase!!, resumedHttp)
             worker = coordinatedDatabase!!.connection()
             connection = worker
+            assertTrue(resumedSnapshotRoutes.isEmpty(), "opening retains the existing sealed stage without new snapshot traffic")
             var cancelRecoveredApply = true
             resumedClient.setSnapshotApplyFaultInjectorForTest(
                 dev.goquick.sqlitenow.oversqlite.SnapshotApplyFaultInjector(
@@ -525,7 +565,7 @@ internal class MigratedOversqliteStateTest : PlatformCrossTargetTestSupport() {
                 ),
             )
             kotlin.test.assertFailsWith<kotlinx.coroutines.CancellationException> {
-                resumedClient.attach("worker-user")
+                withContext(Dispatchers.Default) { resumedClient.attach("worker-user") }
             }
             assertEquals(1L, scalarLong(worker, "SELECT COUNT(*) FROM _sync_snapshot_stage"))
             assertEquals(0L, scalarLong(worker, "SELECT COUNT(*) FROM users"))
@@ -536,8 +576,10 @@ internal class MigratedOversqliteStateTest : PlatformCrossTargetTestSupport() {
                 "cancellation may reset apply ownership but must preserve the canonical staged checkpoint",
             )
             resumedClient.setSnapshotApplyFaultInjectorForTest(null)
-            resumedClient.attach("worker-user").getOrThrow()
+            withContext(Dispatchers.Default) { resumedClient.attach("worker-user").getOrThrow() }
             assertEquals("Remote Ada", scalarText(worker, "SELECT name FROM users WHERE id = 'remote-1'"))
+            assertEquals(listOf("DELETE" to "/sync/snapshot-sessions/snapshot-1"), resumedSnapshotRoutes,
+                "only the original completed session retires; no additional create or download request")
             assertEquals(0L, scalarLong(worker, "SELECT COUNT(*) FROM _sync_snapshot_stage"))
             assertEquals("none", scalarText(worker, "SELECT kind FROM _sync_operation_state"))
             assertEquals(0L, scalarLong(worker, "SELECT apply_mode FROM _sync_apply_state"))
@@ -594,7 +636,7 @@ internal class MigratedOversqliteStateTest : PlatformCrossTargetTestSupport() {
             assertEquals(persistCallsAfterLegacy, retained.persistCalls)
             assertEquals(0, retained.clearCalls)
             println(
-                "worker_migrated_interrupted_apply source=custom snapshot=worker-interrupted " +
+                "worker_migrated_interrupted_apply source=custom snapshot=snapshot-1 " +
                     "bundleSeq=7 rowOrdinal=1 bytes=${retainedBefore.size} sha256=$retainedHash " +
                     "sourceId=$sourceId retained=true",
             )
@@ -626,6 +668,7 @@ internal class MigratedOversqliteStateTest : PlatformCrossTargetTestSupport() {
         assertEquals(listOf("[1,0]"), state.applyState)
         assertNeverPublishedMigrationBaseline(state, attached = false)
         assertEquals(1, state.dirtyRows.size)
+        assertEquals(emptyList(), state.uploadJournal)
         assertEquals(emptyList(), state.snapshotStage)
         assertEquals(1, state.sourceState.size)
         assertEquals(
@@ -678,7 +721,8 @@ internal class MigratedOversqliteStateTest : PlatformCrossTargetTestSupport() {
         assertEquals("Ada", scalarText(db, "SELECT name FROM users WHERE id = 'local-1'"))
         assertEquals(listOf("[1,0]"), state.applyState)
         assertNeverPublishedMigrationBaseline(state, attached = true)
-        assertEquals(emptyList(), state.dirtyRows)
+        assertEquals(emptyList(), state.dirtyRows, "prepared F owns the original capture in outbox/journal")
+        assertEquals(1, state.uploadJournal.size)
         assertEquals(emptyList(), state.snapshotStage)
         assertEquals(1, state.sourceState.size)
         assertEquals(
@@ -766,19 +810,51 @@ internal class MigratedOversqliteStateTest : PlatformCrossTargetTestSupport() {
         assertWorkerTimestamp(row[9].jsonPrimitive.content, "_sync_row_state.updated_at")
     }
 
+    private fun interruptedSnapshotRow() = dev.goquick.sqlitenow.oversqlite.BundleRow(
+        "main", "users", mapOf("id" to "remote-1"), "INSERT", 7,
+        buildJsonObject { put("id", "remote-1"); put("name", "Remote Ada") },
+    )
+
+    private fun interruptedSnapshotGeneration() = dev.goquick.sqlitenow.oversqlite.decodeStoredGeneration(
+        testGenerationResponse(testRegisteredTableSpecs("users", "posts"))
+            .getValue("schema_generation").toString(), 1,
+    )
+
+    private fun interruptedSnapshotBytes() = dev.goquick.sqlitenow.oversqlite.OversqliteCompactCodec
+        .snapshotLogicalByteCount(interruptedSnapshotGeneration(), listOf(interruptedSnapshotRow()))
+
     private suspend fun assertInterruptedMigrationBoundary(
         db: SafeSQLiteConnection,
         sourceId: String,
         expectedApplyMode: Int,
     ): StatementReuseontrolStateSnapshot {
         val state = captureMigrationBoundary(db, expectedUserVersion = 6)
+        val retainedOperation = dev.goquick.sqlitenow.oversqlite.OversqliteOperationStateStore(db).loadState()
+        val seal = testJson.decodeFromString(dev.goquick.sqlitenow.oversqlite.RetainedSnapshotSeal.serializer(), retainedOperation.snapshotTransfer)
+        val generation = interruptedSnapshotGeneration()
+        val row = interruptedSnapshotRow()
+        val hash = dev.goquick.sqlitenow.oversqlite.SnapshotHashWriter(sourceId, generation, "snapshot-1", 7, seal.session.recovery)
+        hash.add(generation.tables.indexOfFirst { it.table == "users" }, JsonArray(listOf(JsonPrimitive("remote-1"))), 7, row.payload!!.jsonObject)
+        assertEquals(sourceId, seal.source)
+        assertEquals("platform-mock", seal.authority)
+        assertEquals("snapshot-1", seal.session.snapshotId)
+        assertEquals(7L, seal.session.snapshotBundleSeq)
+        assertEquals(1L, seal.session.rowCount)
+        assertEquals(interruptedSnapshotBytes(), seal.session.logicalByteCount)
+        assertEquals(hash.finish(1, interruptedSnapshotBytes()), seal.session.snapshotHash)
+        assertEquals(1L, retainedOperation.snapshotStagedRowCount)
+        assertEquals(interruptedSnapshotBytes(), retainedOperation.snapshotStagedByteCount)
+        assertTrue(retainedOperation.snapshotStageComplete)
+        assertTrue(Regex("[0-9a-f]{64}").matches(retainedOperation.snapshotStageGuard))
+        assertEquals(emptyList(), state.uploadJournal)
+
         assertEquals(0L, scalarLong(db, "SELECT COUNT(*) FROM users"))
         assertEquals(listOf("[1,$expectedApplyMode]"), state.applyState)
         assertEquals(emptyList(), state.rowState)
         assertEquals(emptyList(), state.dirtyRows)
         assertEquals(
             listOf(
-                """["worker-interrupted",1,"main","users","{\"id\":\"remote-1\"}",7,""" +
+                """["snapshot-1",1,"main","users","{\"id\":\"remote-1\"}",7,""" +
                     """"{\"id\":\"remote-1\",\"name\":\"Remote Ada\"}"]""",
             ),
             state.snapshotStage,
@@ -790,7 +866,7 @@ internal class MigratedOversqliteStateTest : PlatformCrossTargetTestSupport() {
         )
         assertEquals(
             listOf(
-                """[1,"remote_replace","worker-user","worker-interrupted",7,1,39,1,"",""]""",
+                """[1,"remote_replace","worker-user","snapshot-1",7,1,${interruptedSnapshotBytes()},1,"",""]""",
             ),
             state.operationState,
         )
@@ -833,6 +909,7 @@ internal class MigratedOversqliteStateTest : PlatformCrossTargetTestSupport() {
         assertEquals(listOf("[1,0]"), state.applyState)
         assertEquals(if (expectedRowVersion == null) 0 else 1, state.rowState.size)
         assertEquals(emptyList(), state.dirtyRows)
+        assertEquals(emptyList(), state.uploadJournal)
         assertEquals(emptyList(), state.snapshotStage)
         assertEquals(1, state.sourceState.size)
         assertEquals(
@@ -935,7 +1012,7 @@ internal class MigratedOversqliteStateTest : PlatformCrossTargetTestSupport() {
                     "SELECT name, type FROM sqlite_schema WHERE name IN ('posts', 'users') ORDER BY name)",
             ),
         )
-        assertEquals(21L, scalarLong(
+        assertEquals(22L, scalarLong(
             db,
             "SELECT COUNT(*) FROM sqlite_schema WHERE type = 'table' AND name LIKE '_sync_%'",
         ))
@@ -1016,40 +1093,37 @@ private class RecordingSnapshotPersistence : SqlitePersistence {
 internal suspend fun assertStatementReuseontrolTableSchemasAndIndexes(db: SafeSQLiteConnection) {
     val expectedColumns = mapOf(
         "_sync_admitted_contracts" to listOf(
-            "generation_id|INTEGER|0|1", "fingerprint|TEXT|1|0", "descriptor|TEXT|1|0",
-            "descriptor_hash|TEXT|1|0",
+            "generation_id|INTEGER|0|1", "fingerprint|TEXT|1|0", "descriptor|TEXT|1|0", "descriptor_hash|TEXT|1|0",
+            "admission|TEXT|1|0", "admission_hash|TEXT|1|0",
         ),
         "_sync_apply_edges" to listOf(
             "ordinal|INTEGER|0|1", "parent_table|TEXT|1|0", "parent_pk|TEXT|1|0", "child_table|TEXT|1|0",
-            "child_pk|TEXT|1|0", "bytes|INTEGER|1|0",
+            "child_pk|TEXT|1|0", "bytes|INTEGER|1|0", "edge_kind|TEXT|1|0",
         ),
         "_sync_apply_plan" to listOf(
             "singleton_key|INTEGER|0|1", "unit|TEXT|1|0", "guard|TEXT|1|0", "phase|TEXT|1|0",
-            "root_cursor|INTEGER|1|0", "visit_cursor|INTEGER|1|0", "table_cursor|INTEGER|1|0",
-            "fk_cursor|INTEGER|1|0", "row_cursor|TEXT|0|0", "entries|INTEGER|1|0", "bytes|INTEGER|1|0",
-            "edge_entries|INTEGER|1|0", "edge_bytes|INTEGER|1|0", "operation_kind|TEXT|1|0",
-            "preserve_schema|TEXT|1|0", "preserve_table|TEXT|1|0", "preserve_key|TEXT|1|0",
-            "atomic_work|INTEGER|1|0", "preservation_complete|INTEGER|1|0",
+            "root_cursor|INTEGER|1|0", "visit_cursor|INTEGER|1|0", "table_cursor|INTEGER|1|0", "fk_cursor|INTEGER|1|0",
+            "row_cursor|TEXT|0|0", "entries|INTEGER|1|0", "bytes|INTEGER|1|0", "edge_entries|INTEGER|1|0",
+            "edge_bytes|INTEGER|1|0", "operation_kind|TEXT|1|0", "source_snapshot_id|TEXT|1|0", "preserve_schema|TEXT|1|0",
+            "preserve_table|TEXT|1|0", "preserve_key|TEXT|1|0", "atomic_work|INTEGER|1|0", "preservation_complete|INTEGER|1|0",
         ),
         "_sync_apply_rows" to listOf(
             "ordinal|INTEGER|0|1", "table_name|TEXT|1|0", "local_pk|TEXT|1|0", "payload|TEXT|0|0",
             "wire|INTEGER|1|0", "pending|INTEGER|1|0", "bytes|INTEGER|1|0", "role|TEXT|1|0",
-            "owner_revision|INTEGER|1|0",
+            "owner_revision|INTEGER|1|0", "saved_rowid|INTEGER|0|0", "source_ordinal|INTEGER|0|0",
         ),
         "_sync_apply_state" to listOf(
             "singleton_key|INTEGER|1|1", "apply_mode|INTEGER|1|0",
         ),
         "_sync_attachment_state" to listOf(
-            "singleton_key|INTEGER|1|1", "attachment_epoch|INTEGER|1|0", "current_source_id|TEXT|1|0",
-            "binding_state|TEXT|1|0", "attached_user_id|TEXT|1|0", "schema_name|TEXT|1|0",
-            "last_bundle_seq_seen|INTEGER|1|0", "rebuild_required|INTEGER|1|0",
-            "pending_initialization_id|TEXT|1|0",
+            "singleton_key|INTEGER|1|1", "attachment_epoch|INTEGER|1|0", "current_source_id|TEXT|1|0", "binding_state|TEXT|1|0",
+            "attached_user_id|TEXT|1|0", "schema_name|TEXT|1|0", "last_bundle_seq_seen|INTEGER|1|0", "rebuild_required|INTEGER|1|0",
+            "pending_initialization_id|TEXT|1|0", "initialization_reconnect_required|INTEGER|1|0",
         ),
         "_sync_conflict_state" to listOf(
-            "singleton_key|INTEGER|1|1", "dirty_revision|INTEGER|1|0", "baseline_revision|INTEGER|1|0",
-            "decision_state|TEXT|1|0", "source_id|TEXT|1|0", "source_bundle_id|INTEGER|1|0",
-            "canonical_request_hash|TEXT|1|0", "generation_id|INTEGER|1|0", "generation_fingerprint|TEXT|1|0",
-            "conflict_json|TEXT|1|0", "local_payload_json|TEXT|0|0",
+            "singleton_key|INTEGER|1|1", "dirty_revision|INTEGER|1|0", "baseline_revision|INTEGER|1|0", "rejection_code|TEXT|1|0",
+            "decision_state|TEXT|1|0", "source_id|TEXT|1|0", "source_bundle_id|INTEGER|1|0", "canonical_request_hash|TEXT|1|0",
+            "generation_id|INTEGER|1|0", "generation_fingerprint|TEXT|1|0", "conflict_json|TEXT|1|0", "local_payload_json|TEXT|0|0",
         ),
         "_sync_contract_identity" to listOf(
             "singleton_key|INTEGER|0|1", "database_id|TEXT|1|0", "service_id|TEXT|1|0",
@@ -1083,12 +1157,12 @@ internal suspend fun assertStatementReuseontrolTableSchemasAndIndexes(db: SafeSQ
             "old_source_recovery_receipt|TEXT|1|0", "integrity_hash|TEXT|1|0",
         ),
         "_sync_operation_state" to listOf(
-            "singleton_key|INTEGER|1|1", "kind|TEXT|1|0", "target_user_id|TEXT|1|0",
-            "staged_snapshot_id|TEXT|1|0", "snapshot_bundle_seq|INTEGER|1|0", "snapshot_row_count|INTEGER|1|0",
-            "snapshot_byte_count|INTEGER|1|0", "snapshot_stage_complete|INTEGER|1|0", "reason|TEXT|1|0",
-            "replacement_source_id|TEXT|1|0", "workspace_context|TEXT|1|0", "reserved_entries|INTEGER|1|0",
-            "reserved_bytes|INTEGER|1|0", "snapshot_stage_entries|INTEGER|1|0",
-            "snapshot_stage_bytes|INTEGER|1|0", "snapshot_cleanup_ordinal|INTEGER|1|0",
+            "singleton_key|INTEGER|1|1", "kind|TEXT|1|0", "target_user_id|TEXT|1|0", "staged_snapshot_id|TEXT|1|0",
+            "snapshot_bundle_seq|INTEGER|1|0", "snapshot_row_count|INTEGER|1|0", "snapshot_byte_count|INTEGER|1|0", "snapshot_stage_complete|INTEGER|1|0",
+            "snapshot_staged_row_count|INTEGER|1|0", "snapshot_staged_byte_count|INTEGER|1|0", "snapshot_stage_guard|TEXT|1|0", "snapshot_transfer|TEXT|1|0",
+            "recovery_state|TEXT|1|0", "reason|TEXT|1|0", "replacement_source_id|TEXT|1|0", "workspace_context|TEXT|1|0",
+            "reserved_entries|INTEGER|1|0", "reserved_bytes|INTEGER|1|0", "snapshot_stage_entries|INTEGER|1|0", "snapshot_stage_bytes|INTEGER|1|0",
+            "snapshot_cleanup_ordinal|INTEGER|1|0",
         ),
         "_sync_outbox_bundle" to listOf(
             "singleton_key|INTEGER|1|1", "canonical_json_contract|TEXT|1|0", "state|TEXT|1|0",
@@ -1138,7 +1212,13 @@ internal suspend fun assertStatementReuseontrolTableSchemasAndIndexes(db: SafeSQ
             "source_id|TEXT|1|1", "next_source_bundle_id|INTEGER|1|0", "replaced_by_source_id|TEXT|1|0",
             "created_at|TEXT|1|0",
         ),
+        "_sync_upload_journal" to listOf(
+            "singleton_key|INTEGER|1|1", "binding|TEXT|1|0", "request_body|BLOB|1|0", "request_digest|TEXT|1|0",
+            "outcome_body|BLOB|1|0", "outcome_hash|TEXT|1|0", "phase|TEXT|1|0",
+        ),
     )
+    assertEquals(expectedColumns.keys.sorted(), readStatementReuseontrolRows(db,
+        "SELECT name FROM sqlite_schema WHERE type='table' AND name LIKE '_sync_%' ORDER BY name"))
     expectedColumns.forEach { (table, expected) ->
         val actual = mutableListOf<String>()
         db.prepare("PRAGMA table_info('$table')").use { statement ->
@@ -1152,6 +1232,7 @@ internal suspend fun assertStatementReuseontrolTableSchemasAndIndexes(db: SafeSQ
     }
 
     val expectedIndexes = mapOf(
+        "_sync_upload_journal" to emptyList(),
         "_sync_admitted_contracts" to emptyList(),
         "_sync_apply_edges" to listOf(
             "sqlite_autoindex__sync_apply_edges_1|1|u|0",
@@ -1216,6 +1297,9 @@ internal suspend fun assertStatementReuseontrolTableSchemasAndIndexes(db: SafeSQ
 }
 
 private data class StatementReuseontrolStateSnapshot(
+    val retainedPrimary: Map<String, List<String>>,
+    val uploadJournal: List<String>,
+    val retainedOperation: List<String>,
     val contractIdentity: List<String>,
     val admittedContracts: List<String>,
     val applyState: List<String>,
@@ -1234,6 +1318,12 @@ private data class StatementReuseontrolStateSnapshot(
 private suspend fun captureStatementReuseontrolState(
     db: SafeSQLiteConnection,
 ): StatementReuseontrolStateSnapshot = StatementReuseontrolStateSnapshot(
+    retainedPrimary = databaseStateVector(db, emptyList(), ignoreDerivedCharges = true, includeDurableStages = false)
+        .filterKeys { it != "_sync_opening_state" && it != "_sync_operation_state" },
+    uploadJournal = readStatementReuseontrolRows(db,
+        "SELECT json_array(singleton_key,binding,lower(hex(request_body)),request_digest,lower(hex(outcome_body)),outcome_hash,phase) FROM _sync_upload_journal ORDER BY singleton_key"),
+    retainedOperation = readStatementReuseontrolRows(db,
+        "SELECT json_array(singleton_key,kind,target_user_id,staged_snapshot_id,snapshot_bundle_seq,snapshot_row_count,snapshot_byte_count,snapshot_stage_complete,snapshot_staged_row_count,snapshot_staged_byte_count,snapshot_stage_guard,snapshot_transfer,recovery_state,reason,replacement_source_id,workspace_context,reserved_entries,reserved_bytes,snapshot_stage_entries,snapshot_stage_bytes,snapshot_cleanup_ordinal) FROM _sync_operation_state ORDER BY singleton_key"),
     contractIdentity = readStatementReuseontrolRows(
         db, "SELECT json_array(singleton_key,database_id,service_id,generation_id,local_version,physical_shape,fingerprint) FROM _sync_contract_identity ORDER BY singleton_key",
     ),

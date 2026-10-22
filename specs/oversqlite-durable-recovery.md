@@ -1,0 +1,57 @@
+# Oversqlite durable recovery — Kotlin/Swift binding
+
+Status: C00–C05 are owner-accepted, committed paired prerequisites. C06 was explicitly owner-accepted and its sealed scoped packet remains historical. C07 implementation, all twelve mandatory initial-protocol qualification gates, independent review and evidence closure are complete under the exact owner-approved C07 execution amendments. See the [current C07 handoff](../../go-oversync/.artifacts/durable-recovery-final-20261024/handoff.md) for current source, commands, actual-body/skip/worker limits, retained failures and cleanup. C07 owner acceptance remains pending. Changes remain unstaged and uncommitted; staging, commit, push, publication, deployment and real-data reset remain unauthorized. Qualification does not imply release or deployment approval.
+
+The canonical contract is [go-oversync r0001](../../go-oversync/specs/r0001-oversqlite-durable-recovery.md). Read it in full together with its [checklist](../../go-oversync/specs/r0001-oversqlite-durable-recovery-checklist.md), [validation contract](../../go-oversync/specs/r0001-oversqlite-durable-recovery-validation.md), [active OpenAPI](../../go-oversync/swagger/two_way_sync.yaml) and [handoff](../../go-oversync/specs/r0001-oversqlite-durable-recovery-handoff.md). This companion binds Kotlin to that single normative state machine; it is not a second independently editable algorithm.
+
+For r0001 implementation, the canonical document supersedes conflicting old lifecycle/envelope, retry-only blocker and prepared-source-retargeting behavior in earlier paired specifications. C01 activated the sole-v1 contract; corpus and authority pins track that active contract, including the accepted distinct-source-owner amendment. Existing historical acceptance statuses and missing-qualification records remain intact.
+
+Follow three sequential milestones: A exact upload outcomes/durable settlement/ack; B safe explicit snapshots; C clean automatic recovery/final qualification. Close the scoped exit for each before starting the next. No intermediate exit is release acceptance.
+
+Required Kotlin/Swift obligations:
+
+1. Require sole wire `v1`, including header and the canonical section 3.1 exact hash-only decimal-string projection for protocol integers in outcome/snapshot hashes; wire integers and existing request/bundle hashes remain unchanged. No legacy fallback, old-format reader or migration. Format mismatch leaves the database intact.
+2. Persist original bases/existing capture guards, immutable F, full validated C and ack_pending on every supported SQLite driver. Preserve existing ordinary whole-row newer-edit semantics; add no column-merge or existence-epoch model.
+3. Implement committed/rejected/cancelled sequencing and resolve-or-cancel exactly. Never retarget pending work or infer noncommit from transport failure. Ack follows durable local disposition and precedes the next operation. Latest duplicate ack remains available under its original binding after ordinary generation retirement/rebinding. Unsafe committed settlement retains F/C and local state, without ack or snapshot.
+4. Apply snapshots as guarded deltas only with the strict clean gate: no dirty managed rows, frozen/outbox request, unsettled outcome/rejection or ack_pending. Check before network, during preparation and under the final writer. Preserve local-only values, clean descendants and observable identities; a new dirty write blocks installation and survives.
+5. Bind complete snapshots to source/generation/floor/hash; snapshots never settle uploads. Validate actual writer TEMP schema and dependency membership. No clear-and-reinsert, trigger suppression or disabled FK enforcement. Diagnose supported-subset restrictions early without expanding restrictions to unrelated local tables.
+6. Use exact typed payload/hash codecs and SQLite uniqueness semantics. JS/Wasm int64 values must not round. Cancellation joins the reached worker/native operation before reporting completion/rollback.
+7. Expose idiomatic mode (`automatic_clean`/`disabled`), bounded `RecoveryStatus` and `RetryRecovery`. No preview/decision/report API or storage. Swift delegates to the same owner; handles must not outlive their guarded attachment identity.
+8. Run all declared corpus families and actual affected Android/JVM/iOS/macOS/Node/browser/Wasm/live/Swift bodies. JVM evidence alone is not platform proof. Follow the [paired runbook](../docs-engineering/oversqlite-validation.md) and r0001 initial-protocol profile. Deferred section 10 work is excluded from all phases.
+
+Client-upload source IDs are distinct from trusted server-writer IDs within each scope (canonical section3.4, owner decision2026-10-22). Client Connect/push/resolve/ack never share a source with WithinSyncBundle or ScopeManager. Cross-owner use fails with the existing `source_generation_conflict` before effects; original-binding duplicate ack semantics are unchanged. This is server identity admission, not a new client journal, epoch, recovery API or snapshot permission.
+
+The three missing historical launcher inputs are resolved by the explicit authority mapping in r0001 validation section 2 during C00. Do not create empty replacement documents or bypass preflight. Change the owning launcher/test contract in a dedicated prerequisite batch before dependent runtime work. Until that batch passes, dependent live/Swift qualification remains blocked.
+
+Go and Kotlin implementation sessions may edit both repositories only within their declared paired phase allowlist. Preserve the pre-existing untracked `tools/__pycache__/check_change_scope.cpython-314.pyc` and all unrelated work. Capture complete baselines before each authorized new work scope and do not recapture to conceal drift.
+
+C03 implementation ownership and replacement tests are documented in [durable upload outcomes](../../go-oversync/docs/documentation/durable-upload-outcomes.md); exact scoped runtime proof, failures and remaining gates are in the [C03 handoff](../../go-oversync/.artifacts/durable-recovery-client-20261022/handoff.md). Existing outbox captures and final-state application owners are shared; the bounded singleton upload journal retains original F/C/ack and never delegates upload settlement to a snapshot.
+
+C04 shared installer ownership, supported blockers and replacement tests are documented in [safe snapshot installation](../../go-oversync/docs/documentation/snapshot-recovery.md). The [C04 handoff](../../go-oversync/.artifacts/durable-recovery-snapshot-20261023/handoff.md) binds exact runtime counts, review corrections, retained failures, scope and cleanup. C05 reuses these same owners for default clean automatic recovery, durable mode/status/retry and DT07. See [application-facing recovery boundaries](../../go-oversync/docs/documentation/snapshot-recovery.md) and the current C05 ledger; no C06/C07 acceptance is implied.
+
+## Approved future qualification mapping — 2026-10-26
+
+The owner-approved [paired validation section9](../../go-oversync/specs/r0001-oversqlite-durable-recovery-validation.md) and [manifest](../tools/qualification/profiles/oversqlite-full.json) govern explicitly bound future full-profile candidates. They preserve direct/coordinated/generated, platform/live, ordinary/heavy, worker/provider and instrumentation distinctions, all unchanged scale/duration/state/resource/byte assertions and separately reached Swift leaves. The approved schedule caps normal entries at300s and explicitly replaces the former50/100 load proof with1/5/10/25users and matching concurrency, retaining complete per-user assertions and no50/100 credit. Node excludes only the five unsupported durable browser-worker reopen methods; no body credit follows. Historical C05/C06/C07 evidence and failed roots retain their meanings. E41 authority/fast checks do not qualify E42 native or isolation behavior.
+
+### Approved E42 repair amendment — 2026-10-27
+
+The owner approved the [combined repair amendment](../../go-oversync/.artifacts/qualification-efficiency-e42-20261026T110553+0200/approved-repair-20261027T0338Z/owner-approval-and-plan.json). The current version2
+profile binds its [successor review packet](../../go-oversync/.artifacts/qualification-efficiency-e42-20261026T110553+0200/approved-repair-20261027T0338Z/reviewed-profile/proposal.md):508 declarations,
+499 normal entries and9 orchestration controllers. The original80-method local
+Node entry is partitioned into32/48 whole-class groups, retaining all methods and
+300-second wall /270-second work /30-second cleanup caps. Other entry membership,
+source workload sizes, body deadlines and the25-user maximum remain unchanged.
+
+The three identified stale fixture files use causal cascade-observation phases
+and exclusive-lifetime migration ownership. The worker client immediately owns
+its internal readiness rejection while preserving caller-visible errors and
+bounded cleanup; only its client asset size/hash changes in the manifest.
+These are approved fixture/ownership repairs, with no wire/schema/provider or
+SDK-default change. Original coverage columns remain frozen baseline evidence;
+additive current fixture bindings identify the four repaired method bodies.
+
+Historical receipts and predecessor seals retain their original identities.
+Reuse requires reviewed dependency nonreach; affected web Worker/Fetch/Browser
+isolation evidence must be refreshed after the client repair. Linuxx64/ARM64
+retain97selected methods each and remain owner-blocked. Approval does not grant
+native qualification, E43 acceptance, commit, push, release or deployment.

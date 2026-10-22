@@ -6,7 +6,7 @@ import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.plugins.defaultRequest
-import io.ktor.client.plugins.observer.ResponseObserver
+import io.ktor.client.statement.HttpReceivePipeline
 import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.post
@@ -56,7 +56,9 @@ internal open class RealServerSupport : CrossTargetSyncTestSupport() {
 		),
     )
 
-    protected suspend fun requireRealServerConfig(): RealServerConfig? {
+    protected suspend fun requireRealServerConfig(
+        profileUrlEnvironment: String = "OVERSQLITE_REAL_SERVER_SMOKE_BASE_URL",
+    ): RealServerConfig? {
         initializePlatformTestContext()
         if (!realServerFlagEnabled("OVERSQLITE_REALSERVER_TESTS")) {
             println(
@@ -64,20 +66,18 @@ internal open class RealServerSupport : CrossTargetSyncTestSupport() {
             )
             return null
         }
-        val baseUrl = realServerEnv("OVERSQLITE_REAL_SERVER_SMOKE_BASE_URL")
-            ?.trim()
-            .takeUnless { it.isNullOrEmpty() }
-            ?: "http://localhost:8080"
-        val availability = serverHealthAvailable(baseUrl)
-        if (!availability) {
-            println("Skipping realserver tests; server unavailable at $baseUrl")
-            return null
-        }
+        // Focused historical launchers supply the explicit generic URL; the
+        // complete live aggregate supplies separate rich/category/hard-two URLs.
+        val baseUrl = realServerEnv(profileUrlEnvironment)?.trim().takeUnless { it.isNullOrEmpty() }
+            ?: realServerEnv("OVERSQLITE_REAL_SERVER_SMOKE_BASE_URL")?.trim().takeUnless { it.isNullOrEmpty() }
+            ?: error("Enabled realserver tests require an explicit owned $profileUrlEnvironment")
+        check(serverHealthAvailable(baseUrl)) { "Enabled realserver authority is unavailable for $profileUrlEnvironment" }
         val status = fetchRealServerStatus(baseUrl)
         check(status.appName == expectedRealServerAppName) {
             "Realserver tests require app_name='$expectedRealServerAppName' at $baseUrl, " +
                 "but server reported '${status.appName}'. Start examples/nethttp_server instead."
         }
+        println("REALSERVER_AUTHORITY_READY $profileUrlEnvironment")
         return RealServerConfig(
             baseUrl = baseUrl,
             heavyMode = realServerFlagEnabled("OVERSQLITE_REALSERVER_HEAVY"),
@@ -100,8 +100,8 @@ internal open class RealServerSupport : CrossTargetSyncTestSupport() {
                     proceed()
                 }
             }
-            install(ResponseObserver) {
-                onResponse { response ->
+            install("RealServerAwaitedResponseObserver") {
+                receivePipeline.intercept(HttpReceivePipeline.Before) { response ->
                     afterResponse(response.call.request.url.encodedPath)
                 }
             }

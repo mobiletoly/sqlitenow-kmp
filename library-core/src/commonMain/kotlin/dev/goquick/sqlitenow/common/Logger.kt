@@ -92,4 +92,19 @@ private fun LogLevel.toSeverity(): Severity = when (this) {
 }
 
 internal val originalSqliteNowLogger: SqliteNowLogger = KermitSqliteNowLogger(minLevel = LogLevel.Info)
-var sqliteNowLogger: SqliteNowLogger = originalSqliteNowLogger
+/** Synchronous best-effort sink. A failed sink stays disabled until explicitly replaced. */
+private class FailureIsolatedLogger(private val sink: SqliteNowLogger) : SqliteNowLogger {
+    @kotlin.concurrent.Volatile
+    private var failed = false
+    private inline fun deliver(block: () -> Unit) {
+        if (failed) return
+        try { block() } catch (_: Throwable) { failed = true }
+    }
+    override fun e(throwable: Throwable?, message: () -> String) = deliver { sink.e(throwable, message) }
+    override fun w(throwable: Throwable?, message: () -> String) = deliver { sink.w(throwable, message) }
+    override fun i(throwable: Throwable?, message: () -> String) = deliver { sink.i(throwable, message) }
+    override fun d(throwable: Throwable?, message: () -> String) = deliver { sink.d(throwable, message) }
+}
+
+var sqliteNowLogger: SqliteNowLogger = FailureIsolatedLogger(originalSqliteNowLogger)
+    set(value) { field = if (value is FailureIsolatedLogger) value else FailureIsolatedLogger(value) }

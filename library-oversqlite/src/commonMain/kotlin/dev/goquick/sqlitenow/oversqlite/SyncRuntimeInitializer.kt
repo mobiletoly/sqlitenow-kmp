@@ -33,6 +33,7 @@ internal class SyncRuntimeInitializer(
         val physical = validateConfig(db)
         val identity = physical.contractIdentity(config, db)
         val generation = OversqliteContractStore(db).open(identity)
+        bindLocalBaselineContext(db)
         val validated = physical.withGeneration(generation)
         tableInfoCache.install(validated.tableInfoByName)
         managedTableStore.registerManagedTables(validated)
@@ -280,7 +281,7 @@ internal class SyncRuntimeInitializer(
             INSERT INTO _sync_dirty_rows(
               schema_name, table_name, key_json, op, base_row_version, payload, dirty_ordinal, updated_at,base_kind,base_payload,base_provenance
             )
-            VALUES(?, ?, ?, 'INSERT', 0, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ','now'),'absent',NULL,${baselineProvenanceSql("'never_published'","0","NULL")})
+            VALUES(?, ?, ?, 'INSERT', 0, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ','now'),'absent',NULL,${baselineProvenanceSql("'never_published'","NULL")})
         """.trimIndent()
         var nextDirtyOrdinal = startingDirtyOrdinal
         db.withExclusiveAccess {

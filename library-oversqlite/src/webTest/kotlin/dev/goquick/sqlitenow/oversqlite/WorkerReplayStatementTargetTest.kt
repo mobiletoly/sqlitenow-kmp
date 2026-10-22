@@ -144,7 +144,7 @@ internal class WorkerReplayStatementTargetTest {
             put("beforeShutdown", before); put("afterShutdown", after)
             put("durable", durable ?: JsonNull)
             put("failure", failure?.toString()?.let(::JsonPrimitive) ?: JsonNull)
-        }.toString().chunked(4000)
+        }.let(::encodeWorkerQualificationReceipt).chunked(4000)
         receipt.forEachIndexed { index, chunk -> println("REPLAY_TARGET_CHUNK ${index + 1}/${receipt.size} $chunk") }
 
         assertEquals("browser-worker", before.text("runtime"), "this prerequisite requires durable browser evidence")

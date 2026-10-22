@@ -47,7 +47,7 @@ internal class QueryCodeGenerator(
     private val columnLookup = generatorContext.columnLookup
     private val typeMapping = generatorContext.typeMapping
     private val parameterBinding =
-        ParameterBinding(columnLookup, typeMapping, dataStructCodeGenerator, debug)
+        ParameterBinding(columnLookup, typeMapping, dataStructCodeGenerator)
     private val adapterConfig = generatorContext.adapterConfig
     private val adapterParameterEmitter = AdapterParameterEmitter(generatorContext)
     private val queryFunctionScaffolder = QueryFunctionScaffolder(
@@ -64,7 +64,7 @@ internal class QueryCodeGenerator(
         typeMapping = typeMapping,
     )
     private val queryBindEmitter =
-        QueryBindEmitter(parameterBinding, queryFunctionScaffolder, debug)
+        QueryBindEmitter(parameterBinding, queryFunctionScaffolder)
     private val resultMappingHelper = ResultMappingHelper(
         generatorContext = generatorContext,
         selectFieldGenerator = selectFieldGenerator,
@@ -143,9 +143,7 @@ internal class QueryCodeGenerator(
 
         if (!debug) {
             fileBuilder.addImport("kotlinx.coroutines", "withContext")
-        } else {
-            fileBuilder.addImport("dev.goquick.sqlitenow.common", "sqliteNowLogger")
-            fileBuilder.addImport("dev.goquick.sqlitenow.core.util", "sqliteNowPreview")
+
         }
 
         val bindFunction: FunSpec = queryBindEmitter.generateBindStatementParamsFunction(namespace, statement)

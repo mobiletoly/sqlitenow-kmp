@@ -33,7 +33,7 @@ internal class R1WorkerSettlementCleanupTest : SurvivorTestSupport() {
     @Test fun ordinaryFailureThenTerminalBarrier() = case("reset-terminal", Body.SUCCESS)
     @Test fun ordinaryCleanupFailureWithDeniedRollbackRequiresOwnedShutdown() = case("reset-rollback-denied", Body.SUCCESS)
     @Test fun successfulCleanupSettlesCommittedEffects() = case("normal", Body.SUCCESS)
-    @Test fun pendingProgressWithSuccessfulCleanupCommitsThenThrows() = case("normal", Body.PENDING)
+    @Test fun pendingSignalWithSuccessfulCleanupCommitsThenReportsNoProgress() = case("normal", Body.PENDING)
     @Test fun closeAfterNativeFinalization() = case("close-after", Body.SUCCESS)
 
     private fun case(scenario: String, body: Body) = runTest(timeout = 180.seconds) {
@@ -59,6 +59,8 @@ internal class R1WorkerSettlementCleanupTest : SurvivorTestSupport() {
         var afterShutdown: JsonObject? = null
         var durable: JsonObject? = null
         var frozenVector: BaselineQualificationVector? = null
+        var originalRequest: String? = null
+        var retainedJournal: BaselineQualificationVector? = null
         val entered = CompletableDeferred<Unit>()
         var writerEntered = false
         var selectedPreparations = 0
@@ -74,6 +76,7 @@ internal class R1WorkerSettlementCleanupTest : SurvivorTestSupport() {
             server.beforePushResponse = { throw CancellationException("lost committed response") }
             assertFailsWith<CancellationException> { client.pushPending().getOrThrow() }
             val frozen = server.pushBodies.last()
+            originalRequest = frozen
             frozenVector = baselineQualificationVector(db, listOf("nodes"))
             assertEquals(0L, scalar(db, "SELECT count(*) FROM _sync_dirty_rows"), "freeze transfers the pending row into the outbox owner")
             client.setSnapshotApplyFaultInjectorForTest(SnapshotApplyFaultInjector(
@@ -119,14 +122,18 @@ internal class R1WorkerSettlementCleanupTest : SurvivorTestSupport() {
             } else invoke()
             assertEquals(1, selectedPreparations, "one actual cached workspace handle in this settlement transaction")
             assertTrue(selectedReads > 0)
-            assertEquals(frozen, server.pushBodies.last(), "exact frozen committed replay request")
-            assertEquals(3, server.pushRequestCount, "seed, committed loss, replay")
+            assertEquals(frozen, server.pushBodies.last(), "no successor push while the original operation is unresolved")
+            assertEquals(2, server.pushRequestCount, "seed and committed loss; resolve replaces a resend")
+            assertWorkerResolveIdentity(frozen, server.resolveRequests)
+            assertWorkerAckDisposition(frozen, server.ackRequests, settled)
             w1Mark("postInvocationProbe")
             try { assertEquals(1L, scalar(db, "/* w1-after-failure-probe */ SELECT 1")) }
             catch (failure: Throwable) { probeFailure = failure }
             beforeShutdown = snapshot()
             if (probeFailure == null) {
                 assertState(db, settled)
+                assertWorkerUploadDisposition(db, frozen, assertNotNull(server.generationOverride), settled)
+                retainedJournal = baselineQualificationVector(db, listOf("_sync_upload_journal"))
                 if (!settled) assertFrozenState(db, assertNotNull(frozenVector))
             }
         } finally {
@@ -140,6 +147,10 @@ internal class R1WorkerSettlementCleanupTest : SurvivorTestSupport() {
                         val reopened = sqliteWorkerConnectionProvider().openConnection(name, false, SqliteConnectionConfig())
                         try {
                             assertState(reopened, settled)
+                            assertWorkerUploadDisposition(reopened, assertNotNull(originalRequest), assertNotNull(server.generationOverride), settled)
+                            retainedJournal?.let { saved ->
+                                assertEquals(saved.rows("_sync_upload_journal"), baselineQualificationVector(reopened, listOf("_sync_upload_journal")).rows("_sync_upload_journal"), "full F/C bytes survive physical reopen")
+                            }
                             if (!settled) assertFrozenState(reopened, assertNotNull(frozenVector))
                             durable = buildJsonObject {
                                 put("checkpoint", scalar(reopened, "SELECT last_bundle_seq_seen FROM _sync_attachment_state"))
@@ -215,7 +226,7 @@ internal class R1WorkerSettlementCleanupTest : SurvivorTestSupport() {
             ownerShutdownFailure?.let { put("ownerShutdownFailure", failureTree(it)) }
             put("durableState", durable ?: JsonNull); put("selectedPreparations", selectedPreparations); put("selectedReads", selectedReads)
             put("durableReopenClassification", if (before.text("runtime") == "browser-worker") "fresh" else "not-applicable-transient-node")
-        }.toString()
+        }.let(::encodeWorkerQualificationReceipt)
         val chunks = receipt.chunked(4000)
         chunks.forEachIndexed { index, chunk -> println("R1_ACTIVATED_SETTLEMENT_CHUNK ${index + 1}/${chunks.size} $chunk") }
 
@@ -247,8 +258,16 @@ internal class R1WorkerSettlementCleanupTest : SurvivorTestSupport() {
             assertTrue(nextDispatch == null || nextDispatch.text("sql") == "ROLLBACK", "failed barrier fences the triggering SQL; rollback is the next permitted dispatch")
         }
 
-        if (success) {
-            if (body == Body.PENDING) assertTrue(observed is SyncWorkLimitException) else assertNull(observed)
+        if (success && body == Body.PENDING) {
+            // The prepare owner may commit derived metadata, while the public
+            // scheduler reports that this injected signal made no useful progress.
+            // Business state and original F/C remain unchanged; no ack is allowed.
+            assertIs<SyncWorkNoProgressException>(observed)
+            assertEquals(1, sent("COMMIT").size); assertTrue(sent("ROLLBACK").isEmpty())
+            assertTrue(phase("executorBeforeCommit") > acknowledgement("closeStatement"))
+            assertTrue(events.any { it.text("sql")?.contains("pragma_foreign_key_check") == true })
+        } else if (success) {
+            assertNull(observed)
             assertEquals(1, sent("COMMIT").size); assertTrue(sent("ROLLBACK").isEmpty())
             assertTrue(phase("executorBeforeCommit") > acknowledgement("closeStatement"))
             assertTrue(events.any { it.text("sql")?.contains("pragma_foreign_key_check") == true })

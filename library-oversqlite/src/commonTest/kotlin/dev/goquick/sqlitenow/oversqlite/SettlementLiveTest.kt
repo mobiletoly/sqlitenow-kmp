@@ -7,7 +7,7 @@ import kotlin.test.*
 
 internal class SettlementLiveTest : RealServerSupport() {
     @Test fun settlementCancellationRetainsHistoricalIntent() = runRealServerTest {
-        val config=requireRealServerConfig() ?: return@runRealServerTest
+        val config=requireRealServerConfig("OVERSQLITE_CATEGORIES_REAL_SERVER_SMOKE_BASE_URL") ?: return@runRealServerTest
         val tables=listOf(SyncTable("categories",syncKeyColumnName="id"))
         val db=newDb();val user=randomRealServerId("a3")
         val p=randomRealServerUuid();val q=randomRealServerUuid();val c=randomRealServerUuid();val d=randomRealServerUuid();val u=randomRealServerUuid()
@@ -55,7 +55,7 @@ internal class SettlementLiveTest : RealServerSupport() {
     }
 
     @Test fun backlogBound() = runOwnedWebDatabaseTest(timeout=kotlin.time.Duration.parse("900s")) {
-        val authority=requireRealServerConfig() ?: return@runOwnedWebDatabaseTest
+        val authority=requireRealServerConfig("OVERSQLITE_CATEGORIES_REAL_SERVER_SMOKE_BASE_URL") ?: return@runOwnedWebDatabaseTest
         for (size in listOf(1000,10000)) for (width in listOf(16,1024)) {
             val db=newDb();var http:io.ktor.client.HttpClient?=null;var client:DefaultOversqliteClient?=null
             try {

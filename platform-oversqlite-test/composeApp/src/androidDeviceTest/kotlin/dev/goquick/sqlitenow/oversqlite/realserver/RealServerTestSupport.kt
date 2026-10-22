@@ -84,6 +84,19 @@ internal data class InterceptedHttpResponse(
     val contentType: String = "application/json",
 )
 
+// AGP instrumentation reports coroutine assumption exceptions as failures.
+// Preserve the same opt-in condition before entering the coroutine; disabled
+// methods are explicitly unexecuted and never receive live qualification credit.
+internal fun runEnabledRealServerTest(body: suspend kotlinx.coroutines.CoroutineScope.() -> Unit) {
+    val enabled = realServerEnv("OVERSQLITE_REALSERVER_TESTS")?.trim().orEmpty()
+    if (!(enabled.equals("true", ignoreCase = true) || enabled == "1")) {
+        val caller = Throwable().stackTrace.firstOrNull { it.className.startsWith("dev.goquick.sqlitenow.oversqlite.realserver.RealServer") && it.className != "dev.goquick.sqlitenow.oversqlite.realserver.RealServerTestSupportKt" }
+        println("REALSERVER_NOT_EXECUTED android ${caller?.className}.${caller?.methodName} opt_in_disabled")
+        return
+    }
+    runBlocking(block = body)
+}
+
 internal fun requireRealServerConfig(): RealServerConfig {
     val enabled = realServerEnv("OVERSQLITE_REALSERVER_TESTS")?.trim().orEmpty()
     assumeTrue(
@@ -92,7 +105,7 @@ internal fun requireRealServerConfig(): RealServerConfig {
     )
     return RealServerConfig(
         baseUrl = realServerEnv("OVERSQLITE_REAL_SERVER_SMOKE_BASE_URL")?.trim().takeUnless { it.isNullOrEmpty() }
-            ?: "http://10.0.2.2:8080",
+            ?: error("Enabled Android realserver tests require an explicit owned OVERSQLITE_REAL_SERVER_SMOKE_BASE_URL"),
         schema = realServerEnv("OVERSQLITE_REALSERVER_SCHEMA")?.trim().takeUnless { it.isNullOrEmpty() }
             ?: "business",
     )
@@ -993,6 +1006,9 @@ private class CoordinatedAndroidRealServerClient(
     override suspend fun attach(userId: String) = requireDelegate().attach(userId)
     override suspend fun sourceInfo() = requireDelegate().sourceInfo()
     override suspend fun syncStatus() = requireDelegate().syncStatus()
+    override suspend fun recoveryStatus() = requireDelegate().recoveryStatus()
+    override suspend fun setRecoveryMode(mode: RecoveryMode) = requireDelegate().setRecoveryMode(mode)
+    override suspend fun retryRecovery() = requireDelegate().retryRecovery()
     override suspend fun detach() = requireDelegate().detach()
     override suspend fun pushPending() = requireDelegate().pushPending()
     override suspend fun pendingConflict() = requireDelegate().pendingConflict()

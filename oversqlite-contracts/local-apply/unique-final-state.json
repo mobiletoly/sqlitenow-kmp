@@ -1,0 +1,227 @@
+{
+  "formatVersion": 1,
+  "authority": {
+    "goSpecSHA256": "e0e5e5887d6bae89c4acf5d94891217325169664677a6e315d6f0b1d21e67ea6",
+    "kotlinSpecSHA256": "95469a81179b6ebe32281a4f148862edf788505c480e188195c0b9682c8ca6c8",
+    "openAPISHA256": "7e08278314caaf670036f803b34076459bad1a65b57a940f4557dd56553671ef"
+  },
+  "initial": [
+    {
+      "id": "P",
+      "name": "parent",
+      "parent_id": null
+    },
+    {
+      "id": "Q",
+      "name": "other",
+      "parent_id": null
+    },
+    {
+      "id": "C",
+      "name": "child",
+      "parent_id": "P"
+    },
+    {
+      "id": "D",
+      "name": "grandchild",
+      "parent_id": "C"
+    }
+  ],
+  "cases": [
+    {
+      "id": "transfer",
+      "indexSQL": "CREATE UNIQUE INDEX unique_name ON nodes(name)",
+      "effects": [
+        {
+          "id": "P",
+          "name": "other",
+          "parent_id": null
+        },
+        {
+          "id": "Q",
+          "name": "free",
+          "parent_id": null
+        }
+      ]
+    },
+    {
+      "id": "swap",
+      "indexSQL": "CREATE UNIQUE INDEX unique_name ON nodes(name)",
+      "effects": [
+        {
+          "id": "P",
+          "name": "other",
+          "parent_id": null
+        },
+        {
+          "id": "Q",
+          "name": "parent",
+          "parent_id": null
+        }
+      ]
+    },
+    {
+      "id": "long_cycle",
+      "indexSQL": "CREATE UNIQUE INDEX unique_name ON nodes(name)",
+      "effects": [
+        {
+          "id": "P",
+          "name": "other",
+          "parent_id": null
+        },
+        {
+          "id": "Q",
+          "name": "child",
+          "parent_id": null
+        },
+        {
+          "id": "C",
+          "name": "parent",
+          "parent_id": "P"
+        }
+      ]
+    },
+    {
+      "id": "collation",
+      "indexSQL": "CREATE UNIQUE INDEX unique_name ON nodes(name COLLATE NOCASE)",
+      "effects": [
+        {
+          "id": "P",
+          "name": "OTHER",
+          "parent_id": null
+        },
+        {
+          "id": "Q",
+          "name": "parent",
+          "parent_id": null
+        }
+      ]
+    },
+    {
+      "id": "composite",
+      "indexSQL": "CREATE UNIQUE INDEX unique_pair ON nodes(name,parent_id)",
+      "effects": [
+        {
+          "id": "C",
+          "name": "grandchild",
+          "parent_id": "C"
+        },
+        {
+          "id": "D",
+          "name": "child",
+          "parent_id": "P"
+        }
+      ]
+    },
+    {
+      "id": "nulls",
+      "indexSQL": "CREATE UNIQUE INDEX unique_parent ON nodes(parent_id)",
+      "effects": [
+        {
+          "id": "P",
+          "name": "changed",
+          "parent_id": null
+        },
+        {
+          "id": "Q",
+          "name": "other",
+          "parent_id": null
+        }
+      ]
+    },
+    {
+      "id": "conflicting_desired",
+      "indexSQL": "CREATE UNIQUE INDEX unique_name ON nodes(name)",
+      "effects": [
+        {
+          "id": "P",
+          "name": "free",
+          "parent_id": null
+        },
+        {
+          "id": "Q",
+          "name": "free",
+          "parent_id": null
+        }
+      ],
+      "expectBlockedReason": "conflicting_desired_state"
+    },
+    {
+      "id": "expression",
+      "indexSQL": "CREATE UNIQUE INDEX unique_expression ON nodes(lower(name))",
+      "effects": [
+        {
+          "id": "P",
+          "name": "changed",
+          "parent_id": null
+        }
+      ],
+      "expectBlockedReason": "unsupported_uniqueness"
+    },
+    {
+      "id": "partial",
+      "indexSQL": "CREATE UNIQUE INDEX unique_partial ON nodes(name) WHERE parent_id IS NULL",
+      "effects": [
+        {
+          "id": "P",
+          "name": "changed",
+          "parent_id": null
+        }
+      ],
+      "expectBlockedReason": "unsupported_uniqueness"
+    },
+    {
+      "id": "unsafe_trigger",
+      "indexSQL": "CREATE UNIQUE INDEX unique_name ON nodes(name)",
+      "applicationTriggerSQL": "CREATE TRIGGER application_delete AFTER DELETE ON nodes BEGIN DELETE FROM nodes WHERE id='C'; END",
+      "effects": [
+        {
+          "id": "P",
+          "name": "other",
+          "parent_id": null
+        },
+        {
+          "id": "Q",
+          "name": "parent",
+          "parent_id": null
+        }
+      ],
+      "expectBlockedReason": "unsafe_trigger_or_dependency"
+    },
+    {
+      "id": "transfer-reversed",
+      "indexSQL": "CREATE UNIQUE INDEX unique_name ON nodes(name)",
+      "effects": [
+        {
+          "id": "Q",
+          "name": "free",
+          "parent_id": null
+        },
+        {
+          "id": "P",
+          "name": "other",
+          "parent_id": null
+        }
+      ]
+    },
+    {
+      "id": "simultaneous-constraints",
+      "indexSQL": "CREATE UNIQUE INDEX unique_name ON nodes(name)",
+      "additionalIndexes": [
+        "CREATE UNIQUE INDEX unique_parent ON nodes(parent_id)"
+      ],
+      "effects": [
+        {
+          "id": "C",
+          "name": "grandchild",
+          "parent_id": "C"
+        },
+        {
+          "id": "D",
+          "name": "child",
+          "parent_id": "P"
+        }
+      ]
+    }
+  ]
+}

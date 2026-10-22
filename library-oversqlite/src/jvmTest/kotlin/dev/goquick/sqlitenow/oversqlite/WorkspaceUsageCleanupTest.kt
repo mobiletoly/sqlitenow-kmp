@@ -62,6 +62,7 @@ internal class WorkspaceUsageCleanupTest : CrossTargetSyncTestSupport() {
         var primaryFailure: Throwable? = null
         try {
             db.execSQL(oversqliteRetainedTableDdl.getValue("_sync_operation_state"))
+            db.execSQL(oversqliteRetainedTableDdl.getValue("_sync_upload_journal"))
             db.execSQL(applyPlanDdl)
             db.execSQL(pushPlanDdl)
             db.execSQL("INSERT INTO _sync_operation_state(singleton_key) VALUES(1)")

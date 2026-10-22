@@ -9,14 +9,17 @@ product evidence or qualify a candidate.
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import os
+import re
 from pathlib import Path
 import signal
 import subprocess
 import sys
 import time
 import uuid
+from types import SimpleNamespace
 from typing import Any
 
 try:  # Supports both ``python campaign.py`` and package imports in tests.
@@ -799,6 +802,339 @@ def campaign_report(campaign_id: str, records: Path) -> dict[str, Any]:
     }
 
 
+def _profile_worker(name: str, worker: dict, profile: dict, frozen: dict, root: Path, go: Path) -> dict:
+    """Verify source copies and private mutable state before scheduling a worker."""
+    from tools.qualification import oversqlite_platform as runner
+    if not re.fullmatch(r'[a-z0-9][a-z0-9-]{0,63}', name):
+        raise planner.QualificationError(5, 'worker_name_invalid', name)
+    if any(not Path(worker[key]).is_absolute() for key in ('root', 'go', 'freeze', 'profile', 'bindings')):
+        raise planner.QualificationError(5, 'worker_path_relative', name)
+    roots = {key: Path(worker[key]).resolve() for key in ('root', 'go')}
+    allowed_environment = {'GRADLE_USER_HOME', 'KONAN_DATA_DIR', 'KOTLIN_USER_HOME', 'YARN_CACHE_FOLDER',
+        'NPM_CONFIG_CACHE', 'GOCACHE', 'GOMODCACHE', 'JAVA_HOME', 'PATH', 'CHROME_BIN',
+        'ANDROID_HOME', 'ANDROID_SDK_ROOT', 'DEVELOPER_DIR', 'SDKROOT', 'TMPDIR'}
+    if set(worker.get('environment', {})) - allowed_environment:
+        raise planner.QualificationError(5, 'worker_environment_invalid', name)
+    original = {'root': root.resolve(), 'go': go.resolve()}
+    private = roots != original
+    freeze = Path(worker['freeze']).resolve()
+    options = SimpleNamespace(root=roots['root'], go_repo=roots['go'], profile=Path(worker['profile']),
+                              freeze=freeze, bindings=Path(worker['bindings']))
+    current_profile, digest = planner.load_full_profile(options.profile, roots['root'], roots['go'])
+    if current_profile != profile:
+        raise planner.QualificationError(5, 'worker_profile_drift', name)
+    _, bindings = runner.profile_activation(options, profile, digest)
+    proof = {'roots': {key: str(value) for key, value in roots.items()}, 'private': private, 'sources': {},
+             'freeze_sha256': planner.sha256_file(freeze),
+             'source_sha256': planner.profile_source_anchor(roots['root'],roots['go'])}
+    proof['lease_locks'] = _profile_lease_locks(bindings, json.loads(freeze.read_text())['files'])
+    if private:
+        mutable_outputs = {roots['root'] / '.gradle', roots['root'] / 'build'}
+        if not worker.get('private') or any(roots[key] == original[key] for key in roots):
+            raise planner.QualificationError(5, 'worker_not_isolated', name)
+        if frozen['files'].get(str(freeze)) != planner.sha256_file(freeze):
+            raise planner.QualificationError(5, 'worker_freeze_unbound', name)
+        copy_freeze = json.loads(freeze.read_text())
+        expected_rebindings = {profile['roots']['kotlin']: str(roots['root']), profile['roots']['go']: str(roots['go'])}
+        if copy_freeze.get('root_rebindings') != expected_rebindings:
+            raise planner.QualificationError(5, 'worker_rebinding_invalid', name)
+        for key in roots:
+            source, destination = original[key], roots[key]
+            for args in (('rev-parse', 'HEAD'), ('ls-files', '--stage', '-z')):
+                if planner.git(source, *args) != planner.git(destination, *args):
+                    raise planner.QualificationError(5, 'worker_git_drift', name)
+            names = planner.git(source, 'ls-files', '-z', '--cached', '--others', '--exclude-standard')
+            if names != planner.git(destination, 'ls-files', '-z', '--cached', '--others', '--exclude-standard'):
+                raise planner.QualificationError(5, 'worker_inventory_drift', name)
+            files = {}
+            for relative in names.decode().split('\0'):
+                if not relative:
+                    continue
+                left, right = source / relative, destination / relative
+                if not left.is_file() or not right.is_file():
+                    raise planner.QualificationError(5, 'worker_source_unreadable', relative)
+                digest = planner.sha256_file(left)
+                if (planner.sha256_file(right) != digest or frozen['files'].get(str(left)) != digest
+                        or copy_freeze['files'].get(str(right)) != digest):
+                    raise planner.QualificationError(5, 'worker_source_drift', relative)
+                files[relative] = digest
+                if key == 'root':
+                    path = Path(relative)
+                    if path.name in ('build.gradle.kts', 'build.gradle', 'settings.gradle.kts', 'settings.gradle'):
+                        mutable_outputs.update((destination / path.parent / 'build', destination / path.parent / '.gradle'))
+                    if path.name == 'Package.swift':
+                        mutable_outputs.update((destination / path.parent / '.build', destination / path.parent / '.swiftpm'))
+            proof['sources'][key] = planner.sha256_bytes(planner.canonical_bytes(files))
+        folder = Path(worker['directory']).resolve()
+        if folder.is_symlink() or folder.stat().st_mode & 0o077 or any(not value.is_relative_to(folder) for value in roots.values()):
+            raise planner.QualificationError(5, 'worker_directory_invalid', name)
+        for key, destination in roots.items():
+            metadata = Path(planner.git(destination, 'rev-parse', '--absolute-git-dir').decode().strip()).resolve()
+            original_metadata = Path(planner.git(original[key], 'rev-parse', '--absolute-git-dir').decode().strip()).resolve()
+            if (not metadata.is_relative_to(folder)
+                    or (metadata / 'index').samefile(original_metadata / 'index')):
+                raise planner.QualificationError(5, 'worker_metadata_shared', name)
+            proof.setdefault('metadata',{})[key] = dict(directory=str(metadata),canonical_index=str(original_metadata / 'index'))
+        declared = [Path(path) for path in worker.get('output_roots', [])]
+        if any(not path.is_absolute() for path in declared):
+            raise planner.QualificationError(5, 'worker_output_relative', name)
+        mutable_outputs.update(declared)
+        if any(not path.resolve().is_relative_to(folder) for path in mutable_outputs):
+            raise planner.QualificationError(5, 'worker_output_shared', name)
+        proof['output_roots'] = sorted(str(path.absolute()) for path in mutable_outputs)
+        required = {'GRADLE_USER_HOME', 'KONAN_DATA_DIR', 'KOTLIN_USER_HOME', 'YARN_CACHE_FOLDER',
+                    'NPM_CONFIG_CACHE', 'GOCACHE', 'GOMODCACHE', 'TMPDIR'}
+        environment = worker.get('environment', {})
+        if not required.issubset(environment):
+            raise planner.QualificationError(5, 'worker_cache_missing', name)
+        for key in required:
+            path = Path(environment[key])
+            if not path.is_absolute() or not path.resolve().is_relative_to(folder):
+                raise planner.QualificationError(5, 'worker_cache_shared', key)
+        proof['directory'] = str(folder)
+    elif worker.get('private'):
+        raise planner.QualificationError(5, 'worker_not_isolated', name)
+    return proof
+
+
+def _profile_lease_locks(bindings: dict, frozen: dict) -> dict[str, list[str]]:
+    from tools.qualification import platform_preparation as preparation
+    locks: dict[str, set[str]] = {}
+    for reference in bindings.get('lease_receipts', {}).values():
+        lease, _ = preparation.frozen_json(reference, frozen)
+        resource = lease['resource']
+        ready = resource.get('private_readiness', {})
+        values = dict(container=resource.get('container'), storage=resource.get('volume'),
+            listener=resource.get('authority_url'), reset=ready.get('reset_domain'), postgres=resource.get('postgres_port'))
+        if resource.get('database'):
+            values['database'] = [resource.get('container'), resource['database']]
+        if resource.get('authority_url'):
+            values['authority'] = [resource['authority_url'], resource.get('authority_status', {}).get('app_name')]
+        for kind, value in values.items():
+            if value:
+                lock = 'lease-' + planner.sha256_bytes(planner.canonical_bytes([kind, value]))
+                locks.setdefault(kind, set()).add(lock)
+    return {kind: sorted(names) for kind, names in locks.items()}
+
+
+def _profile_job_paths(entry: dict, worker: dict, profile: dict, output: Path) -> None:
+    """Resolve the actual catalog overrides, including Gradle/Konan CLI paths."""
+    from tools.qualification import oversqlite_platform as runner
+    from tools.qualification import platform_results as results
+    root, go = Path(worker['root']).resolve(), Path(worker['go']).resolve()
+    bindings = json.loads(Path(worker['bindings']).read_text())
+    results.validate_body_policies(entry,bindings.get('body_policies',{}))
+    freeze = json.loads(Path(worker['freeze']).read_text())
+    options = SimpleNamespace(root=root, go_repo=go, context=worker.get('context'))
+    rebound = runner.rebase_profile_entry(entry, profile, options, freeze)
+    values = dict(bindings.get('values', {}))
+    values.update({'binding.current_freeze':worker['freeze'], 'binding.new_output':str(output),
+        'binding.entry_tmp':str(output / 'tmp')})
+    values.setdefault('binding.reviewed_swift_filter_init',str(root / 'tools/qualification/profiles/short-swift-filter.init.gradle'))
+    values.setdefault('binding.reviewed_backlog_init_script',str(root / 'tools/qualification/profiles/library-backlog.init.gradle'))
+    if entry.get('runtime') == 'ios': values.setdefault('lease.ios.udid','__OWNED_DEVICE_PENDING__')
+    resolved = planner.resolve_profile_entry(rebound,values)
+    if not worker.get('private'):
+        return
+    folder = Path(worker['directory']).resolve()
+    effective = runner.lane_environment(dict(os.environ)) | worker.get('environment', {}) | resolved['environment']
+    mutable = [Path(effective[name]) for name in ('GRADLE_USER_HOME','KONAN_DATA_DIR','KOTLIN_USER_HOME',
+        'YARN_CACHE_FOLDER','NPM_CONFIG_CACHE','GOCACHE','GOMODCACHE','TMPDIR')]
+    argv = resolved['argv']
+    mutable.extend(Path(arg.split('=',1)[1]) for arg in argv if arg.startswith(('-Pkonan.data.dir=','--gradle-user-home=','--project-cache-dir=')))
+    for index, arg in enumerate(argv[:-1]):
+        if arg in ('-g','--gradle-user-home','--project-cache-dir'): mutable.append(Path(argv[index+1]))
+    if any(not path.is_absolute() or not path.resolve().is_relative_to(folder) for path in mutable):
+        raise planner.QualificationError(5,'worker_effective_cache_shared',entry['id'])
+    if entry.get('task'):
+        executable = Path(argv[3])
+        if not executable.is_absolute(): executable = Path(resolved['cwd']) / executable
+        if executable.resolve() != root / 'gradlew' or Path(resolved['cwd']).resolve() != root:
+            raise planner.QualificationError(5,'worker_effective_build_shared',entry['id'])
+    if entry.get('isolation_only') and '-Pkotlin.compiler.execution.strategy=in-process' not in argv:
+        raise planner.QualificationError(5,'isolation_compiler_policy_changed',entry['id'])
+
+
+def _profile_evidence(item: dict, frozen: dict) -> tuple[dict, dict]:
+    from tools.qualification import platform_preparation as preparation
+    receipt, digest = preparation.frozen_json(item['receipt'], frozen['files'])
+    review, _ = preparation.frozen_json(item['review'], frozen['files'])
+    if (receipt.get('status') != 'PASS' or receipt.get('errors')
+            or receipt.get('cleanup', {}).get('errors') or receipt.get('cleanup', {}).get('groups_absent') is not True
+            or review.get('eligible') is not True or review.get('entry') != item['entry']
+            or review.get('receipt_sha256') != digest or not review.get('dependency_reason')
+            or (receipt.get('entry_id') != item['entry'] and not review.get('equivalence_reason'))):
+        raise planner.QualificationError(5, 'profile_evidence_ineligible', item['entry'])
+    return receipt, review
+
+
+def prepare_profile_campaign(selection_path: Path, profile_path: Path, freeze_path: Path,
+                             output: Path, root: Path, go: Path) -> dict:
+    """Export explicit adopted entries to the existing scheduler; never accept evidence."""
+    from tools.qualification import oversqlite_platform as runner
+    profile, digest = planner.load_full_profile(profile_path, root, go)
+    options = SimpleNamespace(root=root, profile=profile_path, freeze=freeze_path, bindings=selection_path)
+    _, selection = runner.profile_activation(options, profile, digest)
+    frozen = json.loads(freeze_path.read_text())
+    if frozen['files'].get(str(Path(__file__).resolve())) != planner.sha256_file(Path(__file__)):
+        raise planner.QualificationError(5, 'campaign_source_unbound', str(__file__))
+    if selection.get('profile_sha256') != digest or not selection.get('selection_reason'):
+        raise planner.QualificationError(5, 'profile_selection_unbound', 'selection needs profile and reason')
+    requested = selection['requests']
+    selected = set(planner.full_profile_selection(profile, requested))
+    entries = profile['schedule']['entries']
+    workers = selection['workers']
+    proofs = {name: _profile_worker(name, worker, profile, frozen, root, go) for name, worker in workers.items()}
+    directories = [Path(proof['directory']) for proof in proofs.values() if proof['private']]
+    if any(a == b or a in b.parents or b in a.parents for index, a in enumerate(directories) for b in directories[index + 1:]):
+        raise planner.QualificationError(5, 'worker_state_overlap', 'private workers share mutable state')
+    covered: dict[str, str] = {}
+    costs: dict[str, float] = {}
+    untimed = set()
+    for disposition in ('retained', 'blocked'):
+        for item in selection.get(disposition, []):
+            members = planner.full_profile_selection(profile, [item['entry']])
+            if disposition == 'retained':
+                receipt, _ = _profile_evidence(item, frozen)
+                costs[item['entry']] = receipt['elapsed_seconds']
+                if type(receipt['elapsed_seconds']) not in (int, float) or receipt['elapsed_seconds'] <= 0:
+                    raise planner.QualificationError(5, 'profile_cost_invalid', item['entry'])
+            elif not item.get('reason'):
+                raise planner.QualificationError(5, 'profile_block_reason_missing', item['entry'])
+            for member in members:
+                if member not in selected or member in covered:
+                    raise planner.QualificationError(5, 'profile_coverage_overlap', member)
+                covered[member] = disposition
+    manifest = copy.deepcopy(json.loads(DEFAULT_MANIFEST.read_text()))
+    manifest.update(default_timeout_seconds=300, campaign_max_workers=2, lanes=[], path_rules=[], fallback_lane_ids=[])
+    manifest['toolchains'] = [tool for tool in manifest['toolchains'] if tool['id'] == 'python']
+    jobs = selection['jobs']
+    contracts = {}
+    job_map = {job['id']: job for job in jobs}
+    if len(job_map) != len(jobs) or not jobs:
+        raise planner.QualificationError(5, 'profile_jobs_invalid', 'fresh jobs need unique IDs')
+    isolation_workers = {job['worker'] for job in jobs if planner.effective_profile_entry(profile,entries[job['entry']]).get('isolation_only')}
+    required = {'authority','listener','database','reset','storage'}
+    isolation_seen = set()
+    for name in isolation_workers:
+        leases = proofs[name]['lease_locks']
+        if not required.issubset(leases):
+            raise planner.QualificationError(5,'isolation_live_identity_missing',name)
+        current = {lock for locks in leases.values() for lock in locks}
+        if isolation_seen & current:
+            raise planner.QualificationError(5,'isolation_live_identity_shared',name)
+        isolation_seen.update(current)
+    for job in jobs:
+        if not re.fullmatch(r'[a-z0-9][a-z0-9-]{0,95}', job['id']):
+            raise planner.QualificationError(5, 'profile_job_id_invalid', job['id'])
+        entry = planner.effective_profile_entry(profile,entries[job['entry']])
+        if (entry.get('orchestration_only') or entry.get('internal_only') or type(entry.get('wall_seconds')) is not int
+                or not 0 < entry['wall_seconds'] <= 300):
+            raise planner.QualificationError(5, 'profile_not_normal_job', job['entry'])
+        member = job['entry']
+        if member not in selected or (member in covered and entry['kind'] != 'preparation'):
+            raise planner.QualificationError(5, 'profile_coverage_overlap', member)
+        covered[member] = 'fresh'
+        worker = workers[job['worker']]
+        _profile_job_paths(entry,dict(worker,context=job.get('context')),profile,output.resolve() / 'native' / job['id'])
+        worker_root = Path(worker['root']).resolve()
+        constraint = dict(entry=member,context=job.get('context'),worker=worker,layout=proofs[job['worker']])
+        constraint_bytes = planner.canonical_bytes(constraint)
+        constraint_path = output.resolve() / 'worker-contracts' / (job['id'] + '.json')
+        contracts[constraint_path] = constraint_bytes
+        argv = [sys.executable, str(root.resolve() / 'tools/qualification/oversqlite_platform.py'), 'lane',
+                '--root', str(worker_root), '--go-repo', worker['go'], '--profile', worker['profile'],
+                '--entry', member, '--freeze', worker['freeze'], '--bindings', worker['bindings'],
+                '--expected-freeze-sha256', proofs[job['worker']]['freeze_sha256'],
+                '--expected-source-sha256', proofs[job['worker']]['source_sha256'],
+                '--worker-contract',str(constraint_path),
+                '--expected-worker-contract-sha256',planner.sha256_bytes(constraint_bytes),
+                '--output', str(output.resolve() / 'native' / job['id'])]
+        if argv[:3] not in manifest['forbidden_planning_validation_prefixes']:
+            manifest['forbidden_planning_validation_prefixes'].append(argv[:3])
+        if job.get('context'):
+            named=job['context'] in ('isolation-macos','isolation-browser','swift-generated-live-only')
+            if entry['kind'] != 'preparation' or (job['context'] not in entry.get('environment_contexts', {}) and not named):
+                raise planner.QualificationError(5, 'profile_context_invalid', member)
+            argv += ['--context', job['context']]
+        elif entry['kind'] == 'preparation':
+            raise planner.QualificationError(5, 'profile_context_missing', member)
+        dependencies = job.get('depends_on', [])
+        for producer_id in job.get('preparation_jobs', []):
+            producer = job_map.get(producer_id)
+            if (producer is None or producer_id not in dependencies or producer['worker'] != job['worker']
+                    or entries[producer['entry']]['kind'] != 'preparation'):
+                raise planner.QualificationError(5, 'profile_preparation_invalid', member)
+            argv += ['--prepared', str(output.resolve() / 'native' / producer_id / 'preparation.json')]
+        lock = 'private-' + job['worker'] if proofs[job['worker']]['private'] else 'gradle-build'
+        manifest['resources'].setdefault(lock, 1)
+        locks = [lock]
+        for names in proofs[job['worker']]['lease_locks'].values():
+            for lease_lock in names:
+                manifest['resources'].setdefault(lease_lock,1)
+                if lease_lock not in locks: locks.append(lease_lock)
+        runtime = entry.get('runtime')
+        if runtime in ('android', 'ios'):
+            locks.append(runtime + '-control')
+        if entry.get('isolation_only') and not proofs[job['worker']]['private']:
+            raise planner.QualificationError(5, 'isolation_worker_not_private', member)
+        # The named two-worker experiment is the sole selected parallel replay
+        # pilot. Ordinary heavy/load/resource jobs remain host exclusive.
+        heavy = entry.get('environment', {}).get('OVERSQLITE_REALSERVER_HEAVY') == 'true' and not entry.get('isolation_only')
+        if heavy:
+            locks.append('measurement-exclusive')
+        environment = runner.lane_environment(dict(os.environ)) | worker.get('environment', {})
+        manifest['lanes'].append(dict(id=job['id'], description='Adopted profile entry ' + member,
+            repository='sqlite-now', cwd='.', argv=argv, environment_allowlist=sorted(environment), environment=environment,
+            toolchains=['python'], classification='product', live=bool(job.get('live')), heavy=heavy,
+            static_inputs=['tools/qualification/**', 'AGENTS.md'], depends_on=dependencies, subsumes=[],
+            timeout_seconds=entry['wall_seconds'], environment_class='adopted-profile', resource_locks=locks,
+            scheduling_class='host', memory_class='measurement-exclusive' if heavy else 'light', campaign_eligible=True))
+        if job.get('timing'):
+            timing, _ = _profile_evidence(dict(job['timing'], entry=member), frozen)
+            seconds = timing['elapsed_seconds']
+            if type(seconds) not in (int, float) or seconds <= 0:
+                raise planner.QualificationError(5, 'profile_cost_invalid', member)
+            costs[member] = costs.get(member, 0) + seconds
+        else:
+            untimed.add(member)
+    if set(covered) != selected:
+        raise planner.QualificationError(5, 'profile_coverage_gap', ','.join(sorted(selected - set(covered))))
+    feasibility = {}
+    for name in requested:
+        if name not in profile['schedule']['logical_roots']:
+            continue
+        spec = profile['schedule']['logical_roots'][name]
+        missing = [member for member in spec['members'] if member not in costs or member in untimed]
+        if missing:
+            raise planner.QualificationError(5, 'profile_cost_unknown', ','.join(missing))
+        seconds = sum(costs[member] for member in spec['members'])
+        if seconds > spec['inherited_cumulative_native_budget_seconds']:
+            raise planner.QualificationError(5, 'profile_root_infeasible', name)
+        feasibility[name] = dict(measured_seconds=seconds, cap_seconds=spec['inherited_cumulative_native_budget_seconds'])
+    lane_ids = [job['id'] for job in jobs]
+    manifest['fallback_lane_ids'] = lane_ids
+    manifest['path_rules'] = [dict(id='explicit-profile', repository='sqlite-now', includes=['tools/qualification/**'],
+        excludes=[], lanes=lane_ids, reason_code='explicit_profile_selection', reason=selection['selection_reason'],
+        validation_paths=['tools/qualification/campaign.py'], **{'class': 'planner'})]
+    planner.validate_manifest(manifest)
+    output.mkdir(mode=0o700, parents=True, exist_ok=False)
+    (output / 'worker-contracts').mkdir(mode=0o700)
+    for path, data in contracts.items():
+        path.write_bytes(data)
+        path.chmod(0o600)
+    manifest_path = output / 'manifest.json'
+    manifest_path.write_bytes(planner.canonical_bytes(manifest))
+    manifest_digest = planner.sha256_file(manifest_path)
+    plan = planner.build_plan(manifest, manifest_digest, 'HEAD', injected_paths=['sqlite-now:tools/qualification/profiles/oversqlite-full.json'], workspace_root=root.parent)
+    (output / 'plan.json').write_bytes(planner.canonical_bytes(plan))
+    result = dict(profile_sha256=digest, selected=sorted(selected), dispositions=covered, workers=proofs,
+                  root_feasibility=feasibility, manifest=str(manifest_path), plan=str(output / 'plan.json'),
+                  blocked=selection.get('blocked', []), authority='Explicit selection export; scheduler and native audits remain required')
+    (output / 'selection.json').write_bytes(planner.canonical_bytes(result))
+    return result
+
+
 def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(description=__doc__)
     subs = result.add_subparsers(dest="command", required=True)
@@ -811,12 +1147,21 @@ def parser() -> argparse.ArgumentParser:
     resume.add_argument("--authorize-product", action="store_true"); resume.add_argument("--max-workers", type=int); resume.add_argument("--continue-on-failure", action="store_true")
     report = subs.add_parser("report")
     report.add_argument("--campaign", required=True); report.add_argument("--records", type=Path, required=True); report.add_argument("--output", type=Path)
+    profile = subs.add_parser('profile')
+    for name in ('selection', 'profile', 'freeze', 'output'):
+        profile.add_argument('--' + name, type=Path, required=True)
+    profile.add_argument('--root', type=Path, default=WORKSPACE_ROOT / 'sqlitenow-kmp')
+    profile.add_argument('--go-repo', type=Path, default=WORKSPACE_ROOT / 'go-oversync')
     return result
 
 
 def main(arguments: list[str] | None = None) -> int:
     try:
         options = parser().parse_args(arguments)
+        if options.command == 'profile':
+            prepared = prepare_profile_campaign(options.selection, options.profile, options.freeze, options.output, options.root, options.go_repo)
+            print(json.dumps({key: prepared[key] for key in ('manifest', 'plan', 'authority')}))
+            return 0
         if options.command == "run":
             campaign_id, code = run_campaign(options.plan, options.manifest, options.records, options.lane, options.accept_selected, options.continue_on_failure, options.max_workers, options.authorize_product)
             print(f"campaign={campaign_id} exit={code}")

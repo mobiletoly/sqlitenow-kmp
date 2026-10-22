@@ -84,10 +84,11 @@ internal class ReplaySqlTest : CrossTargetSyncTestSupport() {
                 repeat(2) { local.upsertRow("key-only", buildJsonObject { put("key", "only") }, PayloadSource.AUTHORITATIVE_WIRE) }
                 assertEquals(1L, scalarLong(db, "SELECT count(*) FROM \"key-only\""))
                 db.withStatementCache { cache ->
-                    val plan = local.prepareSnapshotUpsertPlan(cache)
-                    plan.upsertAuthoritativeRow("records", JsonObject(payload + ("t" to JsonPrimitive("snapshot"))))
-                    plan.finish()
-                    assertEquals("snapshot", scalarText(db, "SELECT t FROM records"))
+                    // Snapshot delta and ordinary replay now share this owner.
+                    for (text in listOf("snapshot","cached second value")) {
+                        local.upsertRow("records",JsonObject(payload + ("t" to JsonPrimitive(text))),PayloadSource.AUTHORITATIVE_WIRE,cache)
+                        assertEquals(text,scalarText(db,"SELECT t FROM records"))
+                    }
                 }
                 for (shape in listOf(sql.initialKey, sql.afterCursorKey)) {
                     db.withPreparedStatement(shape.value) { st ->

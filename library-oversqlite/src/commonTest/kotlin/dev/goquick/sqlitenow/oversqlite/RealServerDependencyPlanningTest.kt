@@ -20,7 +20,7 @@ internal class RealServerDependencyPlanningTest : RealServerSupport() {
             println("NOT-APPLICABLE: narrow A2 dependency witness requires its isolated enabled authority; no live pass claimed")
             return@runRealServerTest
         }
-        val server=assertNotNull(requireRealServerConfig(),"narrow live authority must be enabled and ready")
+        val server=assertNotNull(requireRealServerConfig("OVERSQLITE_DEPENDENCY_REAL_SERVER_SMOKE_BASE_URL"),"narrow live authority must be enabled and ready")
         check(supportsDurableTestDatabaseRestart()) {"narrow live witness requires physical storage"}
         val path=createTempSqliteNowTestDbPath("dependency-live")
         val db=newFileBackedDb(path)
@@ -105,7 +105,7 @@ internal class RealServerDependencyPlanningTest : RealServerSupport() {
     // Mechanical real-authority/file/client setup only; named owners below
     // declare the transition and expected outcome of their one public call.
     private suspend fun withPublicSyncFixture(body: suspend (PublicSyncFixture) -> Unit) {
-        val server=assertNotNull(requireRealServerConfig(),"A2-05 live authority must be enabled and ready")
+        val server=assertNotNull(requireRealServerConfig("OVERSQLITE_DEPENDENCY_REAL_SERVER_SMOKE_BASE_URL"),"A2-05 live authority must be enabled and ready")
         check(supportsDurableTestDatabaseRestart()) {"A2-05 scoped JVM witness requires durable storage; Node transient"}
         val path=createTempSqliteNowTestDbPath("a205-public-sync")
         val db=newFileBackedDb(path);val mirrorDb=newDb()

@@ -1,8 +1,9 @@
 package dev.goquick.sqlitenow.oversqlite.realserver
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import dev.goquick.sqlitenow.oversqlite.SyncThenDetachBlockedReason
 import dev.goquick.sqlitenow.oversqlite.DetachOutcome
-import kotlinx.coroutines.runBlocking
+import dev.goquick.sqlitenow.oversqlite.realserver.runEnabledRealServerTest as runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -111,7 +112,7 @@ class RealServerSyncThenDetachContractTest {
 
                 assertTrue(result.isSuccess())
                 assertEquals(DetachOutcome.DETACHED, result.detach)
-                assertEquals(2, result.syncRounds)
+                assertEquals(1, result.syncRounds)
                 assertEquals(0L, result.remainingPendingRowCount)
                 assertTrue(insertedFollowup)
                 client.open().getOrThrow()
@@ -153,7 +154,7 @@ class RealServerSyncThenDetachContractTest {
             baseUrl = config.baseUrl,
             token = token,
             afterResponse = { path ->
-                if (armFollowupWrites && path == "/sync/pull" && pullResponses < 2) {
+                if (armFollowupWrites && path == "/sync/pull") {
                     pullResponses += 1
                     insertBusinessUserAndPost(
                         db = db,
@@ -177,7 +178,10 @@ class RealServerSyncThenDetachContractTest {
 
                 assertFalse(result.isSuccess())
                 assertEquals(DetachOutcome.BLOCKED_UNSYNCED_DATA, result.detach)
-                assertEquals(2, result.syncRounds)
+                assertEquals(1, result.syncRounds)
+                assertEquals(SyncThenDetachBlockedReason.PUSH_ATTEMPT_LIMIT, result.blockedReason)
+                assertEquals(null, result.lastSync)
+                assertEquals(64, pullResponses)
                 assertEquals(2L, result.remainingPendingRowCount)
                 assertTrue(client.syncStatus().getOrThrow().pending.blocksDetach)
                 assertEquals("attached", scalarText(db, "SELECT binding_state FROM _sync_attachment_state"))

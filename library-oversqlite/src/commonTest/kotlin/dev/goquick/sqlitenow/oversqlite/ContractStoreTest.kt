@@ -95,7 +95,7 @@ internal class ContractStoreTest : CrossTargetSyncTestSupport() {
         val mutations = mapOf(
             "attached" to "UPDATE _sync_attachment_state SET binding_state='attached',attached_user_id='user'",
             "prepared outbox" to "UPDATE _sync_outbox_bundle SET state='prepared'",
-            "unexpected record" to "INSERT INTO _sync_admitted_contracts VALUES(2,'','','')",
+            "unexpected record" to "INSERT INTO _sync_admitted_contracts(generation_id,fingerprint,descriptor,descriptor_hash,admission,admission_hash) VALUES(2,'','','','','')",
             "missing identity row" to "DELETE FROM _sync_contract_identity",
         )
         for ((name, sql) in mutations) {

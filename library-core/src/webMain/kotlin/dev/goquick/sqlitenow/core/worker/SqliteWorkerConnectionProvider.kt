@@ -128,6 +128,7 @@ internal class SqliteWorkerConnectionProvider(
                 activeClientIdentity = sqliteNowActiveClientIdentity(dbName, connection),
                 persistenceController = NoopPersistenceController(),
                 executionContextHook = config.executionContextHook,
+                sqlTrace = config.sqlTrace,
                 executionContext = executionContext,
             )
         } catch (failure: Throwable) {
@@ -237,6 +238,7 @@ internal suspend fun openSqliteWorkerCoordinatedSession(
                 activeClientIdentity = sqliteNowActiveClientIdentity(dbName, ref),
                 persistenceController = NoopPersistenceController(),
                 executionContextHook = config.executionContextHook,
+                sqlTrace = config.sqlTrace,
                 executionContext = executionContext,
             )
         }
@@ -351,6 +353,7 @@ internal class SqliteWorkerCoordinatedProviderSession(
             activeClientIdentity = sqliteNowActiveClientIdentity(dbName, ref),
             persistenceController = NoopPersistenceController(),
             executionContextHook = config.executionContextHook,
+                sqlTrace = config.sqlTrace,
             executionContext = executionContext,
         ).also {
             prepared = it

@@ -6,6 +6,7 @@ import dev.goquick.sqlitenow.core.DatabaseMigrations
 import dev.goquick.sqlitenow.core.SafeSQLiteConnection
 import dev.goquick.sqlitenow.core.SqliteConnectionConfig
 import dev.goquick.sqlitenow.core.SqliteNowDatabase
+import dev.goquick.sqlitenow.core.SqliteNowLifecycleBusyException
 import dev.goquick.sqlitenow.core.SqlitePersistence
 import dev.goquick.sqlitenow.core.createAuthenticLegacySqlJsFixture
 import dev.goquick.sqlitenow.core.legacySnapshotPersistenceForTest
@@ -974,32 +975,31 @@ class SqliteWorkerLegacyMigrationTest {
         val source = SnapshotPersistence()
         try {
             seedProductionShapedSnapshot(dbName, source)
+            val seededBytes = assertNotNull(source.bytes).copyOf()
             source.resetCounts()
-            coroutineScope {
-                val first = async {
-                    sqliteWorkerConnectionProvider().openConnection(
+            val winner = sqliteWorkerConnectionProvider().openConnection(
+                dbName = dbName,
+                debug = false,
+                config = SqliteConnectionConfig(persistence = source),
+            )
+            try {
+                assertProductionFixture(winner)
+                assertFailsWith<SqliteNowLifecycleBusyException> {
+                    val contender = sqliteWorkerConnectionProvider().openConnection(
                         dbName = dbName,
                         debug = false,
                         config = SqliteConnectionConfig(persistence = source),
                     )
+                    contender.close()
                 }
-                val second = async {
-                    sqliteWorkerConnectionProvider().openConnection(
-                        dbName = dbName,
-                        debug = false,
-                        config = SqliteConnectionConfig(persistence = source),
-                    )
-                }
-                val connections = listOf(first.await(), second.await())
-                try {
-                    connections.forEach { assertProductionFixture(it) }
-                } finally {
-                    for (connection in connections) connection.close()
-                }
+                assertProductionFixture(winner)
+            } finally {
+                winner.close()
             }
-            assertTrue(source.loadCalls in 1..2)
+            assertEquals(1, source.loadCalls)
             assertEquals(0, source.persistCalls)
             assertEquals(0, source.clearCalls)
+            assertTrue(seededBytes.contentEquals(source.bytes), "Migration must retain the original source")
 
             source.resetCounts()
             val committed = sqliteWorkerConnectionProvider().openConnection(
@@ -1007,8 +1007,14 @@ class SqliteWorkerLegacyMigrationTest {
                 debug = false,
                 config = SqliteConnectionConfig(persistence = source),
             )
-            committed.close()
+            try {
+                assertProductionFixture(committed)
+            } finally {
+                committed.close()
+            }
             assertEquals(0, source.loadCalls)
+            assertEquals(0, source.persistCalls)
+            assertEquals(0, source.clearCalls)
         } finally {
             cleanupMigrationState(dbName)
         }

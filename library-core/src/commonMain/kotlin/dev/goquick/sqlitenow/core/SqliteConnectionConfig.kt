@@ -32,6 +32,8 @@ data class SqliteConnectionConfig(
      * used by SQLiteNow connections.
      */
     val executionContextHook: SqliteNowContextHook? = null,
+    /** SQL tracing is independent of application/debug logging and disabled by default. */
+    val sqlTrace: SqlTracePolicy? = null,
 )
 
 /**

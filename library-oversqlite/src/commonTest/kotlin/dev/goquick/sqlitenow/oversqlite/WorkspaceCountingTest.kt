@@ -6,7 +6,7 @@ import kotlinx.serialization.json.*
 import kotlin.test.*
 
 internal class WorkspaceCountingTest : SurvivorTestSupport() {
-    @Test fun snapshotPreparationSkipsOldScopeReservationScans() = runOwnedWebDatabaseTest {
+    @Test fun snapshotPreparationChargesBoundedOldScopeVisits() = runOwnedWebDatabaseTest {
         withSurvivorFixture { _, db, http, _ ->
             db.execSQL("UPDATE _sync_apply_state SET apply_mode=1")
             for (index in 0..99) db.execSQL("INSERT INTO nodes VALUES('Z${index.toString().padStart(4, '0')}','unrelated',NULL)")
@@ -15,7 +15,7 @@ internal class WorkspaceCountingTest : SurvivorTestSupport() {
                 SELECT a.schema_name,a.table_name,json_object('id',n.id),a.row_version,a.server_kind,
                 json_set(a.server_payload,'$.id.value',n.id,'$.name.value',n.name),a.server_provenance,1,0
                 FROM nodes n CROSS JOIN _sync_row_state a WHERE n.id LIKE 'Z%' AND a.key_json='{"id":"P"}'""")
-            val config = OversqliteConfig(1, nodeTables, "fixture", "main", maxSyncWorkUnitsPerInvocation = 1)
+            val config = OversqliteConfig(1, nodeTables, "fixture", "main", maxSyncWorkUnitsPerInvocation = 1_000_000)
             val generation = OversqliteContractStore(db).readGeneration(1)
             val validated = SyncRuntimeInitializer(config, TableInfoCache()).validateConfig(db).withGeneration(generation)
             val state = RuntimeState(validated, AdmittedOversqliteContract("v1", generation, testWireLimits(), false),
@@ -25,16 +25,20 @@ internal class WorkspaceCountingTest : SurvivorTestSupport() {
             val unit = applyUnit("snapshot", 2, "bounded-empty")
             val operations = OversqliteClientOperationController(config, resources, SnapshotDiagnosticsState()) {}
             val owner = OversqliteApplySurvivors(db, local, config, operations, json)
-            db.transaction(TransactionMode.IMMEDIATE) {
-                owner.prepare(state, unit, 0, "snapshot", 2) { error("empty snapshot has no roots") }
-            }
+            db.transaction(TransactionMode.IMMEDIATE) { owner.prepare(state,unit,0,"snapshot",2) {error("empty snapshot has no roots")} }
+            assertTrue(operations.usedSyncWork() in 2..config.maxSyncWorkUnitsPerInvocation,"current old-scope/schema visits are charged; public tiny targets are covered by SnapshotStagingResumeTest and AutomaticRecoveryTest")
             assertEquals("ready", scalarText(db, "SELECT phase FROM _sync_apply_plan"))
-            assertEquals(0L, scalarLong(db, "SELECT atomic_work FROM _sync_apply_plan"))
-            assertTrue(operations.usedSyncWork() > config.maxSyncWorkUnitsPerInvocation)
-            val nextOperations = OversqliteClientOperationController(config, resources, SnapshotDiagnosticsState()) {}
-            val nextOwner = OversqliteApplySurvivors(db, local, config, nextOperations, json)
-            nextOwner.prepare(state, unit, 0, "snapshot", 2) { error("empty") }
-            assertTrue(nextOperations.usedSyncWork() > config.maxSyncWorkUnitsPerInvocation)
+            assertEquals(0L,scalarLong(db, "SELECT atomic_work FROM _sync_apply_plan"),"no preservation rows; charged schema/old-scope visits are measured by operations above")
+
+            val nextConfig=config.copy(maxSyncWorkUnitsPerInvocation=1)
+            val nextOperations = OversqliteClientOperationController(nextConfig, resources, SnapshotDiagnosticsState()) {}
+            val nextOwner = OversqliteApplySurvivors(db, local, nextConfig, nextOperations, json)
+            var seeded=false
+            val pending=assertFailsWith<ApplyProgressPending> { nextOwner.prepare(state, unit, 0, "snapshot", 2) { seeded=true;error("ready resume never seeds") } }
+            val refusal=assertIs<SyncWorkLimitException>(pending.result)
+            assertEquals(unit,refusal.unit);assertEquals(1L,refusal.limit)
+            assertFalse(seeded,"work refusal must not mask a repeated root callback")
+            assertTrue(nextOperations.usedSyncWork() > nextConfig.maxSyncWorkUnitsPerInvocation)
             assertEquals(104L, scalarLong(db, "SELECT count(*) FROM nodes"))
             assertEquals(104L, scalarLong(db, "SELECT count(*) FROM _sync_row_state"))
             assertEquals(1L, scalarLong(db, "SELECT last_bundle_seq_seen FROM _sync_attachment_state"))

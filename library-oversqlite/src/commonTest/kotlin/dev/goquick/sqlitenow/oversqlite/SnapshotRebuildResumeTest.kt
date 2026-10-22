@@ -8,7 +8,7 @@ internal class SnapshotRebuildResumeTest : SurvivorTestSupport() {
         verifyResume(preserveIntent = false, invalidate = false)
     }
 
-    @Test fun sourceRecoveryRetainsStageAndFrozenIntentAcrossWorkYields() = runOwnedWebDatabaseTest {
+    @Test fun refusedFrozenIntentSettlesBeforeSourceRecoveryWorkYields() = runOwnedWebDatabaseTest {
         verifyResume(preserveIntent = true, invalidate = false)
     }
 
@@ -20,8 +20,9 @@ internal class SnapshotRebuildResumeTest : SurvivorTestSupport() {
         withSurvivorFixture { server, db, http, original ->
             if (preserveIntent) {
                 db.execSQL("UPDATE nodes SET name='frozen L' WHERE id='P'")
-                server.beforePushCommit = { throw CancellationException("retain intent") }
+                server.beforePushResponse = { throw CancellationException("retain intent") }
                 assertFailsWith<CancellationException> { original.pushPending().getOrThrow() }
+                settleFrozenBeforeCleanRecovery(db,original,server)
             }
             original.closeFromCoordinatedOwner()
             val client = newClient(db, http, syncTables = nodeTables, workUnits = 64)
@@ -38,13 +39,13 @@ internal class SnapshotRebuildResumeTest : SurvivorTestSupport() {
                 val afterCut = baselineQualificationVector(db, listOf("nodes"))
                 for (table in listOf("nodes", "_sync_row_state", "_sync_relationships", "_sync_outbox_rows", "_sync_outbox_bundle"))
                     assertEquals(before.rows(table), afterCut.rows(table), "cancellation leaves $table unchanged")
-                assertEquals(1L, scalarLong(db, "SELECT last_bundle_seq_seen FROM _sync_attachment_state"))
+                assertEquals(if(preserveIntent) 2L else 1L, scalarLong(db, "SELECT last_bundle_seq_seen FROM _sync_attachment_state"))
                 if (invalidate) db.execSQL("UPDATE _sync_conflict_state SET baseline_revision=baseline_revision+1")
                 assertTrue(client.workSliceDiagnostics().workSlices > 0, "the cancelled operation crossed a committed slice")
                 client.rebuild().getOrThrow()
                 assertEquals(requests + if (invalidate) 2 else 1, server.snapshotSessionCreateRequestCount)
                 assertEquals(if (preserveIntent) "frozen L" else "parent", scalarText(db, "SELECT name FROM nodes WHERE id='P'"))
-                assertEquals("parent", scalarText(db, "SELECT json_extract(server_payload,'$.name.value') FROM _sync_row_state WHERE json_extract(key_json,'$.id')='P'"))
+                assertEquals(if(preserveIntent) "frozen L" else "parent", scalarText(db, "SELECT json_extract(server_payload,'$.name.value') FROM _sync_row_state WHERE json_extract(key_json,'$.id')='P'"))
                 assertEquals(0L, scalarLong(db, "SELECT count(*) FROM pragma_foreign_key_check"))
                 for (table in listOf("_sync_snapshot_stage", "_sync_apply_plan", "_sync_apply_rows", "_sync_apply_edges"))
                     assertEquals(0L, scalarLong(db, "SELECT count(*) FROM $table"), table)
@@ -54,8 +55,8 @@ internal class SnapshotRebuildResumeTest : SurvivorTestSupport() {
                     val after = baselineQualificationVector(db, listOf("nodes"))
                     assertEquals(before.rows("_sync_outbox_rows").map { it - "source_bundle_id" },
                         after.rows("_sync_outbox_rows").map { it - "source_bundle_id" })
-                    assertEquals(1L, scalarLong(db, "SELECT source_bundle_id FROM _sync_outbox_rows"))
-                    assertEquals(1L, scalarLong(db, "SELECT source_bundle_id FROM _sync_outbox_bundle"))
+                    assertEquals(0L, scalarLong(db, "SELECT count(*) FROM _sync_outbox_rows"))
+                    assertEquals(0L, scalarLong(db, "SELECT source_bundle_id FROM _sync_outbox_bundle"))
                     client.closeFromCoordinatedOwner()
                     // The tiny target isolates snapshot preparation. Replay the
                     // retained intent with the ordinary public work target.

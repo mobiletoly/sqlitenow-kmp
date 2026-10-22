@@ -24,7 +24,7 @@ internal val oversqliteManagedIndexes = baselineIndexDdl.keys + pushIndexDdl.key
 internal val oversqliteStaticTriggers = setOf(
     "_sync_conflict_revision_insert", "_sync_conflict_revision_update", "_sync_conflict_revision_delete",
  "_sync_baseline_revision_insert", "_sync_baseline_revision_update", "_sync_baseline_revision_delete",
-) + snapshotStageAccountingDdl.keys
+) + snapshotStageAccountingDdl.keys + "_sync_provenance_context_immutable"
 
 private enum class RetainedRuntimeCensus { FRESH, CURRENT }
 
@@ -103,6 +103,8 @@ internal suspend fun inspectRetainedRuntime(db: SafeSQLiteConnection): String {
             require(retainedSqlSignature(objects.single { it.name==name }.sql)==retainedSqlSignature(ddl)) { "malformed retained trigger $name" }
         }
     }
+    require(retainedSqlSignature(objects.single { it.name=="_sync_provenance_context_immutable" }.sql)==retainedSqlSignature(provenanceImmutableTriggerDdl)) { "malformed immutable context trigger" }
+    OversqliteProvenanceContextStore(db).validateRetained()
     validateRetainedCaptureTriggers(db)
     inspectOversqliteOpeningExtension(db, openingExists)
     return RetainedRuntimeCensus.CURRENT.name
@@ -137,6 +139,9 @@ private fun requireExactReservedObjects(objects: List<RetainedObject>) {
             else -> when {
  name in setOf("_sync_apply_rows_pending_idx","_sync_apply_rows_role_ordinal_idx") -> "_sync_apply_rows"
  name in snapshotStageAccountingDdl -> "_sync_snapshot_stage"
+ name=="_sync_provenance_context_immutable" -> "_sync_provenance_contexts"
+ name=="_sync_outbox_rows_context_idx" -> "_sync_outbox_rows"
+ name=="_sync_row_state_context_idx" -> "_sync_row_state"
  name.startsWith("_sync_push_nodes_") -> "_sync_push_nodes"
  name.startsWith("_sync_push_edges_") -> "_sync_push_edges"
  name=="_sync_relationships_parent_idx" -> "_sync_relationships"

@@ -69,6 +69,7 @@ internal data class PushOutboundSnapshot(
     val rows: List<DirtyRowCapture>,
     val canonicalRows: List<OversqliteOutboxRow>,
     val canonicalRequestHash: String,
+    val fresh: Boolean = false,
 )
 
 internal data class CommittedPushBundle(

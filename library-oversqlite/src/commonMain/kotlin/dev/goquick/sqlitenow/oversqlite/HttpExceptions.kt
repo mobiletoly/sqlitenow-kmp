@@ -149,7 +149,8 @@ class SourceReplacementInvalidHttpException(
 class PushConflictException(
     rawBody: String,
     val response: PushConflictResponse,
-) : UploadHttpException(HttpStatusCode.Conflict, rawBody) {
+    statusCode: HttpStatusCode = HttpStatusCode.Conflict,
+) : UploadHttpException(statusCode, rawBody) {
     override val category: OversqliteErrorCategory = OversqliteErrorCategory.CONFLICT
 
     val conflict: PushConflictDetails
@@ -166,32 +167,6 @@ internal fun DownloadHttpException.toHistoryPrunedOrNull(): HistoryPrunedExcepti
         expectedError = "history_pruned",
     ) ?: return null
     return HistoryPrunedException("server history required for incremental sync has been pruned")
-}
-
-internal fun decodePushConflictExceptionOrNull(
-    status: HttpStatusCode,
-    rawBody: String,
-): PushConflictException? {
-    if (status != HttpStatusCode.Conflict) return null
-    val root = runCatching { httpErrorJson.parseToJsonElement(rawBody) as JsonObject }.getOrNull() ?: return null
-    if ((root["error"] as? JsonPrimitive)?.content != "push_conflict") return null
-    require(root.keys == setOf("error", "message", "conflict")) {
-        "push conflict response fields are invalid"
-    }
-    val conflictObject = root["conflict"] as? JsonObject
-        ?: throw RemoteResponseSemanticException("push conflict response")
-    val required = setOf(
-        "schema", "table", "key", "op", "base_row_version",
-        "server_row_version", "server_row_deleted", "server_row",
-    )
-    require(conflictObject.keys == required) {
-        "push conflict response fields are invalid"
-    }
-    val response = runCatching { httpErrorJson.decodeFromString<PushConflictResponse>(rawBody) }
-        .getOrElse { throw RemoteResponseDecodeException("push conflict response") }
-    if (response.error != "push_conflict" || response.conflict == null) return null
-    validatePushConflictDetails(response.conflict)
-    return PushConflictException(rawBody = "", response = response.copy(message = ""))
 }
 
 internal fun decodePushReplayHistoryPrunedExceptionOrNull(

@@ -30,6 +30,10 @@ internal class CrossTargetSyncIntegrationTest : CrossTargetSyncTestSupport() {
             for(path in paths) seedDb.execSQL("VACUUM INTO '$path'")
             server.wireLimits=testWireLimits().copy(maxPushRows=1)
             for((index,path) in paths.withIndex()) {
+                val server=MockSyncServer()
+                server.addRemoteBundleForTest(listOf(BundleRow("main","users",mapOf("id" to "P"),"INSERT",1,json.parseToJsonElement("""{"id":"P","name":"same"}"""))))
+                server.wireLimits=testWireLimits().copy(maxPushRows=1)
+                val http=server.newHttpClient()
                 var db=newFileBackedDb(path);var client=newClient(db,http,maxPushRows=1)
                 try {
                     client.openAndConnect("user-1").getOrThrow()
@@ -53,7 +57,9 @@ internal class CrossTargetSyncIntegrationTest : CrossTargetSyncTestSupport() {
                     server.beforePushCommit={error("qualification insertion validation refusal")}
                     val refused=client.pushPending();assertTrue(refused.isFailure)
                     val failed=baselineQualificationVector(db)
-                    for(owner in listOf("users","posts","_sync_row_state","_sync_relationships","_sync_source_state","_sync_attachment_state")) assertEquals(prefix.rows(owner),failed.rows(owner),owner)
+                    for(owner in listOf("users","posts","_sync_row_state","_sync_relationships","_sync_attachment_state")) assertEquals(prefix.rows(owner),failed.rows(owner),owner)
+                    assertBaselineCounters(failed,source,3,2)
+                    assertEquals(outboxStatePrepared,scalarText(db,"SELECT state FROM _sync_outbox_bundle"))
                     assertEquals(1,failed.rows("_sync_outbox_rows").size)
                     val frozenQ=failed.row("_sync_outbox_rows","Q")
                     for(column in listOf("op","base_kind","base_payload","base_provenance","base_row_version")) assertEquals(q[column],frozenQ[column],column)
@@ -62,15 +68,34 @@ internal class CrossTargetSyncIntegrationTest : CrossTargetSyncTestSupport() {
                     val frozenWire=server.pushBodies.last();val calls=server.pushRequestCount
                     client.closeFromCoordinatedOwner();db.close();db=newFileBackedDb(path);client=newClient(db,http,maxPushRows=1)
                     client.openAndConnect("user-1").getOrThrow();assertEquals(failed,baselineQualificationVector(db))
+                    client.pushPending().getOrThrow()
+                    assertEquals(calls,server.pushRequestCount,"uncommitted F resolves without retransmission")
+                    assertEquals(1,server.resolveRequests.size)
+                    val canceled=baselineQualificationVector(db)
+                    assertBaselineCounters(canceled,source,4,2)
+                    assertTrue(canceled.rows("_sync_outbox_rows").isEmpty())
+                    for(owner in listOf("users","posts","_sync_row_state","_sync_relationships","_sync_attachment_state")) assertEquals(failed.rows(owner),canceled.rows(owner),owner)
                     server.beforePushCommit={error("qualification repeated validation refusal")}
                     assertTrue(client.pushPending().isFailure)
-                    assertEquals(frozenWire,server.pushBodies.last());assertEquals(calls+1,server.pushRequestCount)
-                    assertEquals(failed,baselineQualificationVector(db));assertTrue(server.remoteRowsForBaselineTest().isEmpty())
+                    assertEquals(calls+1,server.pushRequestCount)
+                    val originalRequest=json.decodeFromString(CompletePushRequest.serializer(),frozenWire)
+                    val successor=json.decodeFromString(CompletePushRequest.serializer(),server.pushBodies.last())
+                    assertEquals(originalRequest.sourceBundleId+1,successor.sourceBundleId)
+                    assertEquals(originalRequest.canonicalRequestHash,successor.canonicalRequestHash)
+                    assertEquals(originalRequest.rows,successor.rows)
+                    val refusedAgain=baselineQualificationVector(db)
+                    assertBaselineCounters(refusedAgain,source,4,2)
+                    assertEquals(outboxStatePrepared,scalarText(db,"SELECT state FROM _sync_outbox_bundle"))
+                    assertEquals(successor.canonicalRequestHash,refusedAgain.rows("_sync_outbox_bundle").single().text("canonical_request_hash"))
+                    for(owner in listOf("users","posts","_sync_row_state","_sync_relationships","_sync_attachment_state")) assertEquals(failed.rows(owner),refusedAgain.rows(owner),owner)
+                    val successorQ=refusedAgain.row("_sync_outbox_rows","Q")
+                    for((column,value) in frozenQ) if(column!="source_bundle_id") assertEquals(value,successorQ[column],column)
+                    assertTrue(server.remoteRowsForBaselineTest().isEmpty())
                     println("A2-04 rekey history=$index before=${before.tables} prefix=${prefix.tables} failure=${failed.tables} wire=${server.pushBodies} remote=${server.remoteRowsForBaselineTest()}")
-                } finally {client.closeFromCoordinatedOwner();db.close()}
+                } finally {client.closeFromCoordinatedOwner();db.close();http.close()}
             }
             assertEquals(facts[0],facts[1],"identical copied source contexts and complete durable facts")
-            assertEquals(wires[0],wires[1],"actual primitive compact selection; second mock receipt is exact replay")
+            assertEquals(wires[0],wires[1],"identical primitive compact selection under isolated copied source contexts")
         } finally {seed.closeFromCoordinatedOwner();seedDb.close();http.close();for(path in paths+seedPath) deleteTempSqliteNowTestDbArtifacts(path)}
     }
 
@@ -660,12 +685,19 @@ internal class CrossTargetSyncIntegrationTest : CrossTargetSyncTestSupport() {
             val snapshotsBefore = server.snapshotSessionCreateRequestCount
             val sourceBefore = scalarText(db, "SELECT current_source_id FROM _sync_attachment_state")
 
+            assertTrue(client.sync().isFailure)
+            assertTrue(lateWriteRan)
+            assertEquals(2L,scalarLong(db,"SELECT count(*) FROM _sync_dirty_rows"))
+            assertEquals(pushesBefore,server.pushRequestCount,"new snapshot-gate writes wait for the next public invocation")
+            assertEquals(0L,scalarLong(db,"SELECT last_bundle_seq_seen FROM _sync_attachment_state"))
+            assertEquals("Local A",scalarText(db,"SELECT name FROM users WHERE id='late-a'"))
+            assertEquals("Local B",scalarText(db,"SELECT name FROM users WHERE id='late-b'"))
             val report = client.sync().getOrThrow()
             assertTrue(lateWriteRan)
             assertEquals(PushOutcome.COMMITTED, report.pushOutcome)
             assertEquals(RemoteSyncOutcome.APPLIED_SNAPSHOT, report.remoteOutcome)
             assertEquals(2, server.pushRequestCount - pushesBefore)
-            assertEquals(1, server.pullRequestCount - pullsBefore)
+            assertEquals(2, server.pullRequestCount - pullsBefore,"historical discovery and ordinary post-T pull")
             assertEquals(2, server.snapshotSessionCreateRequestCount - snapshotsBefore)
             assertEquals(sourceBefore, scalarText(db, "SELECT current_source_id FROM _sync_attachment_state"))
             assertEquals(0L, scalarLong(db, "SELECT rebuild_required FROM _sync_attachment_state"))
@@ -685,7 +717,7 @@ internal class CrossTargetSyncIntegrationTest : CrossTargetSyncTestSupport() {
     }
 
     @Test
-    fun oneSyncRecoveryDrainsSeveralBatchesAndLateSnapshotGateWrite() = runOwnedWebDatabaseTest {
+    fun syncDrainsBacklogThenPreservesNewSnapshotGateWriteForNextInvocation() = runOwnedWebDatabaseTest {
         val server = MockSyncServer()
         val db = newDb()
         val http = server.newHttpClient()
@@ -694,7 +726,12 @@ internal class CrossTargetSyncIntegrationTest : CrossTargetSyncTestSupport() {
             val client = newClient(db, http, maxPushRows = 1)
             client.openAndConnect("user-1").getOrThrow()
             repeat(3) { insertUser(db, "recovery-$it", "Local $it") }
-            db.execSQL("UPDATE _sync_attachment_state SET rebuild_required = 1 WHERE singleton_key = 1")
+            val initial=client.sync().getOrThrow()
+            assertEquals(PushOutcome.COMMITTED,initial.pushOutcome)
+            assertEquals(3,server.pushRequestCount)
+            assertEquals(0L,scalarLong(db,"SELECT count(*) FROM _sync_dirty_rows"))
+            server.addRemoteBundleForTest(emptyList())
+            server.retainedBundleFloor=4
             var lateWriteRan = false
             server.beforeSnapshotChunkResponse = {
                 lateWriteRan = true
@@ -704,10 +741,15 @@ internal class CrossTargetSyncIntegrationTest : CrossTargetSyncTestSupport() {
             val pushesBefore = server.pushRequestCount
             val snapshotsBefore = server.snapshotSessionCreateRequestCount
 
+            assertTrue(client.sync().isFailure)
+            assertTrue(lateWriteRan)
+            assertEquals(pushesBefore,server.pushRequestCount)
+            assertEquals(1L,scalarLong(db,"SELECT count(*) FROM _sync_dirty_rows"))
+            assertEquals("Late local",scalarText(db,"SELECT name FROM users WHERE id='recovery-late'"))
             val report = client.sync().getOrThrow()
             assertTrue(lateWriteRan)
             assertEquals(PushOutcome.COMMITTED, report.pushOutcome)
-            assertEquals(4, server.pushRequestCount - pushesBefore)
+            assertEquals(1, server.pushRequestCount - pushesBefore)
             assertTrue(server.snapshotSessionCreateRequestCount - snapshotsBefore >= 2)
             assertEquals(sourceBefore, scalarText(db, "SELECT current_source_id FROM _sync_attachment_state"))
             assertEquals(0L, scalarLong(db, "SELECT rebuild_required FROM _sync_attachment_state"))
@@ -1213,11 +1255,12 @@ internal class CrossTargetSyncIntegrationTest : CrossTargetSyncTestSupport() {
             client.sync().getOrThrow()
 
             assertEquals(2, server.pushRequestCount)
+            assertEquals(1,server.resolveRequests.size,"uncommitted canceled F resolves before successor publication")
             assertEquals(0L, scalarLong(db, "SELECT COUNT(*) FROM _sync_dirty_rows"))
             assertEquals(0L, scalarLong(db, "SELECT COUNT(*) FROM _sync_outbox_rows"))
             assertEquals(outboxStateNone, scalarText(db, "SELECT state FROM _sync_outbox_bundle"))
             assertEquals(
-                nextSourceBundleId + 1L,
+                nextSourceBundleId + 2L,
                 scalarLong(db, "SELECT next_source_bundle_id FROM _sync_source_state WHERE source_id = '$sourceId'"),
             )
         } finally {
@@ -1915,7 +1958,7 @@ internal class CrossTargetSyncIntegrationTest : CrossTargetSyncTestSupport() {
     }
 
     @Test
-    fun sourceRetiredOnPush_persistsReplacementAcrossRestartAndRotatedRebuildReusesIt() =
+    fun sourceRecoveryAfterCommittedReplyLossWaitsForOutcomeAcrossRestartBeforeRotation() =
         runOwnedWebDatabaseTest {
         val server = MockSyncServer()
         val db = newDb()
@@ -1936,17 +1979,11 @@ internal class CrossTargetSyncIntegrationTest : CrossTargetSyncTestSupport() {
 
             val sourceBefore = scalarText(db, "SELECT current_source_id FROM _sync_attachment_state")
             insertUser(db, "u1", "Rotated Writer")
-            server.sourceRetiredOnPush = SourceRetiredResponse(
-                error = "source_retired",
-                message = "source retired on create",
-                sourceId = sourceBefore,
-                replacedBySourceId = "server-rotated-device",
-            )
-
-            val pushError = assertFailsWith<SourceRecoveryRequiredException> {
-                client.pushPending().getOrThrow()
+            server.beforePushResponse={
+                markSourceRecoveryRequired(db,SourceRecoveryReason.SOURCE_RETIRED,"server-rotated-device")
+                throw CancellationException("committed reply lost before source recovery")
             }
-            assertEquals(SourceRecoveryReason.SOURCE_RETIRED, pushError.reason)
+            assertFailsWith<CancellationException> { client.pushPending().getOrThrow() }
             assertEquals("source_retired", scalarText(db, "SELECT reason FROM _sync_operation_state"))
             assertEquals("server-rotated-device", scalarText(db, "SELECT replacement_source_id FROM _sync_operation_state"))
             assertEquals(1L, scalarLong(db, "SELECT rebuild_required FROM _sync_attachment_state"))
@@ -1958,6 +1995,15 @@ internal class CrossTargetSyncIntegrationTest : CrossTargetSyncTestSupport() {
             val restartedClient = newClient(db, http)
             restartedClient.open().getOrThrow()
             restartedClient.attach("user-1").getOrThrow()
+            val frozen=baselineQualificationVector(db,listOf("users","posts","_sync_upload_journal"))
+            val snapshots=server.snapshotSessionCreateRequestCount
+            val resolves=server.resolveRequests.size;val acks=server.ackRequests.size
+            assertTrue(restartedClient.rebuild().isFailure)
+            assertEquals(frozen,baselineQualificationVector(db,listOf("users","posts","_sync_upload_journal")))
+            assertEquals(snapshots,server.snapshotSessionCreateRequestCount)
+            assertEquals(resolves,server.resolveRequests.size);assertEquals(acks,server.ackRequests.size)
+            restartedClient.pushPending().getOrThrow()
+            assertEquals(1,server.resolveRequests.size)
             restartedClient.rebuild().getOrThrow()
 
             assertEquals(

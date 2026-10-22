@@ -701,32 +701,18 @@ private class DefaultOversqliteOpening<D : SqliteNowDatabase>(
                     require(pendingRejection(connection, current) == selected) {
                         "selected definitive rejection is stale; inspect pendingRejection() again"
                     }
-                    if (discard) {
-                        connection.execSQL(
-                            """
-                            DELETE FROM _sync_dirty_rows
-                            WHERE EXISTS (
-                                SELECT 1 FROM _sync_outbox_rows o
-                                WHERE o.source_bundle_id = ${selected.sourceBundleId}
-                                  AND o.schema_name = _sync_dirty_rows.schema_name
-                                  AND o.table_name = _sync_dirty_rows.table_name
-                                  AND o.key_json = _sync_dirty_rows.key_json
-                            )
-                            """.trimIndent(),
-                        )
-                        connection.execSQL("DELETE FROM _sync_outbox_rows WHERE source_bundle_id=${selected.sourceBundleId}")
-                        connection.execSQL(
-                            """
-                            UPDATE _sync_outbox_bundle SET state='none',source_id='',source_bundle_id=0,
-                                initialization_id='',canonical_request_hash='',row_count=0
-                            WHERE singleton_key=1
-                            """.trimIndent(),
-                        )
-                    }
+                    val outbox=OversqliteOutboxStateStore(connection)
+                    val policy=OversqliteConflictStateStore(connection,kotlinx.serialization.json.Json)
+                    checkNotNull(policy.applicationRejection()) { "missing retained real rejection" }
+                    if(!discard) outbox.requeueRejectedIntent(config,current.fromGenerationId)
+                    // Dirty rows were captured after F and always survive an
+                    // explicit discard of only the selected frozen operation.
+                    outbox.clearBundleAndRows()
+                    policy.clear()
                     val next = current.copy(
                         outcome = "", revision = current.revision + 1L,
                         pendingDirtyCount = connection.scalarLong("SELECT count(*) FROM _sync_dirty_rows"),
-                        pendingFrozenCount = if (discard) 0L else current.pendingFrozenCount,
+                        pendingFrozenCount = 0L,
                         pendingRequestHash = "", pendingIntentRevision = 0,
                         failureCode = "", failureMessage = "", nextAction = "advance",
                     )
@@ -756,7 +742,7 @@ private class DefaultOversqliteOpening<D : SqliteNowDatabase>(
         val intentRevision = connection.scalarLong(
             "SELECT dirty_revision FROM _sync_conflict_state WHERE singleton_key=1",
         )
-        require(outbox.state == outboxStatePrepared && outbox.sourceId == record.oldSourceId &&
+        require(outbox.state == outboxStateRejected && outbox.sourceId == record.oldSourceId &&
             outbox.sourceBundleId > 0L && outbox.canonicalRequestHash == record.pendingRequestHash &&
             intentRevision == record.pendingIntentRevision
         ) { "durable definitive rejection no longer matches the frozen request" }

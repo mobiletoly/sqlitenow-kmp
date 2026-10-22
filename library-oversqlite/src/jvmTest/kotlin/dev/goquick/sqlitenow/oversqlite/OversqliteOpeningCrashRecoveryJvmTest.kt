@@ -1073,13 +1073,12 @@ private fun schemaevolutionCrashGenerationHttp(
             }
             "/sync/snapshot-sessions" -> respond(
                 Json.encodeToString(
-                    SnapshotSession(
-                        snapshotId = "schemaevolution-snapshot-g${generation.id}",
-                        snapshotBundleSeq = 1,
-                        rowCount = 1,
-                        logicalByteCount = byteCount,
-                        expiresAt = "2099-01-01T00:00:00Z",
-                    ),
+                    run {
+                        val raw=request.bodyText()
+                        val create=if(raw.isEmpty()) null else Json.decodeFromString<SnapshotSessionCreateRequest>(raw)
+                        val source=create?.sourceReplacement?.newSourceId ?: checkNotNull(request.headers["Oversync-Source-ID"])
+                        sealedSnapshotForTest(generation,source,"schemaevolution-snapshot-g${generation.id}",1,listOf(row),create?.recovery)
+                    },
                 ),
                 headers = headersOf(HttpHeaders.ContentType, "application/json"),
             )
@@ -1188,13 +1187,12 @@ private fun crashGenerationHttp(generation: SyncGeneration, includeConnect: Bool
             }
             "/sync/snapshot-sessions" -> respond(
                 Json.encodeToString(
-                    SnapshotSession(
-                        snapshotId = "snapshot-g${generation.id}",
-                        snapshotBundleSeq = 1,
-                        rowCount = 1,
-                        logicalByteCount = byteCount,
-                        expiresAt = "2099-01-01T00:00:00Z",
-                    ),
+                    run {
+                        val raw=request.bodyText()
+                        val create=if(raw.isEmpty()) null else Json.decodeFromString<SnapshotSessionCreateRequest>(raw)
+                        val source=create?.sourceReplacement?.newSourceId ?: checkNotNull(request.headers["Oversync-Source-ID"])
+                        sealedSnapshotForTest(generation,source,"snapshot-g${generation.id}",1,listOf(row),create?.recovery)
+                    },
                 ),
                 headers = headersOf(HttpHeaders.ContentType, "application/json"),
             )

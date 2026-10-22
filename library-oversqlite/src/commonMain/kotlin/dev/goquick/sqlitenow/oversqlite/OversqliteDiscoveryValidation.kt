@@ -16,6 +16,7 @@
 package dev.goquick.sqlitenow.oversqlite
 
 internal fun validateAdmittedWireLimits(limits: OversqliteWireLimits) = with(limits) {
+    require(maxPushOutcomeDecodedBytes in 8194L..(64L*1024*1024+8192)) { "invalid outcome ceiling" }
     require(maxPushRows in 1..100_000) { "max_push_rows exceeds protocol range" }
     require(maxPullBundles in 1..5_000) { "max_pull_bundles exceeds protocol range" }
     require(maxSnapshotRowsPerChunk in 1..100_000) { "max_snapshot_rows_per_chunk exceeds protocol range" }

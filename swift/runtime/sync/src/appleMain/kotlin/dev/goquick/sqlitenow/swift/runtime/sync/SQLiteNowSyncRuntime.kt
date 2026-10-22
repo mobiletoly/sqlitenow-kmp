@@ -670,7 +670,11 @@ class SQLiteNowSyncRuntimeClient private constructor(
 
     @Throws(SQLiteNowSyncRuntimeException::class, CancellationException::class)
     suspend fun pushPending(): SQLiteNowSyncRuntimePushReport = mapSyncRuntimeErrors {
-        inRuntimeScope { client.pushPending().runtimeGet().toRuntimePushReport() }
+        inRuntimeScope {
+            SwiftA3ConflictApplyProbe.aroundPendingUpload(client) {
+                client.pushPending().runtimeGet().toRuntimePushReport()
+            }
+        }
     }
 
     @Throws(SQLiteNowSyncRuntimeException::class, CancellationException::class)

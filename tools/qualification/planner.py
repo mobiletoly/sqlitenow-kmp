@@ -6,6 +6,8 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import errno
+import fnmatch
+import csv
 import hashlib
 import json
 import math
@@ -138,6 +140,294 @@ def load_manifest(path: Path = DEFAULT_MANIFEST) -> tuple[dict[str, Any], str]:
         raise QualificationError(3, "manifest_unreadable", f"cannot read manifest {path}: {error}") from error
     validate_manifest(data)
     return data, sha256_bytes(canonical_bytes(data))
+
+
+def _profile_error(message: str) -> None:
+    raise QualificationError(3, "full_profile_invalid", message)
+
+
+FULL_PROFILE_AUTHORITIES = {
+    "go/AGENTS.md", "go/swagger/two_way_sync.yaml",
+    "go/specs/2026-10-25-oversqlite-qualification-efficiency.md",
+    "go/specs/p0000-oversqlite-protocol-simplification-and-efficiency.md",
+    "go/specs/p0001-oversqlite-fk-safe-sync-and-automatic-resolution.md",
+    "go/specs/r0001-oversqlite-durable-recovery.md",
+    "go/specs/r0001-oversqlite-durable-recovery-validation.md",
+    "go/specs/r0001-oversqlite-durable-recovery-checklist.md",
+    "kotlin/AGENTS.md", "kotlin/docs-engineering/oversqlite-validation.md",
+    "kotlin/docs-engineering/oversqlite-dependency-planning.md",
+    "kotlin/specs/oversqlite-durable-recovery.md",
+    "kotlin/specs/oversqlite-fk-safe-sync-and-automatic-resolution.md",
+    "kotlin/oversqlite-contracts/recovery/authority-pins.json",
+    "kotlin/oversqlite-contracts/local-apply/unique-final-state.json",
+    "kotlin/oversqlite-contracts/MANIFEST.sha256",
+    "kotlin/tools/qualification/profiles/oversqlite-full.schema.json",
+}
+FULL_PROFILE_REVIEW_FILES = {
+    "short-profile.json", "coverage.csv", "proposal.md", "review-inputs.json",
+    "review-outcome.json", "independent-review.md",
+}
+
+
+def _validate_load_schedule(schedule: dict[str, Any]) -> None:
+    entries, aliases = schedule["entries"], schedule["command_aliases"]
+    contracts = _mapping(schedule.get("native_contracts"), "native contracts")
+    if {"load-50", "load-100"}.intersection(contracts.keys() | aliases.keys()):
+        _profile_error("retired load proof is active")
+    names = ["load-1", "load-5", "load-10", "load-25"]
+    if contracts.get("load-sequence", {}).get("members") != names:
+        _profile_error("load sequence must contain four ordered members")
+    for users, name, seconds in zip((1, 5, 10, 25), names, (240, 240, 240, 300)):
+        phase = entries.get("phase-" + name, {})
+        stages = contracts.get(name, {}).get("native_stages", [])
+        if len(stages) != 1:
+            _profile_error("load phase must contain its one complete native scenario")
+        env = stages[0].get("environment", {})
+        if (phase.get("internal_only") is not True or phase.get("parent_contract") != name
+                or type(phase.get("users")) is not int or type(phase.get("concurrency")) is not int
+                or phase.get("users") != users or phase.get("concurrency") != users
+                or phase.get("native_seconds") != seconds
+                or env.get("OVERSQLITE_LOAD_USERS") != str(users)
+                or env.get("OVERSQLITE_LOAD_CONCURRENCY") != str(users)):
+            _profile_error("private load phase dimensions/owner/cap mismatch: " + name)
+    obligation = schedule.get("load_amendment", {}).get("new_obligation", {})
+    if type(obligation.get("users")) is not int or type(obligation.get("concurrency")) is not int or obligation.get("users") != 25 or obligation.get("concurrency") != 25:
+        _profile_error("load maximum must be25users/25concurrency")
+
+
+def validate_full_schedule(schedule: dict[str, Any]) -> None:
+    """Check dispatch invariants independently of the owner-approved seal."""
+    entries = _mapping(schedule.get("entries"), "full-profile entries")
+    if not entries or schedule.get("exceptions") != []:
+        _profile_error("normal-entry exceptions are not authorized")
+    for name, entry in entries.items():
+        if not isinstance(entry, dict) or entry.get("id") != name or entry.get("execution_authorized") is not False:
+            _profile_error("entry identity or static execution flag is invalid: " + name)
+        if not isinstance(entry.get("argv"), list) or not entry["argv"] or not all(isinstance(x, str) and x for x in entry["argv"]):
+            _profile_error("entry argv is empty or malformed: " + name)
+        if not isinstance(entry.get("cwd"), str) or not entry["cwd"] or not isinstance(entry.get("environment"), dict) or any(not isinstance(k, str) or not isinstance(v, str) for k, v in entry["environment"].items()):
+            _profile_error("entry cwd/environment is malformed: " + name)
+        for flag in ("orchestration_only", "internal_only", "not_a_normal_dispatch_unit"):
+            if flag in entry and type(entry[flag]) is not bool:
+                _profile_error("entry flag must be boolean: " + name + "." + flag)
+        if entry.get("orchestration_only"):
+            if entry.get("wall_seconds") is not None or not entry.get("not_a_normal_dispatch_unit"):
+                _profile_error("phase controller must not be a normal dispatch unit: " + name)
+            continue
+        wall, native, cleanup = (entry.get(key) for key in ("wall_seconds", "native_seconds", "cleanup_seconds"))
+        if any(type(x) is not int for x in (wall, native, cleanup)) or not 0 < native <= wall <= 300 or not 0 <= cleanup <= 30 or native + cleanup > wall:
+            _profile_error("entry exceeds its normal/native/cleanup budget: " + name)
+        argv = entry["argv"]
+        if len(argv) < 4 or Path(argv[0]).name != "run-with-timeout.pl" or argv[1:3] != [str(native), "--"]:
+            _profile_error("entry must use its exact bounded native wrapper: " + name)
+    roots = _mapping(schedule.get("logical_roots"), "full-profile roots")
+    aliases = _mapping(schedule.get("command_aliases"), "full-profile aliases")
+    for name, members in [(key, value.get("members")) for key, value in roots.items()] + list(aliases.items()):
+        if not isinstance(members, list) or not members or len(members) != len(set(members)) or any(x not in entries for x in members):
+            _profile_error("missing, duplicate or unknown members: " + name)
+    _validate_load_schedule(schedule)
+
+
+def _full_profile_review(profile: dict[str, Any]) -> None:
+    reviewed, approval = profile["reviewed_inputs"], profile["approval"]
+    if set(reviewed["files"]) != FULL_PROFILE_REVIEW_FILES:
+        _profile_error("reviewed file inventory differs from the adopted version2 inventory")
+    packet = Path(profile["roots"]["go"]) / normalize_relative_path(reviewed["packet"], "review packet")
+    for name, digest in reviewed["files"].items():
+        if sha256_file(packet / name) != digest:
+            _profile_error("reviewed input drift: " + name)
+    checks = {"short-profile.json": "approved_schedule_sha256", "coverage.csv": "coverage_sha256",
+              "review-inputs.json": "review_inputs_sha256", "review-outcome.json": "review_outcome_sha256"}
+    if any(sha256_file(packet / name) != approval[key] for name, key in checks.items()):
+        _profile_error("owner approval does not bind the complete reviewed proposal")
+    if json.loads((packet / "short-profile.json").read_text()) != profile["schedule"]:
+        _profile_error("schedule differs from the exact owner-approved proposal")
+    frozen = json.loads((packet / "review-inputs.json").read_text())["inputs"]
+    for name in ("short-profile.json", "coverage.csv", "proposal.md"):
+        if frozen.get(str(packet / name)) != reviewed["files"][name]:
+            _profile_error("review input seal disagrees with the approved artifact: " + name)
+    outcome = json.loads((packet / "review-outcome.json").read_text())
+    if outcome.get("status") != "ready for owner approval" or outcome.get("blocking_findings") != [] or outcome.get("frozen_review_inputs_sha256") != approval["review_inputs_sha256"]:
+        _profile_error("missing final independent review disposition")
+
+
+def load_full_profile(path: Path, root: Path, go: Path) -> tuple[dict[str, Any], str]:
+    """Read adopted authority without granting execution or accepting evidence."""
+    try:
+        raw = path.read_bytes()
+        profile = json.loads(raw)
+        if type(profile.get("schema_version")) is not int or profile.get("schema_version") != 2 or profile.get("profile_id") != "oversqlite-full" or profile.get("status") != "adopted-authority-execution-gated":
+            _profile_error("expected adopted version2 full-profile authority")
+        if profile.get("execution_gate", {}).get("enabled") is not False:
+            _profile_error("static authority cannot enable automatic execution")
+        schedule = _mapping(profile.get("schedule"), "full-profile schedule")
+        validate_full_schedule(schedule)
+        roots = {"go": go.resolve(), "kotlin": root.resolve()}
+        authorities = _mapping(profile.get("authority_inputs"), "authority inputs")
+        if set(authorities) != FULL_PROFILE_AUTHORITIES:
+            _profile_error("authority inventory differs from the adopted version2 inventory")
+        for name, digest in authorities.items():
+            repo, relative = name.split("/", 1)
+            normalize_relative_path(relative, "authority file")
+            if repo not in roots or sha256_file(roots[repo] / relative) != digest:
+                _profile_error("authority input drift: " + name)
+        _full_profile_review(profile)
+        return profile, sha256_bytes(raw)
+    except QualificationError:
+        raise
+    except (OSError, ValueError, KeyError, TypeError, AttributeError) as error:
+        raise QualificationError(3, "full_profile_invalid", f"unreadable or incomplete full-profile binding: {error}") from error
+
+
+def profile_source_anchor(root: Path, go: Path, *, inspector=None, deadline: float | None = None) -> str:
+    """Seal the complete source census, including newly added files and index state."""
+    def budget():
+        seconds = 10 if deadline is None else min(10, deadline - time.monotonic())
+        if seconds <= 0:
+            raise QualificationError(5, 'profile_source_deadline', 'source anchor exceeded its remaining entry budget')
+        return seconds
+    def probe(repository, *args):
+        seconds = budget()
+        if inspector is not None:
+            return inspector(['git', *args], seconds, cwd=repository).encode()
+        process = subprocess.run(['git','-C',str(repository),*args],check=True,capture_output=True,timeout=seconds)
+        return process.stdout
+    def file_hash(path):
+        digest = hashlib.sha256()
+        budget()
+        with path.open('rb') as stream:
+            while True:
+                budget()
+                block = stream.read(1 << 20)
+                if not block:
+                    break
+                digest.update(block)
+        budget()
+        return digest.hexdigest()
+    sources = {}
+    for name, repository in (('kotlin', root.resolve()), ('go', go.resolve())):
+        names = probe(repository, 'ls-files', '-z', '--cached', '--others', '--exclude-standard').decode().split('\0')
+        files = {}
+        for relative in sorted(set(filter(None, names))):
+            path = repository / relative
+            if not path.is_file():
+                raise QualificationError(5, 'profile_source_unreadable', relative)
+            budget()
+            files[relative] = {'sha256': file_hash(path), 'mode': stat.S_IMODE(path.stat().st_mode)}
+        sources[name] = dict(root=str(repository), head=probe(repository, 'rev-parse', 'HEAD').decode().strip(),
+            index_sha256=sha256_bytes(probe(repository, 'ls-files', '--stage', '-z')), files=files)
+    budget()
+    return sha256_bytes(canonical_bytes(sources))
+
+
+def effective_profile_entry(profile: dict[str, Any], entry: dict[str, Any]) -> dict[str, Any]:
+    """Bind retained focused JVM selectors to their existing adopted owner census."""
+    if entry.get('parent_command') in ('isolation-macos', 'isolation-browser'):
+        runtime = 'macos' if entry['parent_command'] == 'isolation-macos' else 'browser'
+        argv = entry['argv']
+        selectors = [argv[index + 1] for index, value in enumerate(argv[:-1]) if value == '--tests']
+        owner = 'dev.goquick.sqlitenow.oversqlite.realserver.OrdinarySafetyLiveTest.committedReplayWith1000RowsWidth16'
+        if selectors != [owner] or argv[1:3] != ['270', '--']:
+            _profile_error('isolation child must retain its exact approved workload and short wrapper')
+        candidates = [item for item in profile['schedule']['entries'].values()
+                      if item.get('runtime') == runtime and item.get('task') == argv[4]
+                      and owner in item.get('expected_source_owners', [])]
+        if not candidates:
+            _profile_error('isolation child has no adopted owning method')
+        preparation = sorted({name for item in candidates for name in item.get('preparation_tasks', [])})
+        return dict(entry, kind='native', task=argv[4], runtime=runtime, expected_source_owners=[owner],
+            preparation_tasks=preparation, wall_seconds=300, native_seconds=270, cleanup_seconds=30,
+            orchestration_only=False, not_a_normal_dispatch_unit=False, isolation_only=True,
+            context=entry['parent_command'],
+            owner_inventory_source='bounded child of the named isolation accounting recipe; exact unchanged workload')
+    if entry.get('parent_command') not in ('core-jvm-focused', 'oversqlite-invalidation-focused'):
+        return entry
+    argv = entry['argv']
+    if len(argv) < 6 or Path(argv[3]).name != 'gradlew' or not argv[4].endswith(':jvmTest'):
+        _profile_error('retained focused command is not the approved JVM route')
+    task = argv[4]
+    candidates = [item for item in profile['schedule']['entries'].values() if item.get('task') == task]
+    owners = sorted({owner for item in candidates for owner in item.get('expected_source_owners', [])})
+    reviewed = profile.get('reviewed_inputs', {})
+    coverage_hash = reviewed.get('files', {}).get('coverage.csv')
+    if coverage_hash:
+        coverage = Path(profile['roots']['go']) / reviewed['packet'] / 'coverage.csv'
+        if sha256_file(coverage) != coverage_hash:
+            _profile_error('focused source inventory differs from approved coverage')
+        module = task.strip(':').split(':', 1)[0]
+        with coverage.open(newline='') as stream:
+            owners = sorted(set(owners) | {row['owner'] for row in csv.DictReader(stream)
+                if row['kind'] == 'source-entry' and row['path'].startswith(module + '/src/')
+                and row['source_set'] in ('commonTest', 'jvmTest')})
+    selectors = [argv[index + 1] for index, value in enumerate(argv[:-1]) if value == '--tests']
+    matched = set()
+    for selector in selectors:
+        current = {owner for owner in owners if fnmatch.fnmatchcase(owner, selector)
+                   or fnmatch.fnmatchcase(owner.rsplit('.', 1)[0], selector)}
+        if not current:
+            _profile_error('focused selector has no adopted owning methods: ' + selector)
+        matched.update(current)
+    if not matched:
+        _profile_error('focused entry has no complete adopted owner census')
+    preparation = sorted({name for item in candidates for name in item.get('preparation_tasks', [])})
+    return dict(entry, task=task, runtime='jvm', expected_source_owners=sorted(matched), preparation_tasks=preparation,
+                context='core-jvm' if entry['parent_command']=='core-jvm-focused' else 'library-ordinary-jvm',
+                owner_inventory_source='approved source-entry/task census, exact retained JVM selectors')
+
+
+def full_profile_selection(profile: dict[str, Any], selected: list[str]) -> list[str]:
+    """Expand only explicitly selected roots/aliases; native phases stay private."""
+    schedule = profile["schedule"]
+    entries, aliases, roots = (schedule[key] for key in ("entries", "command_aliases", "logical_roots"))
+    if not selected or len(selected) != len(set(selected)):
+        _profile_error("select nonempty unique full-profile roots or entries")
+    result = []
+    for name in selected:
+        if name in roots:
+            members = roots[name]["members"]
+        elif name in aliases:
+            members = aliases[name]
+        elif name in entries:
+            members = [name]
+        else:
+            _profile_error("unknown full-profile selection: " + name)
+        load_members = set(schedule["native_contracts"]["load-sequence"]["members"])
+        private = {"phase-" + x for x in load_members}
+        if (name in load_members or any(entries[x].get("internal_only") or x in private for x in members)) and name != "load-sequence":
+            _profile_error("load phases cannot be selected independently")
+        for member in members:
+            if member not in result:
+                result.append(member)
+    return result
+
+
+PROFILE_BINDING = re.compile(r"\b(?:binding|lease)\.[A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)*")
+
+
+def resolve_profile_value(value: str, bindings: dict[str, str]) -> str:
+    """Substitute typed literals only; argv never passes through a shell."""
+    def replace(match: re.Match[str]) -> str:
+        token = match.group(0)
+        result = bindings.get(token)
+        if not isinstance(result, str) or not result or "\x00" in result:
+            _profile_error("missing or malformed typed binding: " + token)
+        return result
+    result = PROFILE_BINDING.sub(replace, value)
+    if PROFILE_BINDING.search(result):
+        _profile_error("recursive/unresolved typed binding")
+    return result
+
+
+def resolve_profile_entry(entry: dict[str, Any], bindings: dict[str, str]) -> dict[str, Any]:
+    if entry.get("orchestration_only") or entry.get("internal_only"):
+        _profile_error("phase/controller needs its sequence-specific coordinator")
+    result = dict(entry)
+    result["argv"] = [resolve_profile_value(value, bindings) for value in entry["argv"]]
+    result["cwd"] = resolve_profile_value(entry["cwd"], bindings)
+    result["environment"] = {key: resolve_profile_value(value, bindings) for key, value in entry["environment"].items()}
+    if not Path(result["cwd"]).is_absolute():
+        _profile_error("entry working directory must resolve to an absolute path")
+    return result
 
 
 def _check_graph(graph: dict[str, list[str]], label: str) -> None:
@@ -861,7 +1151,7 @@ def _timestamp_matches_epoch(epoch: Any, timestamp: Any) -> bool:
     return math.isclose(parsed.timestamp(), float(epoch), rel_tol=0.0, abs_tol=0.000001)
 
 
-def _strict_record_json(line: bytes) -> Any:
+def _strict_record_json(line: bytes, *, require_canonical: bool = True) -> Any:
     def reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
         result: dict[str, Any] = {}
         for key, value in pairs:
@@ -878,7 +1168,8 @@ def _strict_record_json(line: bytes) -> Any:
         object_pairs_hook=reject_duplicate_keys,
         parse_constant=reject_nonfinite,
     )
-    if canonical_bytes(value) != line + b"\n":
+    normalized = canonical_bytes(value)
+    if require_canonical and normalized != line + b"\n":
         raise ValueError("record JSON is not canonical")
     return value
 
@@ -1346,7 +1637,7 @@ def build_plan(
     listed = {
         repo: sorted(set(
             _listed_files(root, input_patterns[repo])
-            + _ignored_files(root, ignored_patterns[repo])
+            + (_ignored_files(root, ignored_patterns[repo]) if ignored_patterns[repo] else [])
         ))
         for repo, root in roots.items()
     }

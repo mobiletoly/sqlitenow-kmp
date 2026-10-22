@@ -33,6 +33,7 @@ internal data class OversqliteOperationState(
     val snapshotStagedRowCount: Long = 0,
     val snapshotStagedByteCount: Long = 0,
     val snapshotStageGuard: String = "",
+    val snapshotTransfer: String = "",
     val reason: String = "",
     val replacementSourceId: String = "",
 )
@@ -45,7 +46,7 @@ internal fun OversqliteOperationState.validateSnapshotStageMetadata() {
     if (stagedSnapshotId.isBlank()) {
         require(stagedSnapshotId.isEmpty() && snapshotBundleSeq == 0L && snapshotRowCount == 0L &&
             snapshotByteCount == 0L && snapshotStagedRowCount == 0L && snapshotStagedByteCount == 0L &&
-            !snapshotStageComplete && snapshotStageGuard.isEmpty()) { "unowned retained snapshot progress" }
+            !snapshotStageComplete && snapshotStageGuard.isEmpty() && snapshotTransfer.isEmpty()) { "unowned retained snapshot progress" }
     } else {
         require(isCanonicalSha256(snapshotStageGuard)) { "invalid retained snapshot context guard" }
         if (snapshotStageComplete) require(snapshotStagedRowCount == snapshotRowCount &&
@@ -89,7 +90,7 @@ internal class OversqliteOperationStateStore(
             sql = """
                 SELECT kind, target_user_id, staged_snapshot_id, snapshot_bundle_seq, snapshot_row_count,
                        snapshot_byte_count, snapshot_stage_complete, reason, replacement_source_id,
-                       snapshot_staged_row_count, snapshot_staged_byte_count, snapshot_stage_guard
+                       snapshot_staged_row_count, snapshot_staged_byte_count, snapshot_stage_guard, snapshot_transfer
                 FROM _sync_operation_state
                 WHERE singleton_key = 1
             """.trimIndent(),
@@ -106,6 +107,7 @@ internal class OversqliteOperationStateStore(
                 snapshotStagedRowCount = st.getLong(9),
                 snapshotStagedByteCount = st.getLong(10),
                 snapshotStageGuard = st.getText(11),
+                snapshotTransfer = st.getText(12),
                 reason = st.getText(7),
                 replacementSourceId = st.getText(8).let { sourceId ->
                     if (st.getText(0) == operationKindSourceRecovery) {
@@ -142,7 +144,8 @@ internal class OversqliteOperationStateStore(
                     replacement_source_id = ?,
                     snapshot_staged_row_count = ?,
                     snapshot_staged_byte_count = ?,
-                    snapshot_stage_guard = ?
+                    snapshot_stage_guard = ?,
+                    snapshot_transfer = ?
                 WHERE singleton_key = 1
             """.trimIndent(),
             statementCache = statementCache,
@@ -159,6 +162,7 @@ internal class OversqliteOperationStateStore(
             st.bindLong(10, state.snapshotStagedRowCount)
             st.bindLong(11, state.snapshotStagedByteCount)
             st.bindText(12, state.snapshotStageGuard)
+            st.bindText(13, state.snapshotTransfer)
             st.step()
         }
     }

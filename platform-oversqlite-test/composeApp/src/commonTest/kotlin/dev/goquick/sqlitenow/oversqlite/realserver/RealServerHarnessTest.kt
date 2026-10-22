@@ -1,6 +1,7 @@
 package dev.goquick.sqlitenow.oversqlite.realserver
 
 import dev.goquick.sqlitenow.oversqlite.*
+import dev.goquick.sqlitenow.oversqlite.platform.databaseStateVector
 import dev.goquick.sqlitenow.oversqlite.platformsupport.assertConnectedOutcome
 
 import io.ktor.client.call.body
@@ -94,10 +95,15 @@ internal class RealServerHarnessTest : RealServerHarnessSupport() {
             assertFalse(clientC.syncStatus().getOrThrow().pending.hasPendingSyncData)
 
             dbB.execSQL("UPDATE _sync_attachment_state SET last_bundle_seq_seen = 99 WHERE singleton_key = 1")
-            val poisonedRecovery = clientB.pullToStable().getOrThrow()
-            assertEquals(RemoteSyncOutcome.APPLIED_SNAPSHOT, poisonedRecovery.outcome)
-            assertEquals(1L, clientB.syncStatus().getOrThrow().lastBundleSeqSeen)
-            assertEquals(0L, scalarLong(dbB, "SELECT rebuild_required FROM _sync_attachment_state"))
+            val beforeRefusal = databaseStateVector(dbB.connection(), productionRealServerSyncTables.map { it.tableName })
+            assertTrue(clientB.pullToStable().isFailure, "a snapshot cannot lower the retained observation floor")
+            assertEquals("recovery_floor_ahead", clientB.recoveryStatus().getOrThrow().reason)
+            assertEquals(99L, clientB.syncStatus().getOrThrow().lastBundleSeqSeen)
+            val afterRefusal = databaseStateVector(dbB.connection(), productionRealServerSyncTables.map { it.tableName })
+            for (table in productionRealServerSyncTables.map { it.tableName } + listOf("_sync_row_state", "_sync_dirty_rows", "_sync_outbox_rows", "_sync_outbox_bundle", "_sync_conflict_state")) {
+                assertEquals(beforeRefusal.getValue(table), afterRefusal.getValue(table), "$table survives the refused lower snapshot")
+            }
+            assertEquals(1L, scalarLong(dbB, "SELECT rebuild_required FROM _sync_attachment_state"))
             assertEquals(0L, scalarLong(dbB, "SELECT COUNT(*) FROM _sync_snapshot_stage"))
         } finally {
             httpA?.close()
@@ -250,8 +256,8 @@ internal class RealServerHarnessTest : RealServerHarnessSupport() {
             val sourceId = bootstrapManagedSourceId(db, config.baseUrl)
             val token = issueDummySigninToken(config.baseUrl, userId, sourceId)
             var pullResponses = 0
-            http = newRealServerHttpClient(config.baseUrl, token) { path ->
-                if (path == "/sync/pull" && pullResponses < 2) {
+            http = newRealServerHttpClient(config.baseUrl, token, afterResponse = { path ->
+                if (path == "/sync/pull") {
                     pullResponses += 1
                     insertBusinessUserAndPost(
                         db = db,
@@ -260,7 +266,7 @@ internal class RealServerHarnessTest : RealServerHarnessSupport() {
                         suffix = "late-$pullResponses",
                     )
                 }
-            }
+            })
             val client = newRealServerClient(db, http)
 
             client.open().getOrThrow()
@@ -275,7 +281,10 @@ internal class RealServerHarnessTest : RealServerHarnessSupport() {
 
             assertFalse(result.isSuccess())
             assertEquals(DetachOutcome.BLOCKED_UNSYNCED_DATA, result.detach)
-            assertEquals(2, result.syncRounds)
+            assertEquals(1, result.syncRounds)
+            assertEquals(SyncThenDetachBlockedReason.PUSH_ATTEMPT_LIMIT, result.blockedReason)
+            assertEquals(null, result.lastSync)
+            assertEquals(64, pullResponses)
             assertEquals(2L, result.remainingPendingRowCount)
             assertTrue(client.syncStatus().getOrThrow().pending.blocksDetach)
             assertEquals("attached", scalarText(db, "SELECT binding_state FROM _sync_attachment_state"))
@@ -873,13 +882,17 @@ internal class RealServerHarnessTest : RealServerHarnessSupport() {
                 config.baseUrl,
                 issueDummySigninToken(config.baseUrl, userId, recoverSourceId),
             )
-            val discovery = oldSourceHttp.get("sync/generations/1") {
+            val discoveryResponse = oldSourceHttp.get("sync/generations/1") {
+                header("Oversync-Protocol-Version", "v1")
                 header("Oversync-Source-ID", recoverSourceId)
-            }.body<JsonObject>()
+            }
+            assertEquals(HttpStatusCode.OK, discoveryResponse.status)
+            val discovery = discoveryResponse.body<JsonObject>()
             val generation = discovery.getValue("schema_generation").jsonObject
             val oldSourceResponse = oldSourceHttp.post("sync/snapshot-sessions") {
                 header("Oversync-Schema-Generation-ID", generation.getValue("id").jsonPrimitive.content)
                 header("Oversync-Schema-Generation-Fingerprint", generation.getValue("fingerprint").jsonPrimitive.content)
+                header("Oversync-Protocol-Version", "v1")
                 header("Oversync-Source-ID", recoverSourceId)
                 contentType(ContentType.Application.Json)
                 setBody(

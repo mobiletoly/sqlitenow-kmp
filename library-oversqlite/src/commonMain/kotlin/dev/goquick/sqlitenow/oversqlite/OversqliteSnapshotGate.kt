@@ -17,6 +17,8 @@ package dev.goquick.sqlitenow.oversqlite
 
 import dev.goquick.sqlitenow.core.SafeSQLiteConnection
 import dev.goquick.sqlitenow.core.TransactionMode
+import androidx.sqlite.async.step
+import kotlinx.coroutines.currentCoroutineContext
 
 internal data class SnapshotOutboxFingerprint(
     val state: String,
@@ -39,9 +41,11 @@ internal data class SnapshotApplyGuard(
     val lifecycle: SnapshotLifecycleFingerprint,
     val remoteReplace: Boolean,
     val remoteTargetUserId: String,
+    val automaticPin: AutomaticRecoveryPin? = null,
 )
 
 internal class OversqliteSnapshotGate(
+    private val automaticRecovery: OversqliteAutomaticRecovery,
     private val db: SafeSQLiteConnection,
     private val syncStateStore: OversqliteSyncStateStore,
     private val outboxStateStore: OversqliteOutboxStateStore,
@@ -58,8 +62,8 @@ internal class OversqliteSnapshotGate(
 
     suspend fun validateFinal(
         pinned: SnapshotApplyGuard,
-        session: SnapshotSession,
     ) {
+        pinned.automaticPin?.let { automaticRecovery.validate(it) }
         val current = load(
             mode = pinned.mode,
             remoteReplace = pinned.remoteReplace,
@@ -82,7 +86,7 @@ internal class OversqliteSnapshotGate(
             )
         }
         if (current.lifecycle != pinned.lifecycle) {
-            val cause = if (pinned.mode == SnapshotRebuildOutboxMode.PRESERVE_SOURCE_RECOVERY) {
+            val cause = if (pinned.mode == SnapshotRebuildOutboxMode.SOURCE_RECOVERY) {
                 SourceRecoveryRequiredException(SourceRecoveryReason.SOURCE_SEQUENCE_CHANGED)
             } else {
                 RebuildRequiredException()
@@ -109,9 +113,11 @@ internal class OversqliteSnapshotGate(
         remoteReplace: Boolean,
         remoteTargetUserId: String,
     ): SnapshotApplyGuard {
+        requireCleanSnapshotWork(db)
         val outbox = outboxStateStore.loadBundleState()
         return SnapshotApplyGuard(
             mode = mode,
+            automaticPin = currentCoroutineContext()[AutomaticRecoveryContext]?.pin,
             dirtyRowCount = syncStateStore.countDirtyRows(),
             outbox = SnapshotOutboxFingerprint(
                 state = outbox.state,
@@ -141,7 +147,7 @@ internal class OversqliteSnapshotGate(
         val attachment = guard.lifecycle.attachment
         val operation = guard.lifecycle.operation
         when (guard.mode) {
-            SnapshotRebuildOutboxMode.CLEAR_ALL -> {
+            SnapshotRebuildOutboxMode.CLEAN -> {
                 requireNoOutbox(guard)
                 if (guard.remoteReplace) {
                     if (
@@ -160,54 +166,14 @@ internal class OversqliteSnapshotGate(
                 }
             }
 
-            SnapshotRebuildOutboxMode.PRESERVE_PREPARED -> {
-                val outbox = guard.outbox
-                if (
-                    outbox.state != outboxStatePrepared ||
-                    outbox.sourceId.isBlank() ||
-                    outbox.sourceBundleId <= 0L ||
-                    outbox.canonicalRequestHash.isBlank() ||
-                    outbox.rowCount <= 0L ||
-                    outbox.actualRowCount != outbox.rowCount
-                ) {
-                    throw PendingPushReplayException(
-                        outbox.actualRowCount,
-                    )
-                }
-                if (
-                    attachment.bindingState != attachmentBindingAttached ||
-                    !attachment.rebuildRequired ||
-                    operation.kind != operationKindNone
-                ) {
-                    throw RebuildRequiredException()
-                }
-            }
-
-            SnapshotRebuildOutboxMode.PRESERVE_SOURCE_RECOVERY -> {
+            SnapshotRebuildOutboxMode.SOURCE_RECOVERY -> {
+                requireNoOutbox(guard)
                 if (
                     attachment.bindingState != attachmentBindingAttached ||
                     !attachment.rebuildRequired ||
                     operation.kind != operationKindSourceRecovery
                 ) {
                     throw SourceRecoveryRequiredException(SourceRecoveryReason.SOURCE_SEQUENCE_CHANGED)
-                }
-                when (guard.outbox.state) {
-                    outboxStateNone -> requireNoOutbox(guard)
-                    outboxStatePrepared -> {
-                        val outbox = guard.outbox
-                        if (
-                            outbox.sourceId.isBlank() ||
-                            outbox.sourceBundleId <= 0L ||
-                            outbox.canonicalRequestHash.isBlank() ||
-                            outbox.rowCount <= 0L ||
-                            outbox.actualRowCount != outbox.rowCount
-                        ) {
-                            throw PendingPushReplayException(
-                                outbox.actualRowCount,
-                            )
-                        }
-                    }
-                    else -> throw SourceRecoveryRequiredException(SourceRecoveryReason.SOURCE_SEQUENCE_CHANGED)
                 }
             }
         }
@@ -220,4 +186,17 @@ internal class OversqliteSnapshotGate(
             )
         }
     }
+}
+
+/** Snapshot admission covers the entire scope, including an ack with no outbox. */
+internal suspend fun requireCleanSnapshotWork(db: SafeSQLiteConnection) {
+    val dirty = db.scalarLong("SELECT count(*) FROM _sync_dirty_rows")
+    if (dirty != 0L) throw DirtyStateRejectedException(dirty)
+    val pending = db.withPreparedStatement("""SELECT
+        (SELECT count(*) FROM _sync_outbox_rows),
+        (SELECT state FROM _sync_outbox_bundle WHERE singleton_key=1),
+        EXISTS(SELECT 1 FROM _sync_upload_journal)""") { st ->
+        check(st.step()); st.getLong(0) to (st.getText(1) != outboxStateNone || st.getLong(2) != 0L)
+    }
+    if (pending.first != 0L || pending.second) throw PendingPushReplayException(pending.first)
 }

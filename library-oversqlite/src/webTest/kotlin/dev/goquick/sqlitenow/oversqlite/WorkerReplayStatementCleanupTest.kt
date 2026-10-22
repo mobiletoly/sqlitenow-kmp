@@ -33,7 +33,7 @@ internal class WorkerReplayStatementCleanupTest : SurvivorTestSupport() {
     @Test fun planSaveOrdinaryFailureThenTerminalBarrier() = case("plan-save", "reset-terminal", Body.SUCCESS)
     @Test fun planSaveOrdinaryCleanupFailureWithDeniedRollbackRequiresOwnedShutdown() = case("plan-save", "reset-rollback-denied", Body.SUCCESS)
     @Test fun planSaveSuccessfulCleanupSettlesCommittedEffects() = case("plan-save", "normal", Body.SUCCESS)
-    @Test fun planSaveInjectedPendingSignalWithSuccessfulCleanupCommitsThenThrows() = case("plan-save", "normal", Body.INJECTED_PENDING)
+    @Test fun planSaveInjectedPendingSignalWithSuccessfulCleanupCommitsThenReportsNoProgress() = case("plan-save", "normal", Body.INJECTED_PENDING)
     @Test fun planSaveCloseAfterNativeFinalization() = case("plan-save", "close-after", Body.SUCCESS)
     @Test fun captureSizeResetWithSuccess() = case("capture-size", "reset", Body.SUCCESS)
     @Test fun captureSizeClearWithSuccess() = case("capture-size", "clear", Body.SUCCESS)
@@ -52,7 +52,7 @@ internal class WorkerReplayStatementCleanupTest : SurvivorTestSupport() {
     @Test fun captureSizeOrdinaryFailureThenTerminalBarrier() = case("capture-size", "reset-terminal", Body.SUCCESS)
     @Test fun captureSizeOrdinaryCleanupFailureWithDeniedRollbackRequiresOwnedShutdown() = case("capture-size", "reset-rollback-denied", Body.SUCCESS)
     @Test fun captureSizeSuccessfulCleanupSettlesCommittedEffects() = case("capture-size", "normal", Body.SUCCESS)
-    @Test fun captureSizeInjectedPendingSignalWithSuccessfulCleanupCommitsThenThrows() = case("capture-size", "normal", Body.INJECTED_PENDING)
+    @Test fun captureSizeInjectedPendingSignalWithSuccessfulCleanupCommitsThenRejectsPartialIndex() = case("capture-size", "normal", Body.INJECTED_PENDING)
     @Test fun captureSizeCloseAfterNativeFinalization() = case("capture-size", "close-after", Body.SUCCESS)
 
     @Test fun naturalWorkLimitPersistsUsefulCheckpointAndReopensWithFreshStatements() = runTest(timeout = 180.seconds) {
@@ -71,6 +71,7 @@ internal class WorkerReplayStatementCleanupTest : SurvivorTestSupport() {
         var reopened: SafeSQLiteConnection? = null
         var firstHandle: SQLiteStatement? = null
         var limitedPreparations = 0
+        var limitedCommits = 0
         var limitedExecutions = 0
         var resumedPreparations = 0
         var resumedExecutions = 0
@@ -88,18 +89,24 @@ internal class WorkerReplayStatementCleanupTest : SurvivorTestSupport() {
             val frozen = baselineQualificationVector(db, listOf("nodes") + derivedPlanTables)
             seed.closeFromCoordinatedOwner()
 
+            // Public pushPending drains natural work slices. Cancel before the second
+            // writer commits, after the first useful checkpoint is durable.
             // Each real preparation step reserves 16 units. This budget reaches roots/index
             // progress before the complete four-node preparation can finish; no fault throws it.
             val bounded = newClient(db, http, syncTables = nodeTables, workUnits = 256).also { limited = it }
             bounded.openAndConnect("user-1").getOrThrow()
             bounded.setSnapshotApplyFaultInjectorForTest(SnapshotApplyFaultInjector(
                 afterStatementCacheClosed = { w1Mark("executorAfterClose") },
-                beforeCommit = { w1Mark("executorBeforeCommit") },
+                beforeCommit = {
+                    w1Mark("executorBeforeCommit")
+                    if (++limitedCommits == 2) throw CancellationException("caller stops after natural work checkpoint")
+                },
                 statementCacheOperations = StatementCacheOperations(prepare = { connection, sql ->
                     val statement = connection.prepare(sql)
-                    if (sql != planSaveSql) statement else {
+                    if (sql != recoveryPlanSaveSql) statement else {
                         limitedPreparations++
-                        firstHandle = statement
+                        if (firstHandle == null) firstHandle = statement
+                        else assertNotSame(firstHandle, statement, "next transaction owns a fresh cached handle")
                         object : SQLiteStatement by statement {
                             override suspend fun step(): Boolean {
                                 val row = statement.step()
@@ -112,10 +119,12 @@ internal class WorkerReplayStatementCleanupTest : SurvivorTestSupport() {
                 }),
             ))
             w1Mark("armCommittedSettlement")
-            val pending = assertIs<SyncWorkLimitException>(bounded.pushPending().exceptionOrNull())
-            assertEquals(256L, pending.limit)
-            assertTrue(pending.used in 1L..256L)
-            assertEquals(1, limitedPreparations)
+            assertFailsWith<CancellationException> { bounded.pushPending().getOrThrow() }
+            val pending = bounded.workSliceDiagnostics()
+            assertTrue(pending.workSlices > 0, "real natural admission crossed a committed slice")
+            assertTrue(pending.peakSliceWork in 1L..256L)
+            assertEquals(2, limitedCommits)
+            assertEquals(2, limitedPreparations)
             assertTrue(limitedExecutions > 1, "real progress saves more than the initial empty checkpoint")
             assertEquals(1L, scalar(db, "SELECT count(*) FROM _sync_apply_plan"))
             assertEquals("settlement", scalarText(db, "SELECT operation_kind FROM _sync_apply_plan"))
@@ -124,8 +133,11 @@ internal class WorkerReplayStatementCleanupTest : SurvivorTestSupport() {
             assertState(db, settled = false)
             assertFrozenState(db, frozen, allowDerivedProgress = true)
             assertEquals(frozenRequest, server.pushBodies.last())
-            assertEquals(3, server.pushRequestCount)
-            val saved = baselineQualificationVector(db, listOf("nodes") + derivedPlanTables)
+            assertEquals(2, server.pushRequestCount)
+            assertWorkerResolveIdentity(frozenRequest, server.resolveRequests)
+            assertWorkerAckDisposition(frozenRequest, server.ackRequests, settled = false)
+            assertWorkerUploadDisposition(db, frozenRequest, assertNotNull(server.generationOverride), settled = false)
+            val saved = baselineQualificationVector(db, listOf("nodes", "_sync_upload_journal") + derivedPlanTables)
             val evidence = snapshot()
             assertEquals("browser-worker", evidence.text("runtime"), "natural progress requires durable browser reopen")
             val events = evidence.getValue("events").jsonArray.map { it.jsonObject }
@@ -138,7 +150,7 @@ internal class WorkerReplayStatementCleanupTest : SurvivorTestSupport() {
             bounded.closeFromCoordinatedOwner()
             db.close()
             val restored = sqliteWorkerConnectionProvider().openConnection(name, false, SqliteConnectionConfig()).also { reopened = it }
-            assertEquals(saved, baselineQualificationVector(restored, listOf("nodes") + derivedPlanTables), "all committed progress survives physical reopen")
+            assertEquals(saved, baselineQualificationVector(restored, listOf("nodes", "_sync_upload_journal") + derivedPlanTables), "all committed progress survives physical reopen")
             val retry = newClient(restored, http, syncTables = nodeTables).also { resumed = it }
             retry.openAndConnect("user-1").getOrThrow()
             val admitted = baselineQualificationVector(restored, listOf("nodes") + derivedPlanTables)
@@ -146,7 +158,7 @@ internal class WorkerReplayStatementCleanupTest : SurvivorTestSupport() {
             retry.setSnapshotApplyFaultInjectorForTest(SnapshotApplyFaultInjector(
                 statementCacheOperations = StatementCacheOperations(prepare = { connection, sql ->
                     val statement = connection.prepare(sql)
-                    if (sql != planSaveSql) statement else {
+                    if (sql != recoveryPlanSaveSql) statement else {
                         resumedPreparations++
                         assertNotSame(firstHandle, statement, "reopen cannot reuse a handle from the completed transaction")
                         object : SQLiteStatement by statement {
@@ -165,26 +177,29 @@ internal class WorkerReplayStatementCleanupTest : SurvivorTestSupport() {
             assertState(restored, settled = true)
             for (owner in derivedPlanTables) assertEquals(0L, scalar(restored, "SELECT count(*) FROM $owner"))
             assertEquals(frozenRequest, server.pushBodies.last())
-            assertEquals(4, server.pushRequestCount)
-            val complete = baselineQualificationVector(restored, listOf("nodes") + derivedPlanTables)
+            assertEquals(2, server.pushRequestCount, "durable C resumes without another push or resolve")
+            assertWorkerResolveIdentity(frozenRequest, server.resolveRequests)
+            assertWorkerAckDisposition(frozenRequest, server.ackRequests, settled = true)
+            assertWorkerUploadDisposition(restored, frozenRequest, assertNotNull(server.generationOverride), settled = true)
+            val complete = baselineQualificationVector(restored, listOf("nodes", "_sync_upload_journal") + derivedPlanTables)
             retry.closeFromCoordinatedOwner()
             restored.close()
             val readback = sqliteWorkerConnectionProvider().openConnection(name, false, SqliteConnectionConfig())
-            try { assertEquals(complete, baselineQualificationVector(readback, listOf("nodes") + derivedPlanTables)) }
+            try { assertEquals(complete, baselineQualificationVector(readback, listOf("nodes", "_sync_upload_journal") + derivedPlanTables)) }
             finally { readback.close() }
             val receipt = buildJsonObject {
-                put("limit", pending.limit); put("used", pending.used)
+                put("limit", 256); put("used", pending.peakSliceWork); put("workSlices", pending.workSlices)
                 put("limitedPreparations", limitedPreparations); put("limitedExecutions", limitedExecutions)
                 put("resumedPreparations", resumedPreparations); put("resumedExecutions", resumedExecutions)
                 put("checkpointReopened", true); put("settlementReopened", true)
-                put("pendingCause", "natural-work-admission")
+                put("pendingCause", "natural-work-admission-then-injected-beforeCommit-cancellation")
                 put("savedPlan", JsonArray(saved.rows("_sync_apply_plan")))
                 put("nativeOwnershipEvents", JsonArray(events.filter { event ->
                     event.text("phase") in setOf("settlementArmed", "selected", "nativeFinalizeEnter", "nativeFinalizeReturn", "executorAfterClose", "executorBeforeCommit")
                 }))
                 put("fullEventCount", events.size)
                 put("fullEventSHA256", sha256Hex(evidence.getValue("events").toString().encodeToByteArray()))
-            }.toString().chunked(4000)
+            }.let(::encodeWorkerQualificationReceipt).chunked(4000)
             receipt.forEachIndexed { index, chunk -> println("WORKER_REPLAY_NATURAL_PROGRESS_CHUNK ${index + 1}/${receipt.size} $chunk") }
         } catch (failure: Throwable) {
             primaryFailure = failure
@@ -231,6 +246,8 @@ internal class WorkerReplayStatementCleanupTest : SurvivorTestSupport() {
         var afterShutdown: JsonObject? = null
         var durable: JsonObject? = null
         var frozenVector: BaselineQualificationVector? = null
+        var originalRequest: String? = null
+        var retainedJournal: BaselineQualificationVector? = null
         val entered = CompletableDeferred<Unit>()
         var writerEntered = false
         var selectedPreparations = 0
@@ -248,6 +265,7 @@ internal class WorkerReplayStatementCleanupTest : SurvivorTestSupport() {
             server.beforePushResponse = { throw CancellationException("lost committed response") }
             assertFailsWith<CancellationException> { client.pushPending().getOrThrow() }
             val frozen = server.pushBodies.last()
+            originalRequest = frozen
             frozenVector = baselineQualificationVector(db, listOf("nodes") + derivedPlanTables)
             assertEquals(0L, scalar(db, "SELECT count(*) FROM _sync_dirty_rows"), "freeze transfers the pending row into the outbox owner")
             client.setSnapshotApplyFaultInjectorForTest(SnapshotApplyFaultInjector(
@@ -293,20 +311,25 @@ internal class WorkerReplayStatementCleanupTest : SurvivorTestSupport() {
             } else invoke()
             assertEquals(1, selectedPreparations, "one actual cached replay statement handle in this settlement transaction")
             assertTrue(selectedReads > 0)
-            assertEquals(frozen, server.pushBodies.last(), "exact frozen committed replay request")
-            assertEquals(3, server.pushRequestCount, "seed, committed loss, replay")
+            assertEquals(frozen, server.pushBodies.last(), "no successor push while the original operation is unresolved")
+            assertEquals(2, server.pushRequestCount, "seed and committed loss; resolve replaces a resend")
+            assertWorkerResolveIdentity(frozen, server.resolveRequests)
+            assertWorkerAckDisposition(frozen, server.ackRequests, settled)
             w1Mark("postInvocationProbe")
             try { assertEquals(1L, scalar(db, "/* replay-after-failure-probe */ SELECT 1")) }
             catch (failure: Throwable) { probeFailure = failure }
             beforeShutdown = snapshot()
             if (probeFailure == null) {
                 assertState(db, settled)
+                assertWorkerUploadDisposition(db, frozen, assertNotNull(server.generationOverride), settled)
+                retainedJournal = baselineQualificationVector(db, listOf("_sync_upload_journal"))
                 if (!settled) assertFrozenState(db, assertNotNull(frozenVector), retainedInjectedProgress)
                 if (retainedInjectedProgress) {
                     assertEquals(1L, scalar(db, "SELECT count(*) FROM _sync_apply_plan"))
                     assertEquals("settlement", scalarText(db, "SELECT operation_kind FROM _sync_apply_plan"))
                     retainedDerived = baselineQualificationVector(db, listOf("nodes") + derivedPlanTables)
                 }
+
             }
         } finally {
             withContext(NonCancellable) {
@@ -319,11 +342,16 @@ internal class WorkerReplayStatementCleanupTest : SurvivorTestSupport() {
                         val reopened = sqliteWorkerConnectionProvider().openConnection(name, false, SqliteConnectionConfig())
                         try {
                             assertState(reopened, settled)
+                            assertWorkerUploadDisposition(reopened, assertNotNull(originalRequest), assertNotNull(server.generationOverride), settled)
+                            retainedJournal?.let { saved ->
+                                assertEquals(saved.rows("_sync_upload_journal"), baselineQualificationVector(reopened, listOf("_sync_upload_journal")).rows("_sync_upload_journal"), "full F/C bytes survive physical reopen")
+                            }
                             if (!settled) assertFrozenState(reopened, assertNotNull(frozenVector), retainedInjectedProgress)
                             retainedDerived?.let { saved ->
                                 val restored = baselineQualificationVector(reopened, listOf("nodes") + derivedPlanTables)
                                 for (table in derivedPlanTables) assertEquals(saved.rows(table), restored.rows(table), "durable injected checkpoint $table")
                             }
+
                             durable = buildJsonObject {
                                 put("checkpoint", scalar(reopened, "SELECT last_bundle_seq_seen FROM _sync_attachment_state"))
                                 put("nextSource", scalar(reopened, "SELECT next_source_bundle_id FROM _sync_source_state"))
@@ -351,7 +379,7 @@ internal class WorkerReplayStatementCleanupTest : SurvivorTestSupport() {
         }.map { it.value }
         val selectedEvent = events.single { it.text("phase") == "selected" }
         assertEquals(family, selectedEvent.text("targetFamily"))
-        assertEquals(if (family == "plan-save") planSaveSql else captureSizeSql, selectedEvent.text("sql"))
+        assertEquals(if (family == "plan-save") recoveryPlanSaveSql else captureSizeSql, selectedEvent.text("sql"))
         assertTrue(phase("settlementArmed") in 0 until phase("selected"), "private worker selection follows its explicit arm marker")
         val selectedId = selectedEvent.getValue("statementId").jsonPrimitive.int
         fun dispatch(command: String) = events.indexOfFirst {
@@ -403,7 +431,7 @@ internal class WorkerReplayStatementCleanupTest : SurvivorTestSupport() {
             ownerShutdownFailure?.let { put("ownerShutdownFailure", failureTree(it)) }
             put("durableState", durable ?: JsonNull); put("selectedPreparations", selectedPreparations); put("selectedReads", selectedReads)
             put("durableReopenClassification", if (before.text("runtime") == "browser-worker") "fresh" else "not-applicable-transient-node")
-        }.toString()
+        }.let(::encodeWorkerQualificationReceipt)
         val chunks = receipt.chunked(4000)
         chunks.forEachIndexed { index, chunk -> println("WORKER_REPLAY_CLEANUP_CHUNK ${index + 1}/${chunks.size} $chunk") }
 
@@ -435,8 +463,20 @@ internal class WorkerReplayStatementCleanupTest : SurvivorTestSupport() {
             assertTrue(nextDispatch == null || nextDispatch.text("sql") == "ROLLBACK", "failed barrier fences the triggering SQL; rollback is the next permitted dispatch")
         }
 
-        if (success) {
-            if (body == Body.INJECTED_PENDING) assertTrue(observed is SyncWorkLimitException) else assertNull(observed)
+        if (success && body == Body.INJECTED_PENDING) {
+            // The prepare owner may commit derived metadata, while the public
+            // scheduler reports that this injected signal made no useful progress.
+            // Business state and original F/C remain unchanged; no ack is allowed.
+            if (family == "capture-size") {
+                val failure = assertIs<IllegalArgumentException>(observed)
+                assertEquals("empty dependency index contradicts retained edges", failure.message,
+                    "an injected mid-step limit must not bypass retained-plan integrity")
+            } else assertIs<SyncWorkNoProgressException>(observed)
+            assertEquals(1, sent("COMMIT").size); assertTrue(sent("ROLLBACK").isEmpty())
+            assertTrue(phase("executorBeforeCommit") > acknowledgement("closeStatement"))
+            assertTrue(events.any { it.text("sql")?.contains("pragma_foreign_key_check") == true })
+        } else if (success) {
+            assertNull(observed)
             assertEquals(1, sent("COMMIT").size); assertTrue(sent("ROLLBACK").isEmpty())
             assertTrue(phase("executorBeforeCommit") > acknowledgement("closeStatement"))
             assertTrue(events.any { it.text("sql")?.contains("pragma_foreign_key_check") == true })
@@ -500,7 +540,7 @@ internal class WorkerReplayStatementCleanupTest : SurvivorTestSupport() {
         try { assertTrue(statement.step()); return statement.getLong(0) }
         finally { statement.close() }
     }
-    private fun selected(family: String, sql: String) = sql == if (family == "plan-save") planSaveSql else captureSizeSql
+    private fun selected(family: String, sql: String) = sql == if (family == "plan-save") recoveryPlanSaveSql else captureSizeSql
     private suspend fun assertState(db: SafeSQLiteConnection, settled: Boolean) {
         if (settled) requireSurvivors(db) else {
             assertEquals("changed parent", scalarText(db, "SELECT name FROM nodes WHERE id='P'"))
@@ -548,6 +588,16 @@ internal class WorkerReplayStatementCleanupTest : SurvivorTestSupport() {
         table_cursor=excluded.table_cursor,fk_cursor=excluded.fk_cursor,row_cursor=excluded.row_cursor,
         entries=excluded.entries,bytes=excluded.bytes,edge_entries=excluded.edge_entries,edge_bytes=excluded.edge_bytes,
         operation_kind=excluded.operation_kind,preserve_schema=excluded.preserve_schema,
+        preserve_table=excluded.preserve_table,preserve_key=excluded.preserve_key,
+        atomic_work=excluded.atomic_work,preservation_complete=excluded.preservation_complete"""
+    // Current functional owner includes the C04 old/new snapshot binding. The legacy pin above remains intact.
+    private val recoveryPlanSaveSql = """INSERT INTO _sync_apply_plan(singleton_key,unit,guard,phase,root_cursor,visit_cursor,table_cursor,fk_cursor,row_cursor,entries,bytes,edge_entries,edge_bytes,operation_kind,preserve_schema,preserve_table,preserve_key,atomic_work,preservation_complete,source_snapshot_id)
+        VALUES(1,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        ON CONFLICT(singleton_key) DO UPDATE SET unit=excluded.unit,guard=excluded.guard,
+        phase=excluded.phase,root_cursor=excluded.root_cursor,visit_cursor=excluded.visit_cursor,
+        table_cursor=excluded.table_cursor,fk_cursor=excluded.fk_cursor,row_cursor=excluded.row_cursor,
+        entries=excluded.entries,bytes=excluded.bytes,edge_entries=excluded.edge_entries,edge_bytes=excluded.edge_bytes,
+        operation_kind=excluded.operation_kind,source_snapshot_id=excluded.source_snapshot_id,preserve_schema=excluded.preserve_schema,
         preserve_table=excluded.preserve_table,preserve_key=excluded.preserve_key,
         atomic_work=excluded.atomic_work,preservation_complete=excluded.preservation_complete"""
     private val captureSizeSql = """SELECT 2+92+CASE typeof("live_row"."id") WHEN 'blob' THEN 2*length("live_row"."id")+2 WHEN 'text' THEN 6*length(CAST("live_row"."id" AS BLOB))+2 ELSE 32 END+104+CASE typeof("live_row"."name") WHEN 'blob' THEN 2*length("live_row"."name")+2 WHEN 'text' THEN 6*length(CAST("live_row"."name" AS BLOB))+2 ELSE 32 END+134+CASE typeof("live_row"."parent_id") WHEN 'blob' THEN 2*length("live_row"."parent_id")+2 WHEN 'text' THEN 6*length(CAST("live_row"."parent_id" AS BLOB))+2 ELSE 32 END FROM "nodes" live_row WHERE "id"=?"""

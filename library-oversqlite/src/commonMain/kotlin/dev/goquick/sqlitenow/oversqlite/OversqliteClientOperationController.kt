@@ -41,8 +41,10 @@ internal class OversqliteClientOperationController(
 ) {
     private val progressState = MutableStateFlow<OversqliteProgress>(OversqliteProgress.Idle)
     private val operationGate = Mutex()
+    private val recoveryControlGate = Mutex()
     private var syncWorkUsed = 0L
     private var readyAtomicUnitDispatched = false
+    private var snapshotFinalAdmission = false
     var a3Stats=A3AccountingStats()
         private set
     var workSliceDiagnostics = WorkSliceDiagnostics(); private set
@@ -68,12 +70,21 @@ internal class OversqliteClientOperationController(
         if (work == 0L) return
         val slice = currentCoroutineContext()[OversqliteWorkSlice]
         val firstUsefulStep = slice != null && !slice.checkpointed
-        if (syncWorkUsed >= limit && !firstUsefulStep && (!readyAtomic || readyAtomicUnitDispatched)) {
+        if (syncWorkUsed >= limit && !firstUsefulStep && (!readyAtomic || (readyAtomicUnitDispatched && !snapshotFinalAdmission))) {
             throw SyncWorkLimitException(unit, limit, syncWorkUsed)
         }
         if (readyAtomic) readyAtomicUnitDispatched = true
         syncWorkUsed = if (work > Long.MAX_VALUE - syncWorkUsed) Long.MAX_VALUE else syncWorkUsed + work
         workSliceDiagnostics.totalWork = if (work > Long.MAX_VALUE - workSliceDiagnostics.totalWork) Long.MAX_VALUE else workSliceDiagnostics.totalWork + work
+    }
+
+    // Verification and preservation reserve separate estimates for the same
+    // final snapshot transition. Charge each component before its first DML;
+    // their sum may cross the soft computation target as one indivisible unit.
+    suspend fun <T> admitSnapshotFinalTransition(block: suspend () -> T): T {
+        check(!snapshotFinalAdmission) { "snapshot final admission is already active" }
+        snapshotFinalAdmission = true
+        try { return block() } finally { snapshotFinalAdmission = false }
     }
 
     suspend fun nextWorkSliceIfNeeded() {
@@ -96,7 +107,8 @@ internal class OversqliteClientOperationController(
             currentCoroutineContext().ensureActive()
             val slice = OversqliteWorkSlice()
             try {
-                val result = withContext(slice) { block() }
+                val provenance = ProvenanceReadScope(resources.connection, config)
+                val result = try { withContext(slice + provenance) { block() } } finally { provenance.clear() }
                 checkpointWorkStep()
                 commitWorkStep()
                 return result
@@ -166,6 +178,39 @@ internal class OversqliteClientOperationController(
         }
     }
 
+    private var recoveryExchanges = 0
+    private var recoveryReplans = 0
+    private var recoveryPlanned = false
+    private var expiredSnapshotReplacements = 0
+    internal fun markRecoveryPlan() { recoveryPlanned=true }
+    internal fun chargeRecoveryReplan() {
+        if(!recoveryPlanned){recoveryPlanned=true;return}
+        if (recoveryReplans>=3) throw RecoveryProgressIncompleteException("replan_limit")
+        recoveryReplans++
+    }
+    internal fun chargeExpiredSnapshotReplacement() {
+        if (expiredSnapshotReplacements>=1) throw RecoveryProgressIncompleteException("expired_session_limit")
+        expiredSnapshotReplacements++
+    }
+
+    internal suspend fun chargeRecoveryExchange() {
+        currentCoroutineContext().ensureActive()
+        if(recoveryExchanges>=64) throw UploadRecoveryIncompleteException()
+        recoveryExchanges++
+    }
+
+    internal suspend fun <T> runRecoveryControl(block: suspend () -> T): Result<T> {
+        if(!recoveryControlGate.tryLock()) return Result.failure(SyncOperationInProgressException())
+        return try {
+            resources.ensureOpen()
+            Result.success(resources.trackOwnedOperation(block))
+        } catch(failure: Throwable) {
+            currentCoroutineContext().ensureActive()
+            if(failure is CancellationException)throw failure
+            Result.failure(failure)
+        } finally {recoveryControlGate.unlock()}
+    }
+
     suspend fun <T> runExclusiveOperation(block: suspend () -> T): Result<T> {
         return try {
             resources.ensureOpen()
@@ -174,6 +219,10 @@ internal class OversqliteClientOperationController(
             }
             try {
                 syncWorkUsed = 0
+                recoveryExchanges = 0
+                recoveryReplans=0
+                recoveryPlanned=false
+                expiredSnapshotReplacements=0
                 readyAtomicUnitDispatched = false
                 a3Stats=A3AccountingStats()
                 workSliceDiagnostics = WorkSliceDiagnostics()
@@ -229,10 +278,14 @@ internal class OversqliteClientOperationController(
 
     suspend fun <T> withSnapshotDiagnosticsScope(block: suspend () -> T): T {
         val scope = snapshotDiagnosticsState.begin()
+        var outcome = "success"
         return try {
-            block()
+            withContext(SyncDiagnosticsContext(scope.recorder.phases)) { block() }
+        } catch (error: Throwable) {
+            outcome = if (error is CancellationException) "cancelled" else "failure"
+            throw error
         } finally {
-            snapshotDiagnosticsState.finish(scope)
+            snapshotDiagnosticsState.finish(scope, outcome)
         }
     }
 

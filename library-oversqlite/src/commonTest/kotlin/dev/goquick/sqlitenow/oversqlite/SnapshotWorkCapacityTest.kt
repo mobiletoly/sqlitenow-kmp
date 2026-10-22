@@ -3,6 +3,7 @@ package dev.goquick.sqlitenow.oversqlite
 import dev.goquick.sqlitenow.core.SafeSQLiteConnection
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import kotlin.test.assertIs
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -37,20 +38,21 @@ internal class SnapshotWorkCapacityTest : CrossTargetSyncTestSupport() {
     }
 
     @Test
-    fun applicationTriggerRowVisitsAreNotBoundedByCurrentReservation() = runOwnedWebDatabaseTest {
+    fun applicationTriggerWhoseWorkCannotBeBoundedBlocksBeforeBusinessDml() = runOwnedWebDatabaseTest {
         withSnapshot(14) { db, client, _ ->
             db.execSQL("CREATE TABLE local_trigger_targets(id INTEGER PRIMARY KEY, visits INTEGER NOT NULL)")
             db.execSQL("WITH RECURSIVE n(i) AS (VALUES(1) UNION ALL SELECT i+1 FROM n WHERE i<20000) " +
                 "INSERT INTO local_trigger_targets SELECT i,0 FROM n")
             db.execSQL("CREATE TRIGGER visit_local_rows AFTER INSERT ON ${names.last()} BEGIN " +
                 "UPDATE local_trigger_targets SET visits=visits+1; END")
+            assertIs<FinalStateApplyBlockedException>(client.openAndConnect("user-1").exceptionOrNull())
+            assertEquals(0L,scalarLong(db,"SELECT sum(visits) FROM local_trigger_targets"))
+            assertEquals(0L,tables.sumOf {scalarLong(db,"SELECT count(*) FROM ${it.tableName}")})
+            assertEquals(0L,scalarLong(db,"SELECT count(*) FROM _sync_row_state"))
+            db.execSQL("DROP TRIGGER visit_local_rows")
             client.openAndConnect("user-1").getOrThrow()
-            val visits = scalarLong(db, "SELECT sum(visits) FROM local_trigger_targets")
-            val charged = client.workspaceDiagnostics().work
-            assertEquals(20_000L, visits)
-            assertTrue(visits > charged, "trigger row updates alone exceed all charged invocation work: $charged")
-            assertEquals(14L, scalarLong(db, "SELECT count(*) FROM _sync_row_state"))
-            println("snapshot_trigger_witness managed_rows=14 trigger_updated_rows=$visits charged_work=$charged")
+            assertInstalled(db,14)
+            assertEquals(0L,scalarLong(db,"SELECT sum(visits) FROM local_trigger_targets"))
         }
     }
 

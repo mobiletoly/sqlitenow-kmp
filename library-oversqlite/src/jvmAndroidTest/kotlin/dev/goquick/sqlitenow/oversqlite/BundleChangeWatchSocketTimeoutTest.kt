@@ -31,6 +31,37 @@ import kotlin.test.assertTrue
 
 class BundleChangeWatchSocketTimeoutTest {
     @Test
+    fun watchSurvivesTwoDelayedHeartbeatsWithSmallCallerTimeout() = runBlocking {
+        val heartbeats = AtomicInteger()
+        val events = mutableListOf<Long>()
+        LoopbackSseServer { response ->
+            repeat(2) {
+                Thread.sleep(600)
+                response.chunk(": heartbeat\n\n")
+                heartbeats.incrementAndGet()
+            }
+            response.chunk("event: bundle\ndata: {\"bundle_seq\":9}\n\n")
+            response.finish()
+        }.use { server ->
+            withWatchApi(server, socketMillis = 200, connectMillis = 1_234) { api, _, _, observations ->
+                val started = System.nanoTime()
+                withTimeout(5_000) {
+                    api.watchBundleChanges("source-a", 8) { event -> events += event.bundleSeq }
+                    server.finished.await()
+                }
+                val elapsedMillis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started)
+                println("watch idle elapsed=${elapsedMillis}ms heartbeats=${heartbeats.get()} events=$events")
+                assertEquals(2, heartbeats.get())
+                assertEquals(listOf(9L), events, "heartbeat comments must not dispatch bundle events")
+                assertEquals("/sync/watch?after_bundle_seq=8", server.requestTarget.await())
+                assertEquals(90_000, observations.single().readMillis)
+                assertEquals(1_234, observations.single().connectMillis)
+            }
+        }
+    }
+
+
+    @Test
     fun idleWatchSurvivesTwoHeartbeatIntervalsAndReceivesBundle() = runBlocking {
         val heartbeats = AtomicInteger()
         val events = mutableListOf<Long>()

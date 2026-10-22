@@ -14,7 +14,7 @@ import kotlin.native.Platform
 // compiles a no-op implementation and has no C probe or friend-module access.
 @OptIn(ExperimentalAtomicApi::class)
 internal object SwiftA3ConflictApplyProbe {
-    private class Gate(val requestHash: String) {
+    private class Gate(val requestHash: String?) {
         val release = CompletableDeferred<Unit>()
     }
 
@@ -23,7 +23,13 @@ internal object SwiftA3ConflictApplyProbe {
 
     fun arm(requestHash: String): Int {
         if (requestHash.length != 64 || requestHash.any { it !in '0'..'9' && it !in 'a'..'f' }) return 0
-        if (!armed.compareAndSet(null, Gate(requestHash))) return 0
+        return armGate(Gate(requestHash))
+    }
+
+    fun armPendingUpload(): Int = armGate(Gate(null))
+
+    private fun armGate(gate: Gate): Int {
+        if (!armed.compareAndSet(null, gate)) return 0
         entered.store(false)
         return 1
     }
@@ -42,6 +48,17 @@ internal object SwiftA3ConflictApplyProbe {
         operation: suspend () -> T,
     ): T {
         val gate = armed.load()?.takeIf { it.requestHash == requestHash } ?: return operation()
+        return withApplyGate(gate, client, operation)
+    }
+
+    // XCTest serially owns this client and separately witnesses its immutable
+    // upload bytes/hash/source and terminal evidence before and after the cut.
+    suspend fun <T> aroundPendingUpload(client: OversqliteClient, operation: suspend () -> T): T {
+        val gate = armed.load()?.takeIf { it.requestHash == null } ?: return operation()
+        return withApplyGate(gate, client, operation)
+    }
+
+    private suspend fun <T> withApplyGate(gate: Gate, client: OversqliteClient, operation: suspend () -> T): T {
         val owner = checkNotNull(client as? DefaultOversqliteClient)
         owner.setSnapshotApplyFaultInjectorForTest(
             SnapshotApplyFaultInjector(beforeCommit = {
@@ -68,3 +85,7 @@ public fun a3ConflictApplyEnteredForSwiftTest(): Int =
 @OptIn(ExperimentalNativeApi::class)
 public fun releaseA3ConflictApplyForSwiftTest(): Int =
     if (Platform.isDebugBinary) SwiftA3ConflictApplyProbe.release() else 0
+
+@OptIn(ExperimentalNativeApi::class)
+public fun armRecoveryApplyForSwiftTest(): Int =
+    if (Platform.isDebugBinary) SwiftA3ConflictApplyProbe.armPendingUpload() else 0

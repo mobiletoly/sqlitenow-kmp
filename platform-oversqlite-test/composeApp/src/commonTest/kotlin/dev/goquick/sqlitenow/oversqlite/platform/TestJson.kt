@@ -20,6 +20,7 @@ internal data class TestWireLimits(
     val maxSnapshotRows: Long = 10_000_000L,
     val maxSnapshotLogicalBytes: Long = 2L * 1024L * 1024L * 1024L,
     val maxRowDecodedBytes: Long = 4L * 1024L * 1024L,
+    val maxPushOutcomeDecodedBytes: Long = maxPushDecodedBytes + 8192L,
 )
 
 internal fun testWireLimits(): TestWireLimits = TestWireLimits()
@@ -83,4 +84,5 @@ private fun testWireLimitsJson(limits: TestWireLimits): JsonObject = buildJsonOb
     put("max_snapshot_rows", limits.maxSnapshotRows)
     put("max_snapshot_logical_bytes", limits.maxSnapshotLogicalBytes)
     put("max_row_decoded_bytes", limits.maxRowDecodedBytes)
+    put("max_push_outcome_decoded_bytes", limits.maxPushOutcomeDecodedBytes)
 }

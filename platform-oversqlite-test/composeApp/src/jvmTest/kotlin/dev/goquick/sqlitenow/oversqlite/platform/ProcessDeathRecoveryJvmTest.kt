@@ -2,10 +2,14 @@ package dev.goquick.sqlitenow.oversqlite.platform
 
 import dev.goquick.sqlitenow.oversqlite.*
 import dev.goquick.sqlitenow.core.TransactionMode
+import dev.goquick.sqlitenow.core.SafeSQLiteConnection
+import dev.goquick.sqlitenow.core.sqlite.use
+import androidx.sqlite.async.step
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.encodeToString
+import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.Json
 import io.ktor.client.HttpClient
 import java.nio.file.Files
@@ -22,6 +26,20 @@ private val recoveryConfig = OversqliteConfig(
     syncTables = listOf(SyncTable("users", syncKeyColumnName = "id"),
         SyncTable("posts", syncKeyColumnName = "id")),
 )
+
+// Preserve every existing owner vector and the complete typed upload journal.
+private suspend fun processDeathStateVector(
+    db: SafeSQLiteConnection, includeDurableStages: Boolean = true,
+): Map<String, List<String>> {
+    val primary = databaseStateVector(db, recoveryTables, ignoreDerivedCharges = true,
+        includeDurableStages = includeDurableStages)
+    val journal = db.prepare("SELECT json_array(singleton_key,binding,typeof(request_body)," +
+        "lower(hex(request_body)),request_digest,typeof(outcome_body),lower(hex(outcome_body))," +
+        "outcome_hash,phase) FROM _sync_upload_journal ORDER BY singleton_key").use { statement ->
+        buildList { while (statement.step()) add(statement.getText(0)) }
+    }
+    return primary + ("_sync_upload_journal" to journal)
+}
 
 internal class ProcessDeathRecoveryJvmTest : PlatformCrossTargetTestSupport() {
     @Test fun reservationSurvivesProcessDeath() = checkKilledOwner("reserved")
@@ -54,7 +72,7 @@ internal class ProcessDeathRecoveryJvmTest : PlatformCrossTargetTestSupport() {
             val expected = Json.decodeFromString<Map<String, List<String>>>(Files.readString(expectedPath))
             val inspection = newFileBackedDb(databasePath.toString())
             try {
-                assertEquals(expected, databaseStateVector(inspection, recoveryTables, ignoreDerivedCharges = true),
+                assertEquals(expected, processDeathStateVector(inspection),
                     "$cut physical reopen has one complete old-or-new state")
             } finally { inspection.close() }
 
@@ -64,21 +82,19 @@ internal class ProcessDeathRecoveryJvmTest : PlatformCrossTargetTestSupport() {
             try {
                 successorDb.openClient(recoveryConfig, successorHttp, ServerWinsResolver)
                 assertEquals(expected,
-                    databaseStateVector(successorDb.connection(), recoveryTables, ignoreDerivedCharges = true),
+                    processDeathStateVector(successorDb.connection()),
                     "$cut new lifetime preserved the complete state")
                 if (cut.startsWith("plan_")) {
                     assertEquals(cut.removePrefix("plan_"), scalarText(successorDb,
                         "SELECT phase FROM _sync_apply_plan"), "$cut durable planner phase")
-                    val primaryBefore = databaseStateVector(successorDb.connection(), recoveryTables,
-                        ignoreDerivedCharges = true, includeDurableStages = false)
+                    val primaryBefore = processDeathStateVector(successorDb.connection(), includeDurableStages = false)
                     resumePlannerPhase(successorDb, successorHttp,
                         if (cut == "plan_clear") applyUnit("snapshot", 3, "stale-plan")
                         else applyUnit("snapshot", 2, "phase-death-plan"))
                     assertEquals(0L, scalarLong(successorDb, "SELECT count(*) FROM _sync_apply_plan"))
                     assertEquals(0L, scalarLong(successorDb, "SELECT count(*) FROM _sync_apply_rows"))
                     assertEquals(0L, scalarLong(successorDb, "SELECT count(*) FROM _sync_apply_edges"))
-                    assertEquals(primaryBefore, databaseStateVector(successorDb.connection(), recoveryTables,
-                        ignoreDerivedCharges = true, includeDurableStages = false),
+                    assertEquals(primaryBefore, processDeathStateVector(successorDb.connection(), includeDurableStages = false),
                         "$cut successor completed the retained plan without changing primary state")
                 }
                 assertEquals(0L, scalarLong(successorDb,
@@ -172,7 +188,8 @@ internal class ProcessDeathRecoveryJvmTest : PlatformCrossTargetTestSupport() {
             AdmittedOversqliteContract("v1", generation, testWireLimits().let {
                 OversqliteWireLimits(it.maxPushRows, it.maxPushDecodedBytes, it.maxPullBundles,
                     it.maxPullDecodedBytes, it.maxSnapshotRowsPerChunk, it.maxSnapshotDecodedBytesPerChunk,
-                    it.maxSnapshotRows, it.maxSnapshotLogicalBytes, it.maxRowDecodedBytes)
+                    it.maxSnapshotRows, it.maxSnapshotLogicalBytes, it.maxRowDecodedBytes,
+                    it.maxPushOutcomeDecodedBytes)
             }, false),
             "user-1", scalarText(database, "SELECT current_source_id FROM _sync_attachment_state"),
         )
@@ -220,7 +237,7 @@ internal object ProcessDeathRecoveryOwner : PlatformCrossTargetTestSupport() {
             suspend fun witnessDurableStage() {
                 val observer = newFileBackedDb(args[1])
                 try {
-                    val durable = databaseStateVector(observer, recoveryTables, ignoreDerivedCharges = true)
+                    val durable = processDeathStateVector(observer)
                     Files.writeString(expected, Json.encodeToString(durable))
                 } finally { observer.close() }
                 park()
@@ -240,12 +257,22 @@ internal object ProcessDeathRecoveryOwner : PlatformCrossTargetTestSupport() {
             error("$cut hook did not hold the owner")
         }
         updateUserName(database, "P", "local intent")
-        server.beforePushCommit = {
+        val loseOriginalResponse: suspend () -> Unit = {
             server.beforePushCommit = null
-            throw CancellationException("freeze original before remote commit")
+            server.beforePushResponse = null
+            throw CancellationException("retain original upload at $cut")
         }
+        if (cut == "reserved") server.beforePushCommit = loseOriginalResponse
+        else server.beforePushResponse = loseOriginalResponse
         assertFailsWith<CancellationException> { client.pushPending().getOrThrow() }
-        val old = databaseStateVector(database.connection(), recoveryTables, ignoreDerivedCharges = true)
+        val old = processDeathStateVector(database.connection())
+        val oldPrimary = databaseStateVector(database.connection(), recoveryTables, ignoreDerivedCharges = true, includeDurableStages = false)
+        val frozen = checkNotNull(loadUploadJournal(database.connection()))
+        val originalRequestHex = scalarText(database,
+            "SELECT lower(hex(request_body)) FROM _sync_upload_journal")
+        assertEquals(2L, frozen.binding.operation.sourceBundleId)
+        assertEquals("frozen", frozen.phase)
+        assertEquals(0L, frozen.outcomeBytes)
         Files.writeString(expected, Json.encodeToString(old))
         if (cut == "reserved") {
             val session = client.javaClass.getDeclaredField("sessionState")
@@ -262,19 +289,58 @@ internal object ProcessDeathRecoveryOwner : PlatformCrossTargetTestSupport() {
                 held[0] = (held[0] + 1).toByte()
             }
         }
+        suspend fun witnessCommitBoundary() {
+            val observer = newFileBackedDb(args[1])
+            try {
+                assertEquals(oldPrimary, databaseStateVector(observer, recoveryTables, ignoreDerivedCharges = true, includeDurableStages = false),
+                    "$cut original primary intent remains before settlement commit")
+                val observed = checkNotNull(loadUploadJournal(observer))
+                assertEquals(frozen.binding, observed.binding)
+                assertEquals(frozen.requestDigest, observed.requestDigest)
+                assertEquals(frozen.requestBytes, observed.requestBytes)
+                assertEquals(originalRequestHex, scalarText(observer,
+                    "SELECT lower(hex(request_body)) FROM _sync_upload_journal"))
+                assertEquals("frozen", observed.phase)
+                assertTrue(observed.outcomeBytes > 0)
+                val reply = Json { ignoreUnknownKeys = true }.decodeFromString<TerminalPushOutcome>(
+                    scalarText(observer, "SELECT CAST(outcome_body AS TEXT) FROM _sync_upload_journal"))
+                val operation = frozen.binding.operation
+                assertEquals("committed", reply.status)
+                assertEquals(operation.sourceId, reply.sourceId)
+                assertEquals(operation.generationId, reply.generationId)
+                assertEquals(operation.generationFingerprint, reply.generationFingerprint)
+                assertEquals(operation.sourceBundleId, reply.sourceBundleId)
+                assertEquals(operation.canonicalRequestHash, reply.canonicalRequestHash)
+                assertEquals(operation.initializationId, reply.initializationId)
+                assertEquals(observed.outcomeHash, reply.outcomeHash)
+                assertEquals(2L, reply.committed!!.bundleSeq)
+                assertEquals(1L, reply.committed!!.rowCount)
+                assertEquals(2, server.pushRequestCount, "retry resolves original C without resending F")
+                assertEquals(1, server.requestCounts["/sync/push-outcomes/resolve"])
+                assertEquals(1, server.requestCounts["/sync/push-outcomes/ack"], "only initial seed C is acknowledged")
+                Files.writeString(expected, Json.encodeToString(processDeathStateVector(observer)))
+            } finally { observer.close() }
+            park()
+        }
         when (cut) {
             "cache_closed" -> client.setSnapshotApplyFaultInjectorForTest(
-                SnapshotApplyFaultInjector(afterStatementCacheClosed = { park() }),
+                SnapshotApplyFaultInjector(afterStatementCacheClosed = { witnessCommitBoundary() }),
             )
             "before_commit" -> client.setSnapshotApplyFaultInjectorForTest(
-                SnapshotApplyFaultInjector(beforeCommit = { park() }),
+                SnapshotApplyFaultInjector(beforeCommit = { witnessCommitBoundary() }),
             )
             "after_commit" -> Unit
             else -> error("unknown cut $cut")
         }
-        client.pushPending().getOrThrow()
+        val completed = client.pushPending().getOrThrow()
         check(cut == "after_commit") { "$cut hook did not hold the owner" }
-        val settled = databaseStateVector(database.connection(), recoveryTables, ignoreDerivedCharges = true)
+        assertEquals(PushOutcome.COMMITTED, completed.outcome)
+        assertEquals("local intent", scalarText(database, "SELECT name FROM users WHERE id='P'"))
+        assertEquals(2L, scalarLong(database, "SELECT row_version FROM _sync_row_state WHERE table_name='users'"))
+        assertEquals(0L, scalarLong(database, "SELECT count(*) FROM _sync_upload_journal"))
+        assertEquals(0L, scalarLong(database, "SELECT count(*) FROM _sync_dirty_rows"))
+        assertEquals("none", scalarText(database, "SELECT state FROM _sync_outbox_bundle"))
+        val settled = processDeathStateVector(database.connection())
         Files.writeString(expected, Json.encodeToString(settled))
         park()
     }
@@ -318,7 +384,7 @@ internal object ProcessDeathRecoveryOwner : PlatformCrossTargetTestSupport() {
                 val observer = newFileBackedDb(databasePath)
                 try {
                     Files.writeString(expected, Json.encodeToString(
-                        databaseStateVector(observer, recoveryTables, ignoreDerivedCharges = true)))
+                        processDeathStateVector(observer)))
                 } finally { observer.close() }
                 Files.writeString(marker, cut)
                 while (true) delay(50)

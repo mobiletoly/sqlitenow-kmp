@@ -13,6 +13,24 @@ import kotlin.test.assertTrue
 
 class StatementCacheTest {
     @Test
+    fun explicitCleanupDeadlinePreservesPrimaryAndAttemptsEveryHandle() = runBlocking {
+        val db = BundledSqliteConnectionProvider.openConnection(":memory:", false)
+        val primary = IllegalArgumentException("primary")
+        var closed = 0
+        try {
+            val observed = assertFailsWith<IllegalArgumentException> {
+                db.withStatementCache(
+                    operations = StatementCacheOperations(close = { st -> st.close(); closed++; kotlinx.coroutines.delay(1000) }),
+                    cleanupTimeoutMillis = 10,
+                ) { cache -> cache.get("SELECT 1"); cache.get("SELECT 2"); throw primary }
+            }
+            assertTrue(observed === primary || observed.cause === primary)
+            assertTrue(observed.suppressedExceptions.any { it is kotlinx.coroutines.TimeoutCancellationException })
+            assertEquals(2, closed, "synchronous native close attempted for every handle before deadline report")
+        } finally { db.close() }
+    }
+
+    @Test
     fun statementCache_rebindsWithoutLeakingPriorBindings() = runBlocking {
         val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
         db.execSQL("CREATE TABLE items (id INTEGER PRIMARY KEY, value TEXT NOT NULL)")

@@ -46,7 +46,8 @@ AGENTS.md
 /plans
 /specs/
 
-# Qualification validation residue
-/tools/qualification/**/__pycache__/
+# Python local caches and bytecode
+__pycache__/
+*.py[cod]
 
 /.artifacts

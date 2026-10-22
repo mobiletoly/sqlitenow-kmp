@@ -17,6 +17,9 @@ package dev.goquick.sqlitenow.oversqlite
 
 // Canonical DDL is shared by initialization and retained-state admission.
 internal val oversqliteRetainedTableDdl = mapOf(
+    "_sync_provenance_contexts" to provenanceContextDdl,
+    "_sync_provenance_state" to provenanceStateDdl,
+    "_sync_upload_journal" to uploadJournalDdl,
     "_sync_push_plan" to pushPlanDdl,
     "_sync_push_nodes" to pushNodesDdl,
     "_sync_push_edges" to pushEdgesDdl,
@@ -40,7 +43,7 @@ internal val oversqliteRetainedTableDdl = mapOf(
           base_row_version INTEGER NOT NULL DEFAULT 0,
           base_kind TEXT NOT NULL CHECK(base_kind IN ('present','deleted','absent','unavailable')),
           base_payload TEXT,
-          base_provenance TEXT NOT NULL CHECK(json_valid(base_provenance) AND json_type(base_provenance)='object'),
+          ${provenanceObservationColumns("base_provenance", "base_context_id")},
           payload TEXT,
           dirty_ordinal INTEGER NOT NULL DEFAULT 0,
           updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
@@ -54,7 +57,8 @@ internal val oversqliteRetainedTableDdl = mapOf(
           singleton_key INTEGER NOT NULL PRIMARY KEY CHECK (singleton_key = 1),
           dirty_revision INTEGER NOT NULL DEFAULT 0 CHECK(typeof(dirty_revision)='integer' AND dirty_revision>=0 AND dirty_revision<9223372036854775807),
  baseline_revision INTEGER NOT NULL DEFAULT 0 CHECK(typeof(baseline_revision)='integer' AND baseline_revision>=0 AND baseline_revision<9223372036854775807),
-          decision_state TEXT NOT NULL DEFAULT 'none' CHECK (decision_state IN ('none','pending')),
+          rejection_code TEXT NOT NULL DEFAULT '',
+          decision_state TEXT NOT NULL DEFAULT 'none' CHECK (decision_state IN ('none','pending','rejected')),
           source_id TEXT NOT NULL DEFAULT '',
           source_bundle_id INTEGER NOT NULL DEFAULT 0,
           canonical_request_hash TEXT NOT NULL DEFAULT '',
@@ -96,7 +100,8 @@ internal val oversqliteRetainedTableDdl = mapOf(
           schema_name TEXT NOT NULL DEFAULT '',
           last_bundle_seq_seen INTEGER NOT NULL DEFAULT 0,
           rebuild_required INTEGER NOT NULL DEFAULT 0,
-          pending_initialization_id TEXT NOT NULL DEFAULT ''
+          pending_initialization_id TEXT NOT NULL DEFAULT '',
+          initialization_reconnect_required INTEGER NOT NULL DEFAULT 0 CHECK(initialization_reconnect_required IN (0,1))
         )
     """.trimIndent(),
     "_sync_operation_state" to """
@@ -112,6 +117,8 @@ internal val oversqliteRetainedTableDdl = mapOf(
           snapshot_staged_row_count INTEGER NOT NULL DEFAULT 0 CHECK(typeof(snapshot_staged_row_count)='integer' AND snapshot_staged_row_count>=0),
           snapshot_staged_byte_count INTEGER NOT NULL DEFAULT 0 CHECK(typeof(snapshot_staged_byte_count)='integer' AND snapshot_staged_byte_count>=0),
           snapshot_stage_guard TEXT NOT NULL DEFAULT '',
+          snapshot_transfer TEXT NOT NULL DEFAULT '',
+          recovery_state TEXT NOT NULL DEFAULT '',
           reason TEXT NOT NULL DEFAULT '',
           replacement_source_id TEXT NOT NULL DEFAULT '',
           workspace_context TEXT NOT NULL DEFAULT '',
@@ -126,7 +133,7 @@ internal val oversqliteRetainedTableDdl = mapOf(
         CREATE TABLE IF NOT EXISTS _sync_outbox_bundle (
           singleton_key INTEGER NOT NULL PRIMARY KEY CHECK (singleton_key = 1),
           canonical_json_contract TEXT NOT NULL CHECK (canonical_json_contract = 'jcs_uniform_numeric_strings_v1'),
-          state TEXT NOT NULL DEFAULT 'none' CHECK (state IN ('none', 'prepared')),
+          state TEXT NOT NULL DEFAULT 'none' CHECK (state IN ('none', 'prepared', 'rejected')),
           source_id TEXT NOT NULL DEFAULT '',
           source_bundle_id INTEGER NOT NULL DEFAULT 0,
           initialization_id TEXT NOT NULL DEFAULT '',
@@ -146,7 +153,7 @@ internal val oversqliteRetainedTableDdl = mapOf(
           base_row_version INTEGER NOT NULL DEFAULT 0,
           base_kind TEXT NOT NULL CHECK(base_kind IN ('present','deleted','absent','unavailable')),
           base_payload TEXT,
-          base_provenance TEXT NOT NULL CHECK(json_valid(base_provenance) AND json_type(base_provenance)='object'),
+          ${provenanceObservationColumns("base_provenance", "base_context_id")},
           local_payload TEXT,
           wire_payload TEXT,
           PRIMARY KEY (source_bundle_id, row_ordinal),
@@ -173,7 +180,8 @@ internal val oversqliteRetainedTableDdl = mapOf(
     "_sync_admitted_contracts" to """
             CREATE TABLE _sync_admitted_contracts (
                 generation_id INTEGER PRIMARY KEY, fingerprint TEXT NOT NULL,
-                descriptor TEXT NOT NULL, descriptor_hash TEXT NOT NULL
+                descriptor TEXT NOT NULL, descriptor_hash TEXT NOT NULL,
+                admission TEXT NOT NULL DEFAULT '', admission_hash TEXT NOT NULL DEFAULT ''
             )
     """.trimIndent(),
 )

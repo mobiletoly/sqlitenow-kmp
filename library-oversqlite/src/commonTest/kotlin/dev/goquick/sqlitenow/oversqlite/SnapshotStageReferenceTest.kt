@@ -34,7 +34,12 @@ internal class SnapshotStageReferenceTest : SurvivorTestSupport() {
             assertIs<SyncWorkLimitException>(pending)
             assertEquals(1L, scalarLong(db, "SELECT count(*) FROM _sync_apply_rows WHERE role='snapshot_ref' AND source_ordinal=1 AND payload IS NULL"))
             assertEquals(payload, scalarText(db, "SELECT payload FROM _sync_snapshot_stage WHERE snapshot_id='source' AND row_ordinal=1"))
-            owner().prepare(state, unit, 1, "snapshot", 2, sourceSnapshotId = "source") { error("retained root must not be re-read") }
+            val operations=OversqliteClientOperationController(config,OversqliteClientResourceOwner(db,http),SnapshotDiagnosticsState()) {}
+            val resumed=OversqliteApplySurvivors(db,local,config,operations,Json)
+            OversqliteApplyExecutor(db,OversqliteApplyStateStore(db),operations).inApplyModeTransaction(state) { cache ->
+                resumed.prepare(state,unit,1,"snapshot",2,cache,cache,sourceSnapshotId="source") { error("retained root must not be re-read") }
+            }
+            kotlin.test.assertTrue(operations.workSliceDiagnostics.workSlices>0,"real bounded owner yields and resumes the retained plan")
             assertEquals("ready", scalarText(db, "SELECT phase FROM _sync_apply_plan"))
             assertEquals(1L, scalarLong(db, "SELECT count(*) FROM _sync_apply_rows WHERE payload IS NULL AND role='snapshot_ref'"))
 

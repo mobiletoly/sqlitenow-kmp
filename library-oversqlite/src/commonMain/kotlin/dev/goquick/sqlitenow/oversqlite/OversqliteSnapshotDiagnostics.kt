@@ -35,7 +35,7 @@ internal data class SnapshotRestoreDiagnostics(
     val capacityWaitMillis: Long = 0,
 )
 
-internal class SnapshotDiagnosticsRecorder {
+internal class SnapshotDiagnosticsRecorder(val phases: SyncPhaseDiagnostics = SyncPhaseDiagnostics()) {
     private val started = TimeSource.Monotonic.markNow()
     private var sessionCount = 0L
     private var fetchedChunks = 0L
@@ -45,6 +45,10 @@ internal class SnapshotDiagnosticsRecorder {
     private var maxLiveApplyPageRows = 0
     private var maxLiveApplyPageStagedTextBytes = 0L
     private var applyPages = 0L
+    private var stagedBytes = 0L
+    private var validatedRows = 0L
+    private var installedRows = 0L
+    private var installedBytes = 0L
     private var finalStagedRows = 0L
     private var finalAppliedRows = 0L
     private var restoreAttempted = false
@@ -54,6 +58,7 @@ internal class SnapshotDiagnosticsRecorder {
 
     fun markRestoreAttempt() {
         restoreAttempted = true
+        phases.start()
     }
 
     fun hasRestoreAttempt(): Boolean = restoreAttempted
@@ -69,6 +74,9 @@ internal class SnapshotDiagnosticsRecorder {
 
     fun recordValidatedChunk(rows: Int, declaredBytes: Long) {
         fetchedChunks++
+        stagedBytes += declaredBytes
+        validatedRows += rows
+        phases.progress("download_staging", validatedRows, stagedBytes, "validated")
         maxValidatedChunkRows = maxOf(maxValidatedChunkRows, rows)
         maxDeclaredChunkBytes = maxOf(maxDeclaredChunkBytes, declaredBytes)
     }
@@ -79,6 +87,13 @@ internal class SnapshotDiagnosticsRecorder {
         applyPages++
         maxLiveApplyPageRows = maxOf(maxLiveApplyPageRows, rows)
         maxLiveApplyPageStagedTextBytes = maxOf(maxLiveApplyPageStagedTextBytes, stagedTextBytes)
+    }
+
+    fun recordInstalledPage(rows: Int, stagedTextBytes: Long) {
+        require(rows > 0 && stagedTextBytes >= 0L)
+        installedRows += rows
+        installedBytes += stagedTextBytes
+        phases.progress("row_installation", installedRows, installedBytes, "installed_uncommitted")
     }
 
     fun recordStagedRows(rows: Long) {
@@ -100,6 +115,8 @@ internal class SnapshotDiagnosticsRecorder {
     fun recordCapacityWait(waitedMillis: Long) {
         capacityWaitMillis += waitedMillis.coerceAtLeast(0L)
     }
+
+    fun finish(outcome: String) { phases.finish(outcome, finalAppliedRows, stagedBytes) }
 
     fun snapshot(): SnapshotRestoreDiagnostics = SnapshotRestoreDiagnostics(
         sessionCount = sessionCount,
@@ -138,11 +155,12 @@ internal class SnapshotDiagnosticsState {
 
     fun current(): SnapshotDiagnosticsRecorder? = active
 
-    fun finish(scope: SnapshotDiagnosticsScope) {
+    fun finish(scope: SnapshotDiagnosticsScope, outcome: String) {
         if (!scope.owner) return
         check(active === scope.recorder) { "snapshot diagnostics scope ownership changed" }
         if (scope.recorder.hasRestoreAttempt()) {
             published = scope.recorder.snapshot()
+            scope.recorder.finish(outcome)
         }
         active = null
     }

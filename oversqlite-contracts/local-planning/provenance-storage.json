@@ -1,0 +1,56 @@
+{
+  "formatVersion": 1,
+  "formatIdentity": "complete-context-v1",
+  "contextDdl": "CREATE TABLE IF NOT EXISTS _sync_provenance_contexts (\n context_id INTEGER PRIMARY KEY AUTOINCREMENT,\n database_id TEXT NOT NULL CHECK(database_id<>''), service_id TEXT NOT NULL CHECK(service_id<>''),\n account_binding TEXT NOT NULL CHECK(account_binding IN ('anonymous','attached')), account_id TEXT NOT NULL,\n generation_id INTEGER NOT NULL CHECK(typeof(generation_id)='integer' AND generation_id>0),\n generation_fingerprint TEXT NOT NULL, admission TEXT NOT NULL CHECK(admission IN ('unadmitted','admitted')),\n local_version INTEGER NOT NULL CHECK(typeof(local_version)='integer' AND local_version>=0),\n physical_shape TEXT NOT NULL CHECK(physical_shape<>''), origin_source_id TEXT NOT NULL,\n CHECK((account_binding='anonymous' AND account_id='') OR (account_binding='attached' AND account_id<>'')),\n CHECK((admission='unadmitted' AND generation_fingerprint='') OR (admission='admitted' AND length(generation_fingerprint)=64)),\n UNIQUE(database_id,service_id,account_binding,account_id,generation_id,generation_fingerprint,admission,local_version,physical_shape,origin_source_id)\n)",
+  "stateDdl": "CREATE TABLE IF NOT EXISTS _sync_provenance_state (\n singleton_key INTEGER PRIMARY KEY CHECK(singleton_key=1),\n format_identity TEXT NOT NULL CHECK(format_identity='complete-context-v1'),\n active_context_id INTEGER REFERENCES _sync_provenance_contexts(context_id) ON DELETE RESTRICT,\n cleanup_cursor INTEGER NOT NULL DEFAULT 0 CHECK(typeof(cleanup_cursor)='integer' AND cleanup_cursor>=0)\n)",
+  "ownerDdl": "CREATE TABLE owner_NAME (\n identity INTEGER PRIMARY KEY, observation TEXT NOT NULL CHECK(COALESCE(json_valid(observation) AND json_type(observation)='object'\n AND json_type(observation,'$.context_id')='integer' AND json_extract(observation,'$.context_id')>0\n AND json_type(observation,'$.origin')='text' AND json_extract(observation,'$.origin') IN ('never_published','snapshot','pull','settlement','explicit_conflict')\n AND json_type(observation,'$.bundle_sequence') IN ('integer','null')\n AND (json_type(observation,'$.bundle_sequence')='null' OR json_extract(observation,'$.bundle_sequence')>=0)\n AND json_remove(observation,'$.context_id','$.origin','$.bundle_sequence')='{}',0)),\n context_id INTEGER GENERATED ALWAYS AS(json_extract(observation,'$.context_id')) STORED NOT NULL REFERENCES _sync_provenance_contexts(context_id) ON DELETE RESTRICT\n)",
+  "families": [
+    "complete-context-equality",
+    "reference-integrity",
+    "bounded-cleanup",
+    "logical-storage"
+  ],
+  "contextColumns": [
+    "database_id",
+    "service_id",
+    "account_binding",
+    "account_id",
+    "generation_id",
+    "generation_fingerprint",
+    "admission",
+    "local_version",
+    "physical_shape",
+    "origin_source_id"
+  ],
+  "contextValues": [
+    "synthetic-db",
+    "synthetic-service",
+    "attached",
+    "synthetic-account",
+    1,
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "admitted",
+    1,
+    "shape",
+    "synthetic-source"
+  ],
+  "cleanup": {
+    "candidatesPerSlice": 32,
+    "explicitReferenceProbesPerCandidate": 4,
+    "foreignKeyProbesPerCandidate": 4,
+    "advanceWhenAllReferenced": true,
+    "restartCursor": 0
+  },
+  "storage": {
+    "rows": 2019,
+    "physicalShapeBytes": 7138,
+    "minimumReductionPercent": 90,
+    "primaryOwners": [
+      "authoritative",
+      "dirty-base",
+      "frozen-base"
+    ],
+    "hostCopiesCharged": true
+  },
+  "immutableTriggerDdl": "CREATE TRIGGER IF NOT EXISTS _sync_provenance_context_immutable BEFORE UPDATE ON _sync_provenance_contexts BEGIN SELECT RAISE(ABORT,'SYNC_CONTEXT_IMMUTABLE'); END"
+}

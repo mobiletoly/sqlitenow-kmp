@@ -93,8 +93,10 @@ internal class SettlementReplayTest : SurvivorTestSupport() {
 
     private suspend fun assertSettledReplay(server: MockSyncServer, db: SafeSQLiteConnection) {
         requireSurvivors(db)
-        assertEquals(3, server.pushRequestCount, "seed, committed loss, replay")
-        assertEquals(server.pushBodies[1], server.pushBodies[2], "exact frozen request")
+        assertEquals(2, server.pushRequestCount, "seed, committed response loss; resumed F resolves retained C")
+        assertEquals(1,server.resolveRequests.size)
+        assertEquals(2,server.ackRequests.size)
+        assertEquals(2,server.pushBodies.size,"no replayed business request")
         assertEquals(3L, scalarLong(db, "SELECT next_source_bundle_id FROM _sync_source_state"))
         assertEquals(2L, scalarLong(db, "SELECT last_bundle_seq_seen FROM _sync_attachment_state"))
         assertEquals(0L, scalarLong(db, "SELECT count(*) FROM _sync_outbox_rows"))

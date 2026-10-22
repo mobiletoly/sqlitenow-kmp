@@ -46,7 +46,7 @@ internal class OversqliteConflictStateStore(
             """.trimIndent(),
         ).use { st ->
             check(st.step()) { "_sync_conflict_state singleton row is missing" }
-            if (st.getText(1) == "none") return@use null
+            if (st.getText(1) in setOf("none","rejected")) return@use null
             check(st.getText(1) == "pending") { "invalid durable conflict decision state" }
             val storedJson = json.parseToJsonElement(st.getText(7)) as? JsonObject
                 ?: error("durable conflict details must be a JSON object")
@@ -148,11 +148,30 @@ internal class OversqliteConflictStateStore(
         return stored
     }
 
+    // Real application rejection evidence is durable before protocol disposition.
+    // Existing coordinated opening may retain it; ordinary caller retry requeues
+    // the original captures under a successor identity after ack.
+    suspend fun preserveApplicationRejection(state: RuntimeState,snapshot: PushOutboundSnapshot,code: String) {
+        require(code.matches(Regex("[a-z][a-z0-9_]{0,63}")) && code!="push_conflict")
+        val generation=checkNotNull(state.validated.generation)
+        db.withPreparedStatement("""UPDATE _sync_conflict_state SET decision_state='rejected',rejection_code=?,source_id=?,source_bundle_id=?,canonical_request_hash=?,generation_id=?,generation_fingerprint=?,conflict_json='',local_payload_json=NULL WHERE singleton_key=1 AND decision_state='none'""") {
+            it.bindText(1,code);it.bindText(2,state.sourceId);it.bindLong(3,snapshot.sourceBundleId);it.bindText(4,snapshot.canonicalRequestHash);it.bindLong(5,generation.id.toLong());it.bindText(6,generation.fingerprint);it.step()
+        }
+        check(db.scalarLong("SELECT changes()")==1L) { "application rejection policy owner changed" }
+    }
+
+    suspend fun applicationRejection(): OversqliteRemoteContractException? = db.queryList("""SELECT c.rejection_code,c.source_id,c.source_bundle_id,c.canonical_request_hash,c.generation_id,c.generation_fingerprint,o.source_id,o.source_bundle_id,o.canonical_request_hash,o.state FROM _sync_conflict_state c CROSS JOIN _sync_outbox_bundle o WHERE c.singleton_key=1 AND o.singleton_key=1 AND c.decision_state='rejected'""") { st ->
+        val code=st.getText(0);require(code.matches(Regex("[a-z][a-z0-9_]{0,63}")) && code!="push_conflict")
+        requireValidOversqliteSourceId(st.getText(1));require(st.getLong(2)>0 && isCanonicalSha256(st.getText(3)) && st.getLong(4)>0 && isCanonicalSha256(st.getText(5)))
+        check(st.getText(1)==st.getText(6) && st.getLong(2)==st.getLong(7) && st.getText(3)==st.getText(8) && st.getText(9)==outboxStateRejected) { "rejection policy owner changed" }
+        terminalRejectionException(code,st.getLong(4))
+    }.singleOrNull()
+
     suspend fun clear() {
         db.execSQL(
             """
             UPDATE _sync_conflict_state
-            SET decision_state = 'none', source_id = '', source_bundle_id = 0,
+            SET decision_state = 'none', rejection_code='', source_id = '', source_bundle_id = 0,
                 canonical_request_hash = '', generation_id = 0, generation_fingerprint = '',
                 conflict_json = '', local_payload_json = NULL
             WHERE singleton_key = 1

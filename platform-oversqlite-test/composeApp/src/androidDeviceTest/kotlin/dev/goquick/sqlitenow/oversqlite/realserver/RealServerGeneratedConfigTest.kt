@@ -4,7 +4,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import dev.goquick.sqlitenow.oversqlite.OversqliteConfig
 import dev.goquick.sqlitenow.oversqlite.SyncTable
 import dev.goquick.sqlitenow.oversqlite.platform.generated.RealServerGeneratedDatabase
-import kotlinx.coroutines.runBlocking
+import dev.goquick.sqlitenow.oversqlite.realserver.runEnabledRealServerTest as runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test

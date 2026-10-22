@@ -67,6 +67,7 @@ private val remoteOperationErrorShapes = mapOf(
     "push_invalid" to RemoteOperationErrorShape(400),
     "push_replay_mismatch" to RemoteOperationErrorShape(409),
     "bundle_projection_too_large" to RemoteOperationErrorShape(422),
+    "push_outcome_too_large" to RemoteOperationErrorShape(413),
     "committed_bundle_unrepresentable" to RemoteOperationErrorShape(500),
     "invalid_gzip" to RemoteOperationErrorShape(400),
     "unsupported_media_type" to RemoteOperationErrorShape(415),

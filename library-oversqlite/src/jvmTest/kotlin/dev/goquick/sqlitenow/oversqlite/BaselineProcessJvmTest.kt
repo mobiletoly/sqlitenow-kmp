@@ -171,7 +171,8 @@ internal class BaselineProcessJvmTest : CrossTargetSyncTestSupport() {
             server.beforePushCommit={throw CancellationException("definitely uncommitted")}
             try {client.pushPending()} catch(_:CancellationException) { }
             db.execSQL("UPDATE users SET name='newer' WHERE id='S'")
-            requeueDefinitelyUncommittedBaselineOutbox(db)
+            client.pushPending().getOrThrow()
+            assertEquals(1,server.resolveRequests.size)
             checkpoint("requeued")
             client.pushPending().getOrThrow()
             val settled=baselineQualificationVector(db)

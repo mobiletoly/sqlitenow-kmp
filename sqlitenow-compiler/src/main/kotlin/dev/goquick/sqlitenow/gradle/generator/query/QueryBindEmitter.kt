@@ -26,7 +26,6 @@ import dev.goquick.sqlitenow.gradle.model.AnnotatedStatement
 internal class QueryBindEmitter(
     private val parameterBinding: ParameterBinding,
     private val scaffolder: QueryFunctionScaffolder,
-    private val debug: Boolean,
 ) {
     fun generateBindStatementParamsFunction(
         namespace: String,
@@ -59,10 +58,6 @@ internal class QueryBindEmitter(
         if (namedParameters.isEmpty()) {
             return
         }
-        if (debug) {
-            fnBld.addStatement("val __paramsLog = mutableListOf<String>()")
-            fnBld.addStatement("val __seenParams = mutableSetOf<String>()")
-        }
         val processedAdapterVars = mutableMapOf<String, String>()
         namedParameters.forEachIndexed { index, paramName ->
             val propertyName =
@@ -78,12 +73,6 @@ internal class QueryBindEmitter(
                 processedAdapterVars = processedAdapterVars,
             )
         }
-        if (debug) {
-            fnBld.addStatement(
-                "sqliteNowLogger.d { %S + __paramsLog.joinToString(%S) }",
-                "bind ${scaffolder.queryNamespaceName(namespace)}.$className params: ",
-                ", ",
-            )
-        }
+
     }
 }

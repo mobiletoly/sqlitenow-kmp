@@ -10,7 +10,7 @@ historical campaign records retain their original requirements and results.
 
 The 2026-10-14 owner-authorized completion profile permits database recreation on both server and clients. Older-format migration and table-retirement compatibility journeys are outside this profile; preserve their failed attempts and historical requirements without reporting the broader suite as passing. No migration or dual-format compatibility implementation is required. New-format reopen/restart/replay, pending intent, cancellation, hard bounds and cleanup remain mandatory.
 
-The work-slice amendment in the paired specifications names the required client, corpus, platform, Swift, live, load and resource lanes. Refresh invalidated leaves and independently mandatory aggregates. Full load follows measured structural correction, three smaller complete-scenario timings and a verified 50-user rehearsal within 10 minutes; final 100-user/50-concurrency completion retains the existing 20-minute window. Delivery and downstream database recreation require separate authorization.
+The work-slice amendment in the paired specifications names the required client, corpus, platform, Swift, live, load and resource lanes. Refresh invalidated leaves and independently mandatory aggregates. For future approved-profile candidates, full load follows measured structural correction and the verified1/1,5/5,10/10,25/25-user/concurrency ladder under240/240/240/300s phase caps and the shared load-sequence prerequisite/lease/cleanup contract. Former50/100 current proof requirements are retired, not subsumed. Delivery and downstream database recreation require separate authorization.
 
 ### Reservation remediation and retained-database audit (2026-10-15)
 
@@ -20,7 +20,7 @@ The remediation ledger is `../go-oversync/.artifacts/review-remediation-20261015
 
 Retain fresh synthetic writer/follower SQLite files for Go/Kotlin at default/1 across ten125-key update/delete/sync/reinsert cycles, one rebuild and cancellation/reopen/recovery. Census every `_sync_*` table, inspect closed copies read-only (integrity/FKs, row and counter reconciliation, relationships/checkpoints), and separate logical state from pages/free pages/database/WAL sizes. Preserve SQL reports and isolated PostgreSQL replay/retention relationships before cleanup. No VACUUM or manual internal-row cleanup. Unexplained accumulation blocks completion.
 
-Reuse unaffected snapshot/resource and measured performance evidence with dependency justification. Do not repeat the three-timing campaign or50-user rehearsal. Run the final verified100-user/50-concurrency acceptance once under1200 seconds after the stable Go fix, then obtain independent remediation/evidence review. Failed attempts remain retained; diagnose before retrying. Delivery remains separately authorized.
+**Historical2026-10-15 remediation requirement (superseded prospectively by the2026-10-26 short-entry profile):** Reuse unaffected snapshot/resource and measured performance evidence with dependency justification. The original campaign required the100-user/50-concurrency acceptance after its50-user rehearsal. Its receipts keep those claims; future approved-profile candidates require the complete1/5/10/25 ladder instead, then independent evidence review. Failed attempts remain retained; diagnose before retrying. Delivery remains separately authorized.
 
 ## Current replay workload roster
 
@@ -58,6 +58,52 @@ resolve platform members that are absent from the common API, so their tests do
 not replace this check. For shared SQLite async API changes, also compile the
 affected JS/Wasm targets. Metadata compilation and runtime tests do not establish
 publication success; report packaging and publishing evidence separately.
+
+## Fast semantic regressions and retained qualification witnesses
+
+For focused development, select Go `TestSettlementReservation_Continuation` (eight tables, nine rows, upload four, targets 1/8/17/default), Kotlin `ConflictReservationRegressionTest` (sixteen rows, 4,096 entries, automatic/explicit at all four targets plus two cancellation/client-reopen cases), and the fast delayed-heartbeat socket method with the existing cancellation and ordinary-timeout methods. A small regression establishes its named semantic invariants; it does not establish a retained large-workload or full-duration claim.
+
+Go development command:
+
+```sh
+GOTOOLCHAIN=go1.25.12 go test ./oversqlite -run '^TestSettlementReservation_Continuation$' -count=1 -timeout=3m30s
+```
+
+JVM development command:
+
+```sh
+./gradlew :library-oversqlite:jvmTest \
+  --tests '*ConflictReservationRegressionTest' \
+  --tests '*BundleChangeWatchSocketTimeoutTest.watchSurvivesTwoDelayedHeartbeatsWithSmallCallerTimeout' \
+  --tests '*BundleChangeWatchSocketTimeoutTest.cancellingAdmittedIdleWatchClosesConnectionPromptly' \
+  --tests '*BundleChangeWatchSocketTimeoutTest.watchTimeoutOverridePreservesCallerAndOrdinaryRequestTimeouts' \
+  --rerun --no-daemon --console=plain
+```
+
+These focused selections execute semantic regressions. They do not replace the
+retained qualification owners or establish full-duration socket, large-workload,
+physical-reopen, live-server or whole-profile claims. Android runs the same shared
+real-OkHttp socket assertions on a named owned device. The conflict cancellation
+helper reopens a client on the same connection; physical persistence remains a
+separate obligation.
+
+For maintenance candidates, select affected owners manually and record every
+fresh/reused/subsumed/not-applicable/blocked lane. Reuse of scale/duration evidence
+remains reviewer-confirmed and depends on unchanged relevant code, fixtures,
+toolchain, providers, transport and runner contracts. Reservation accounting,
+work charging, continuation, cancellation/reopen or graph changes require the
+applicable original reservation/scale owners. Transport timeout/default/engine
+changes require the original duration owner as well as the short defect control.
+
+Keep Go's eight-table125-row/upload40 targets1/8/17/default plus default1,000 rows,
+Kotlin common64-row/4,096-entry all-target cases and JVM2,000-row self-FK cases,
+and the original two20-second-heartbeat socket body under their current mandatory
+initial-protocol/release triggers, command selections, body obligations and
+deadlines. Preserve the current replay roster, retained-database cycles and
+fourteen-table/3,399-row witness wherever required. Ordinary and measured backlog
+tests each execute all four replay workloads; the trigger-restoration test has
+one ordinary owner. No automatic reuse, guard/flag/build-tag opt-out, workload
+removal, coverage union or full-profile scheduling change is introduced here.
 
 ## Select the smallest sound set
 
@@ -248,7 +294,7 @@ cache redesign and multi-hour historical campaign reconstruction are deferred.
 
 The owner authorizes one operating-system process per simulated user for device-load qualification. Each child executes the complete existing scenario, including mixed CRUD, laptop recovery, both crash hooks, replay/restart and final verification, with unchanged SDK defaults and transport policies. The parent runs at most `--concurrency` children, requires a successful child result and independent per-user final verification, and owns cancellation, termination and reaping. Child verification uses a bounded single-connection PostgreSQL pool; credentials travel through private process input rather than command arguments or reports.
 
-Parallel mobile_flow uses process workers by default; `--parallel-mode=goroutine` retains the original shared-process SDK stress mode. Previously failed shared-process attempts remain failed stress evidence and are not relabeled as device-load passes. The library completion/cancellation/resource contract applies in both modes. Device-load qualification still requires three smaller verified runs, then 50/50 within 600 seconds and 100/50 within 1,200 seconds, against the same freshly isolated authority with unchanged budgets, verification and workload. Parent cancellation stops queued work and joins every owned child; incomplete, malformed, missing or failing child results fail the run. No global SQLite configuration or SDK throttle is introduced.
+Parallel mobile_flow uses process workers by default; `--parallel-mode=goroutine` retains the original shared-process SDK stress mode. Previously failed shared-process attempts remain failed stress evidence and are not relabeled as device-load passes. The library completion/cancellation/resource contract applies in both modes. For future approved-profile candidates, device-load qualification requires four verified1/1,5/5,10/10,25/25-user/concurrency phases under the shared short-entry load-sequence contract:240/240/240/300s, same fresh authority, unchanged per-user scenario/default budgets/verification. The former50/100 current requirements are retired, with no equivalent credit; historical evidence is unchanged. Parent cancellation stops queued work and joins every owned child; incomplete, malformed, missing or failing child results fail the run. No global SQLite configuration or SDK throttle is introduced.
 
 
 ### History-projection retry timing correction (2026-10-14)
@@ -276,3 +322,30 @@ Kotlin apply preparation may retire one pending root in one existing bounded wal
 ### Independent push components
 
 When completed push discovery records zero edges and a current indexed absence query confirms that result, Kotlin public planning may assign one pristine unvisited node directly to its singleton component. Preserve DFS/index/stack counters, component identity, blocked reason, ready ordering, encoded charge and guarded writer publication. A nonpristine or partially visited node uses the original DFS path. After packing a singleton in this proven empty graph, advance directly to component selection without traversing nonexistent dependency edges. Each transition remains bounded to one node and indexed scalar queries; original per-step work weights,32-step writer quantum, low-level kernel behavior and hard limits/defaults remain unchanged. Qualify exact wire order, independent/blocked/cyclic graphs, external writes, cancellation/reopen, workspace refusal and tiny browser/Wasm completion; no wire/layout change is introduced.
+
+## Owner-approved future full profile — 2026-10-26
+
+For a future stable full initial-protocol/release candidate explicitly bound to [oversqlite-full.json](../tools/qualification/profiles/oversqlite-full.json), [r0001 validation section9](../../go-oversync/specs/r0001-oversqlite-durable-recovery-validation.md) supersedes only the listed command repetition and envelopes. Development/maintenance remain manually affected-path selected, with reviewer-confirmed reuse. Root/member arrays, native contracts, flags, deadline trees and obligation mapping are bound by the manifest; missing inputs/adapters/readiness/feasibility block execution. Keep full-root rerun flags, separate normal/observed and ordinary/heavy proofs, all current four replay workloads and scale/duration witnesses. Normal entries are at most300s; use the exact version2 `schedule.entries` and12 logical-root membership sets. Source-proven overlaps require compatible fresh witnesses; bounded preparation is context/output-bound. Only public load-sequence may qualify all four fresh same-authority1/5/10/25-user phases with matching concurrency; old50/100 rows receive zero current credit; load-N members cannot claim sequence completion. Old P3 preparation manifests remain source-bound; the42 reactive focused Development passes do not establish platform/Swift/live/full-profile qualification. E41 authority adoption is distinct from E42 execution and E43 independent review/owner acceptance; delivery is separate.
+
+### Approved E42 repair amendment — 2026-10-27
+
+The owner approved the [combined repair amendment](../../go-oversync/.artifacts/qualification-efficiency-e42-20261026T110553+0200/approved-repair-20261027T0338Z/owner-approval-and-plan.json). The current version2
+profile binds its [successor review packet](../../go-oversync/.artifacts/qualification-efficiency-e42-20261026T110553+0200/approved-repair-20261027T0338Z/reviewed-profile/proposal.md):508 declarations,
+499 normal entries and9 orchestration controllers. The original80-method local
+Node entry is partitioned into32/48 whole-class groups, retaining all methods and
+300-second wall /270-second work /30-second cleanup caps. Other entry membership,
+source workload sizes, body deadlines and the25-user maximum remain unchanged.
+
+The three identified stale fixture files use causal cascade-observation phases
+and exclusive-lifetime migration ownership. The worker client immediately owns
+its internal readiness rejection while preserving caller-visible errors and
+bounded cleanup; only its client asset size/hash changes in the manifest.
+These are approved fixture/ownership repairs, with no wire/schema/provider or
+SDK-default change. Original coverage columns remain frozen baseline evidence;
+additive current fixture bindings identify the four repaired method bodies.
+
+Historical receipts and predecessor seals retain their original identities.
+Reuse requires reviewed dependency nonreach; affected web Worker/Fetch/Browser
+isolation evidence must be refreshed after the client repair. Linuxx64/ARM64
+retain97selected methods each and remain owner-blocked. Approval does not grant
+native qualification, E43 acceptance, commit, push, release or deployment.

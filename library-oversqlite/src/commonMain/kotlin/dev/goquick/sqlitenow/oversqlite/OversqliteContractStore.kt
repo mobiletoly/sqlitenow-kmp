@@ -62,6 +62,7 @@ internal class OversqliteContractStore(private val db: SafeSQLiteConnection) {
             st.bindText(5, identity.physicalShape)
             st.step()
         }
+        OversqliteProvenanceContextStore(db).refreshActiveAndBind()
     }
 
     suspend fun read(identity: LocalContractIdentity): SyncGeneration? {
@@ -108,6 +109,27 @@ internal class OversqliteContractStore(private val db: SafeSQLiteConnection) {
                 require(it.fingerprint == fingerprint) { "admitted generation fingerprint mismatch" }
             }
         }
+
+    suspend fun recordAdmission(contract: AdmittedOversqliteContract) {
+        val raw=canonicalizeJsonElement(Json.encodeToJsonElement(contract))
+        decodeGenerationDiscovery(raw,contract.generation.id.toLong())
+        require(utf8Size(raw)<=generationControlBodyLimit)
+        db.withPreparedStatement("UPDATE _sync_admitted_contracts SET admission=?,admission_hash=? WHERE generation_id=? AND fingerprint=?") {
+            it.bindText(1,raw);it.bindText(2,sha256Hex(raw.encodeToByteArray()));it.bindLong(3,contract.generation.id.toLong());it.bindText(4,contract.generation.fingerprint);it.step()
+        }
+        check(db.scalarLong("SELECT changes()")==1L) { "admission generation owner changed" }
+    }
+
+    suspend fun readAdmission(generationId: Long): AdmittedOversqliteContract? = db.withPreparedStatement(
+        "SELECT admission,admission_hash,fingerprint FROM _sync_admitted_contracts WHERE generation_id=? AND length(CAST(admission AS BLOB))<=65536",
+    ) { st ->
+        st.bindLong(1,generationId);check(st.step()) { "missing or oversized original admission" }
+        val raw=st.getText(0)
+        if(raw.isEmpty()) {check(st.getText(1).isEmpty());null} else {
+            check(sha256Hex(raw.encodeToByteArray())==st.getText(1)) { "original admission integrity mismatch" }
+            decodeGenerationDiscovery(raw,generationId).also {check(it.generation.fingerprint==st.getText(2))}
+        }
+    }
 
     suspend fun install(identity: LocalContractIdentity, generation: SyncGeneration) {
         require(read(identity) == null) { "generation is already admitted" }

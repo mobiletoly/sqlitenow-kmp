@@ -3,6 +3,8 @@ package dev.goquick.sqlitenow.oversqlite
 import dev.goquick.sqlitenow.core.BundledSqliteConnectionProvider
 import dev.goquick.sqlitenow.core.SafeSQLiteConnection
 import io.ktor.client.HttpClient
+import io.ktor.client.statement.HttpReceivePipeline
+import io.ktor.http.encodedPath
 import java.nio.file.Files
 import java.nio.file.Path
 import kotlinx.coroutines.CancellationException
@@ -26,6 +28,8 @@ internal class DatabaseCleanupAuditJvmTest : RealServerSupport() {
         if (rootEnv == null) { println("BODY_NOT_EXECUTED: retained-file live audit requires isolated runner"); return@runBlocking }
         withTimeout(570_000) {
             val root = Path.of(rootEnv); Files.createDirectories(root)
+            fun phase(name:String) {Files.writeString(root.resolve("audit-phase.json"),buildJsonObject {put("phase",name)}.toString())}
+            phase("initial")
             val authority = assertNotNull(requireRealServerConfig())
             val tables = listOf(SyncTable("categories",syncKeyColumnName="id"))
             val user = randomRealServerId("cleanup-kmp")
@@ -36,13 +40,26 @@ internal class DatabaseCleanupAuditJvmTest : RealServerSupport() {
                 var http: HttpClient? = null
             }
             val owners = (0..1).map { Owner(root.resolve("$it.sqlite")) }
+            var loseAck = false
+            var ackLosses = 0
             suspend fun open(o: Owner) {
                 val fresh = !Files.exists(o.path)
                 val db = BundledSqliteConnectionProvider.openConnection(o.path.toString(),debug=false); o.db=db
                 if (fresh) db.execSQL("CREATE TABLE categories(id TEXT PRIMARY KEY NOT NULL,name TEXT NOT NULL,parent_id TEXT REFERENCES categories(id) ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED)")
                 db.execSQL("PRAGMA journal_mode=WAL")
+                db.execSQL("PRAGMA synchronous=FULL")
+                db.execSQL("PRAGMA foreign_keys=ON")
                 val source = bootstrapManagedSourceId(db,authority.baseUrl,syncTables=tables)
-                val http = newRealServerHttpClient(authority.baseUrl,issueDummySigninToken(authority.baseUrl,user,source));o.http=http
+                val base = newRealServerHttpClient(authority.baseUrl,issueDummySigninToken(authority.baseUrl,user,source))
+                val http = base.config { install("C06AuditLostAck") {
+                    receivePipeline.intercept(HttpReceivePipeline.Before) { response ->
+                        if (response.call.request.url.encodedPath == "/sync/push-outcomes/ack" && loseAck) {
+                            assertEquals(204, response.status.value)
+                            loseAck = false; ackLosses++
+                            throw CancellationException("audit lost committed ack response")
+                        }
+                    }
+                } };base.close();o.http=http
                 val client = DefaultOversqliteClient.forTesting(db,OversqliteConfig(generationId=1,databaseId="fixture",serviceId="business",syncTables=tables,
                     maxSyncWorkUnitsPerInvocation=target,transferTargets=OversqliteTransferTargets(maxPushRows=40)),http)
                 o.client=client;client.open().getOrThrow();client.attach(user).getOrThrow()
@@ -56,16 +73,20 @@ internal class DatabaseCleanupAuditJvmTest : RealServerSupport() {
                     val report=buildJsonObject {
                         put("label",label);put("target",target);put("owner",i);put("tables",tablesJson)
                         for(p in listOf("page_count","freelist_count","page_size")) put(p,scalarLong(db,"PRAGMA $p"))
+                        put("synchronous",scalarLong(db,"PRAGMA synchronous"));put("foreign_keys",scalarLong(db,"PRAGMA foreign_keys"))
+                        for(p in listOf("page_count","freelist_count","page_size")) put("temp_$p",scalarLong(db,"PRAGMA temp.$p"))
                         put("business_rows",scalarLong(db,"SELECT count(*) FROM categories"))
                         put("foreign_key_errors",scalarLong(db,"SELECT count(*) FROM pragma_foreign_key_check"))
                         put("reservations",scalarLong(db,"SELECT reserved_entries+reserved_bytes+length(workspace_context) FROM _sync_operation_state"))
                         for(suffix in listOf("","-wal","-shm")) { val path=Path.of(o.path.toString()+suffix);put("bytes$suffix",if(Files.exists(path)) Files.size(path) else 0) }
                     }
 
+                    assertEquals(2L,scalarLong(db,"PRAGMA synchronous"))
+                    assertEquals(1L,scalarLong(db,"PRAGMA foreign_keys"))
                     assertEquals(0L,scalarLong(db,"SELECT reserved_entries+reserved_bytes+length(workspace_context) FROM _sync_operation_state"))
                     assertEquals(0L,scalarLong(db,"SELECT count(*) FROM pragma_foreign_key_check"))
                     assertEquals(0L,scalarLong(db,"SELECT apply_mode FROM _sync_apply_state"))
-                    if(label != "cancelled") for(table in listOf("_sync_dirty_rows","_sync_outbox_rows","_sync_apply_plan","_sync_apply_rows","_sync_apply_edges","_sync_push_plan","_sync_push_nodes","_sync_push_edges","_sync_snapshot_stage"))
+                    if(label != "cancelled" && label != "ack-pending") for(table in listOf("_sync_upload_journal","_sync_dirty_rows","_sync_outbox_rows","_sync_apply_plan","_sync_apply_rows","_sync_apply_edges","_sync_push_plan","_sync_push_nodes","_sync_push_edges","_sync_snapshot_stage"))
                         assertEquals(0L,scalarLong(db,"SELECT count(*) FROM $table"),"$table after $label")
                     Files.writeString(root.resolve("$label-$i-census.json"),report.toString())
                 }
@@ -79,14 +100,14 @@ internal class DatabaseCleanupAuditJvmTest : RealServerSupport() {
             try {
                 resume()
                 ids.forEachIndexed { i,id -> checkNotNull(owners[0].db).execSQL("INSERT INTO categories VALUES('$id','initial-%03d',%s)".format(i,if(i==0) "NULL" else "'${ids[0]}'")) }
-                syncPair();save("initial");resume()
+                syncPair();save("initial");phase("steady");resume()
                 for(cycle in 1..10) {
                     val db=checkNotNull(owners[0].db)
                     for(i in 1..10) db.execSQL("UPDATE categories SET name='cycle-%02d-update-%03d' WHERE id='${ids[i]}'".format(cycle,i))
                     for(i in 115..124) db.execSQL("DELETE FROM categories WHERE id='${ids[i]}'")
                     syncPair()
                     for(i in 115..124) db.execSQL("INSERT INTO categories VALUES('${ids[i]}','cycle-%02d-reinsert-%03d','${ids[0]}')".format(cycle,i))
-                    syncPair();if(cycle==5) checkNotNull(owners[1].client).rebuild().getOrThrow()
+                    syncPair();if(cycle==5) {phase("explicit-rebuild");try {checkNotNull(owners[1].client).rebuild().getOrThrow()} finally {phase("steady")}}
                     for(o in owners) { assertEquals(125L,scalarLong(checkNotNull(o.db),"SELECT count(*) FROM categories"));assertEquals(0L,scalarLong(checkNotNull(o.db),"SELECT count(*) FROM _sync_dirty_rows")) }
 
                     for(o in owners) ids.forEachIndexed { i,id ->
@@ -103,11 +124,23 @@ internal class DatabaseCleanupAuditJvmTest : RealServerSupport() {
                 }))
                 assertFailsWith<CancellationException> {writer.pushPending().getOrThrow()}
                 val hash=scalarText(db,"SELECT canonical_request_hash FROM _sync_outbox_bundle")
-                assertTrue(hash.isNotEmpty());save("cancelled");resume()
+                assertTrue(hash.isNotEmpty())
+                suspend fun vector() = baselineQualificationVector(checkNotNull(owners[0].db), listOf("categories","_sync_upload_journal",
+                    "_sync_apply_plan","_sync_apply_rows","_sync_apply_edges","_sync_push_plan","_sync_push_nodes","_sync_push_edges","_sync_snapshot_stage"))
+                val cancelledVector=vector();save("cancelled");resume()
                 assertEquals(hash,scalarText(checkNotNull(owners[0].db),"SELECT canonical_request_hash FROM _sync_outbox_bundle"))
+                assertEquals(cancelledVector,vector(),"complete F/C, typed bases/captures and pending intent across physical reopen")
+                loseAck=true
+                assertFailsWith<CancellationException> {checkNotNull(owners[0].client).pushPending().getOrThrow()}
+                assertEquals(1,ackLosses,"actual authority committed the deliberately lost ack")
+                assertEquals("ack_pending",scalarText(checkNotNull(owners[0].db),"SELECT phase FROM _sync_upload_journal"))
+                assertEquals(0L,scalarLong(checkNotNull(owners[0].db),"SELECT count(*) FROM _sync_outbox_rows"))
+                val ackVector=vector();save("ack-pending");resume()
+                assertEquals(ackVector,vector(),"full ack_pending certificate/completion/later intent survives physical reopen")
                 syncPair();for(o in owners) assertEquals(124L,scalarLong(checkNotNull(o.db),"SELECT count(*) FROM categories WHERE name='recovered'"))
                 save("recovered")
-                Files.writeString(root.resolve("manifest.json"),buildJsonObject {put("user",user);put("target",target);put("cancelled_hash",hash)}.toString())
+                Files.writeString(root.resolve("manifest.json"),buildJsonObject {put("user",user);put("target",target);put("cancelled_hash",hash);put("ack_losses",ackLosses);put("ack_reopened",true);put("cycles",10);put("keys_count",125)}.toString())
+                println("RECOVERY_RETAINED_AUDIT_COMPLETE kotlin target=$target cycles=10 keys=125 cancelled_reopen=true ack_reopen=true")
             } finally {owners.forEach {close(it)} }
         }
     }

@@ -16,11 +16,14 @@ from tools.qualification import oversqlite_smoke as smoke
 
 
 def go_events(action="pass"):
-    return [
-        {"Action": "run", "Package": smoke.GO_PACKAGE, "Test": smoke.GO_TEST},
-        {"Action": action, "Package": smoke.GO_PACKAGE, "Test": smoke.GO_TEST},
-        {"Action": "pass" if action != "fail" else "fail", "Package": smoke.GO_PACKAGE},
-    ]
+    events = []
+    for name in smoke.GO_TESTS:
+        events.extend([
+            {"Action": "run", "Package": smoke.GO_PACKAGE, "Test": name},
+            {"Action": action, "Package": smoke.GO_PACKAGE, "Test": name},
+        ])
+    return events + [{"Action": "pass" if action != "fail" else "fail", "Package": smoke.GO_PACKAGE}]
+
 
 
 def swift_xml(child="", name=smoke.SWIFT_TEST):
@@ -39,23 +42,102 @@ class SmokeTests(unittest.TestCase):
         self.parent = Path(self.temp.name)
         self.env = {**os.environ, smoke.DATABASE_ENV: "postgres://runner:s%40fe-password@127.0.0.1/test"}
 
-    def make_run(self, mode="go-direct-sync"):
+    def make_run(self, mode="go-direct-sync", state_selection="all"):
         output = self.parent / str(len(list(self.parent.iterdir())))
         output.mkdir()
-        return smoke.Run(mode, self.parent, self.parent, output, self.env)
+        return smoke.Run(mode, self.parent, self.parent, output, self.env, state_selection)
+
+    def test_full_profile_identity_uses_only_its_registered_deadline_bound_inspector(self):
+        inspect=mock.Mock(side_effect=['candidate-head','','',''])
+        with mock.patch.object(smoke,'inspect_command',side_effect=AssertionError('legacy unbounded inspector used')):
+            identity=smoke.identity(self.parent,self.env,inspector=inspect)
+        self.assertTrue(identity.startswith('HEAD=candidate-head;'))
+        self.assertEqual(inspect.call_count,4)
+        for call in inspect.call_args_list:
+            self.assertEqual(call.kwargs,dict(cwd=self.parent,env=self.env))
+        inspect.side_effect=TimeoutError('bounded inspection expired')
+        with self.assertRaises(TimeoutError):smoke.identity(self.parent,self.env,inspector=inspect)
 
     def child(self, code, name="child.log"):
         child = smoke.Child([sys.executable, "-c", code], self.parent, self.env, self.parent / name)
         self.addCleanup(lambda: child.terminate(1) if child.proc.poll() is None else None)
         return child
 
+    def authority_run(self):
+        root, go = self.parent / "kotlin", self.parent / "go"
+        root.mkdir(); go.mkdir()
+        authorities = smoke.required_authorities(root, go)
+        for name, path in authorities.items():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("real authority fixture: " + name)
+        corpus = root / "oversqlite-contracts"
+        pins = corpus / "recovery/authority-pins.json"
+        pins.parent.mkdir(parents=True)
+        pins.write_text(json.dumps({name: smoke.sha(path.read_bytes()) for name, path in authorities.items()}))
+        (corpus / "MANIFEST.sha256").write_text(f"{smoke.sha(pins.read_bytes())}  recovery/authority-pins.json\n")
+        output = self.parent / "output"
+        output.mkdir()
+        return smoke.Run("go-direct-sync", root, go, output, self.env), authorities
+
+    def test_complete_replacement_authorities_pass_preflight(self):
+        run, authorities = self.authority_run()
+        with mock.patch.object(smoke.shutil, "which", return_value="controlled-tool"), \
+                mock.patch.object(smoke, "identity", return_value="controlled-identity"), \
+                mock.patch.object(run, "command") as command, mock.patch.object(smoke, "Child") as child:
+            run.preflight()
+            self.assertEqual(set(run.hashes), {str(p) for p in authorities.values()} | {
+                str(run.root / "oversqlite-contracts/recovery/authority-pins.json"),
+                str(run.root / "oversqlite-contracts/MANIFEST.sha256"),
+            })
+            command.assert_called_once()
+            child.assert_not_called()
+
+    def test_every_replacement_authority_missing_or_tampered_starts_no_child(self):
+        run, authorities = self.authority_run()
+        for name, path in authorities.items():
+            original = path.read_bytes()
+            for change in ("missing", "tampered"):
+                with self.subTest(authority=name, change=change):
+                    if change == "missing":
+                        path.unlink()
+                    else:
+                        path.write_bytes(original + b"tampered")
+                    try:
+                        with mock.patch.object(smoke.shutil, "which", return_value="controlled-tool"), \
+                                mock.patch.object(smoke, "identity") as identity, \
+                                mock.patch.object(smoke, "Child") as child:
+                            with self.assertRaises(smoke.SmokeError):
+                                run.execute()
+                            identity.assert_not_called()
+                            child.assert_not_called()
+                    finally:
+                        path.write_bytes(original)
+
+    def test_replacement_pins_and_corpus_fail_closed_before_children(self):
+        run, _ = self.authority_run()
+        corpus = run.root / "oversqlite-contracts"
+        for path in (corpus / "MANIFEST.sha256", corpus / "recovery/authority-pins.json"):
+            original = path.read_bytes()
+            for change in ("missing", "tampered"):
+                with self.subTest(path=path.name, change=change):
+                    if change == "missing": path.unlink()
+                    else: path.write_bytes(original + b"tampered")
+                    try:
+                        with mock.patch.object(smoke.shutil, "which", return_value="controlled-tool"), \
+                                mock.patch.object(smoke, "Child") as child:
+                            with self.assertRaises(smoke.SmokeError): run.execute()
+                            child.assert_not_called()
+                    finally:
+                        path.write_bytes(original)
+
     def test_go_requires_named_fresh_success_and_package_success(self):
         path = self.parent / "go.jsonl"
         path.write_text("\n".join(map(json.dumps, go_events())))
-        self.assertIn("passed=1", smoke.go_results(path))
+        self.assertIn("passed=2", smoke.go_results(path))
         for events in ([], go_events("skip"), go_events("fail"), go_events()[1:], go_events()[:-1],
-                       go_events() + go_events(), [{"Action": "pass", "Package": smoke.GO_PACKAGE}],
-                       [{"Action": "pass", "Package": "wrong", "Test": smoke.GO_TEST}]):
+                       go_events() + go_events(), go_events()[:2] + go_events()[-1:],
+                       go_events()[2:], [{"Action": "pass", "Package": smoke.GO_PACKAGE}],
+                       [{"Action": "pass", "Package": "wrong", "Test": smoke.GO_TESTS[0]}]):
             with self.subTest(events=events):
                 path.write_text("\n".join(map(json.dumps, events)))
                 with self.assertRaises(smoke.SmokeError):
@@ -280,14 +362,20 @@ while not Path({str(resume)!r}).exists(): time.sleep(.01)
         self.assertEqual(run.env["GOTOOLCHAIN"], "go1.25.12")
         self.assertRegex(run.env["OVERSYNC_SMOKE_DATABASE_NAME"], r"^oversync_smoke_[0-9a-f]{32}$")
         self.assertEqual(smoke.go_argv(self.parent), [str(self.parent / "scripts/go-test-with-cleanup.sh"),
-                         "-json", "-count=1", "-timeout=3m30s", "-run", f"^{smoke.GO_TEST}$", "."])
+                         "-json", "-count=1", "-timeout=210.000s", "-run", "^(" + "|".join(smoke.GO_TESTS) + ")$", "."])
+        self.assertIn("-timeout=12.250s", smoke.go_argv(self.parent, 12.25))
+        self.assertIn("-timeout=210.000s", smoke.go_argv(self.parent, 999))
+        with self.assertRaises(smoke.SmokeError):
+            smoke.go_argv(self.parent, 0)
 
     def test_both_flows_with_controlled_children_no_product_commands(self):
         actual_child = smoke.Child
         self.env["ORG_GRADLE_PROJECT_a3SwiftTestBridge"] = "true"
-        for mode in ("go-direct-sync", "swift-cancellation", "swift-cancellation-state"):
-            with self.subTest(mode=mode):
-                run = self.make_run(mode)
+        for mode, selection in (("go-direct-sync", "all"), ("swift-cancellation", "all"),
+                                ("swift-cancellation-state", "all"), ("swift-cancellation-state", "conflict"),
+                                ("swift-cancellation-state", "recovery")):
+            with self.subTest(mode=mode, selection=selection):
+                run = self.make_run(mode, selection)
                 observed = []
                 swift_environments = []
 
@@ -302,7 +390,12 @@ while not Path({str(resume)!r}).exists(): time.sleep(.01)
                     elif argv[0] == "swift" and argv[1] == "test":
                         swift_environments.append(dict(env))
                         xml = Path(argv[argv.index("--xunit-output") + 1])
-                        names = ((smoke.SWIFT_CONFLICT_TEST,) if env.get("OVERSQLITE_A3_SWIFT_TEST_BRIDGE") else smoke.SWIFT_STATE_TESTS) if mode == "swift-cancellation-state" else (smoke.SWIFT_TEST,)
+                        selector = argv[argv.index("--filter") + 1]
+                        if mode == "swift-cancellation-state":
+                            names = ((smoke.SWIFT_RECOVERY_TEST,) if smoke.SWIFT_RECOVERY_TEST in selector else
+                                     (smoke.SWIFT_CONFLICT_TEST,) if env.get("OVERSQLITE_A3_SWIFT_TEST_BRIDGE") else smoke.SWIFT_STATE_TESTS)
+                        else:
+                            names = (smoke.SWIFT_TEST,)
                         cls = smoke.SWIFT_STATE_CLASS if mode == "swift-cancellation-state" else smoke.SWIFT_CLASS
                         cases = ''.join(f'<testcase classname="SQLiteNowSyncSupportTests.{cls}" name="{name}"/>' for name in names)
                         native_xml = f'<testsuites><testsuite tests="{len(names)}">{cases}</testsuite></testsuites>'
@@ -311,6 +404,12 @@ while not Path({str(resume)!r}).exists(): time.sleep(.01)
                         for name in names:
                             self.assertRegex(f"{cls}/{name}", selector)
                         code = f"from pathlib import Path; Path({str(xml)!r}).write_text({native_xml!r}); print({native_log!r})"
+                        if names == (smoke.SWIFT_RECOVERY_TEST,):
+                            vector_root = env[smoke.SWIFT_RECOVERY_EVIDENCE_ENV]
+                            code += f"; import json; root=Path({vector_root!r}); root.mkdir(); vector={self.recovery_vector()!r}"
+                            for phase in smoke.SWIFT_RECOVERY_PHASES:
+                                code += f"; (root/{phase + '.json'!r}).write_text(json.dumps(vector)); print('RECOVERY_SWIFT_BOUNDARY {phase} vector_file={phase}.json')"
+                            code += "; print('RECOVERY_SWIFT_COMPLETE original_intent resolve snapshot_download final_apply ack reopen')"
                     elif argv == [str(run.fixture)]:
                         code = "import signal,time; signal.signal(signal.SIGTERM,lambda *_:exit(0)); print('OVERSQLITE_SWIFT_CONVERGENT_BASE_URL=http://127.0.0.1:12345',flush=True); time.sleep(20)"
                     elif argv == [str(run.fixture), "--cleanup"]:
@@ -326,8 +425,8 @@ while not Path({str(resume)!r}).exists(): time.sleep(.01)
                 self.assertEqual(sum(argv == [str(run.fixture), "--cleanup"] for argv, _ in observed), 1)
                 if mode != "go-direct-sync":
                     preparations = [argv for argv, _ in observed if argv[0] == str(self.parent / "gradlew")]
-                    expected = [[str(self.parent / "gradlew"), "-Pa3SwiftTestBridge=false", smoke.PACKAGE_TASK]]
-                    if mode == "swift-cancellation-state":
+                    expected = [[str(self.parent / "gradlew"), "-Pa3SwiftTestBridge=" + ("true" if selection != "all" else "false"), smoke.PACKAGE_TASK]]
+                    if mode == "swift-cancellation-state" and selection == "all":
                         expected.append([str(self.parent / "gradlew"), "-Pa3SwiftTestBridge=true", smoke.PACKAGE_TASK])
                     self.assertEqual(preparations, expected)
                 if mode == "swift-cancellation":
@@ -341,14 +440,66 @@ while not Path({str(resume)!r}).exists(): time.sleep(.01)
                     self.assertIn(f"{smoke.SWIFT_CLASS}/{smoke.SWIFT_TEST}", swift[0])
                     self.assertNotIn("OVERSYNC_SWIFT_A3_FIXTURE", swift_environments[0])
                     self.assertNotIn("OVERSQLITE_A3_SWIFT_TEST_BRIDGE", swift_environments[0])
+                elif mode == "swift-cancellation-state" and selection != "all":
+                    self.assertEqual(len(swift_environments),1)
+                    self.assertEqual(swift_environments[0]["OVERSYNC_SWIFT_A3_FIXTURE"], "1")
+                    self.assertEqual(swift_environments[0]["OVERSQLITE_A3_SWIFT_TEST_BRIDGE"], "1")
+                    self.assertTrue((run.output / ("swift-state-" + selection) / "swift-tests.xml").exists())
                 elif mode == "swift-cancellation-state":
-                    self.assertEqual(len(swift_environments), 2)
+                    self.assertEqual(len(swift_environments), 3)
                     self.assertTrue(all(e["OVERSYNC_SWIFT_A3_FIXTURE"] == "1" for e in swift_environments))
                     self.assertNotIn("OVERSQLITE_A3_SWIFT_TEST_BRIDGE", swift_environments[0])
-                    self.assertEqual(swift_environments[1]["OVERSQLITE_A3_SWIFT_TEST_BRIDGE"], "1")
+                    self.assertTrue(all(e["OVERSQLITE_A3_SWIFT_TEST_BRIDGE"] == "1" for e in swift_environments[1:]))
                     self.assertIn("-Pa3SwiftTestBridge=true", flat)
                     self.assertTrue((run.output / "swift-state-default/swift-tests.xml").exists())
                     self.assertTrue((run.output / "swift-state-conflict/swift-tests.xml").exists())
+                    self.assertTrue((run.output / "swift-state-recovery/swift-tests.xml").exists())
+
+    @staticmethod
+    def recovery_vector():
+        names = ("users", "_sync_row_state", "_sync_dirty_rows", "_sync_outbox_rows", "_sync_outbox_bundle",
+                 "_sync_upload_journal", "_sync_source_state", "_sync_attachment_state", "_sync_relationships",
+                 "_sync_conflict_state", "_sync_opening_state", "_sync_contract_identity", "_sync_admitted_contracts",
+                 "_sync_managed_tables", "_sync_apply_plan", "_sync_apply_rows", "_sync_apply_edges", "_sync_apply_state",
+                 "_sync_operation_state", "_sync_snapshot_stage", "_sync_push_plan", "_sync_push_nodes", "_sync_push_edges")
+        vector = {name: [] for name in names}
+        vector["users"] = [json.dumps([{"storage":"integer","value":"9007199254740993"}])]
+        return vector
+
+    def test_recovery_phase_artifacts_and_completion_fail_closed(self):
+        output = self.parent / "recovery"; output.mkdir()
+        root = output / "state-vectors"; root.mkdir()
+        log = output / "native.log"
+        vector = self.recovery_vector()
+        content = "".join(f"RECOVERY_SWIFT_BOUNDARY {phase} vector_file={phase}.json\n" for phase in smoke.SWIFT_RECOVERY_PHASES)
+        content += "RECOVERY_SWIFT_COMPLETE original_intent resolve snapshot_download final_apply ack reopen\n"
+        log.write_text(content)
+        for phase in smoke.SWIFT_RECOVERY_PHASES:
+            (root / (phase + ".json")).write_text(json.dumps(vector))
+        hashes = smoke.recovery_evidence(output, log)
+        self.assertEqual(set(hashes), set(smoke.SWIFT_RECOVERY_PHASES))
+        missing = root / "ack.json"; missing.unlink()
+        with self.assertRaises(smoke.SmokeError): smoke.recovery_evidence(output, log)
+        for malformed in ({}, {**vector,"users":[1]}, {**vector,"users":["[]invalid"]},
+                          {**vector,"users":["[{}]"]}):
+            missing.write_text(json.dumps(malformed))
+            with self.assertRaises((smoke.SmokeError, ValueError)): smoke.recovery_evidence(output, log)
+        for owner in vector:
+            missing.write_text(json.dumps({key: value for key, value in vector.items() if key != owner}))
+            with self.assertRaises(smoke.SmokeError): smoke.recovery_evidence(output, log)
+        for field in ({"storage":{},"value":42}, {"storage":"integer","value":42},
+                      {"storage":"unknown","value":"x"}, {"storage":"null","value":"null"},
+                      {"storage":"text","value":None}, {"storage":"integer","value":"9e5"},
+                      {"storage":"integer","value":"9223372036854775808"}, {"storage":"blob","value":"ABC"},
+                      {"storage":"real","value":"NaN"}):
+            missing.write_text(json.dumps({**vector,"users":[json.dumps([field])]}))
+            with self.assertRaises(smoke.SmokeError): smoke.recovery_evidence(output, log)
+        missing.write_text(json.dumps(vector))
+        for invalid in ("", content + content, content.replace("RECOVERY_SWIFT_COMPLETE", "UNEXECUTED"),
+                        content.replace("RECOVERY_SWIFT_BOUNDARY ack", "UNEXECUTED ack")):
+            log.write_text(invalid)
+            with self.assertRaises(smoke.SmokeError): smoke.recovery_evidence(output, log)
+        with self.assertRaises(smoke.SmokeError): self.make_run("go-direct-sync", "recovery")
 
     def test_swift_modes_override_ambient_fixture_and_bridge_flags(self):
         self.env.update(OVERSYNC_SWIFT_A3_FIXTURE="1", OVERSQLITE_A3_SWIFT_TEST_BRIDGE="1")

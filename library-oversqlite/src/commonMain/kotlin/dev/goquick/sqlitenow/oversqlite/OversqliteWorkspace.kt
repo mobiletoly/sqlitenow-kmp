@@ -199,7 +199,7 @@ internal class OversqliteWorkspace(
         val unit=ReplayFixedUnits.retainedReconciliation
         val owners=listOf(
             listOf("_sync_snapshot_stage","charge","64+6*(length(CAST(snapshot_id AS BLOB))+length(CAST(schema_name AS BLOB))+length(CAST(table_name AS BLOB))+length(CAST(key_json AS BLOB)))+length(CAST(COALESCE(payload,'') AS BLOB))","SELECT snapshot_stage_entries,snapshot_stage_bytes FROM _sync_operation_state WHERE singleton_key=1"),
-            listOf("_sync_apply_rows","bytes","64+6*(length(CAST(table_name AS BLOB))+length(CAST(local_pk AS BLOB)))+length(CAST(COALESCE(payload,'') AS BLOB))","SELECT entries,bytes FROM _sync_apply_plan WHERE singleton_key=1"),
+            listOf("_sync_apply_rows","bytes","96+6*(length(CAST(table_name AS BLOB))+length(CAST(local_pk AS BLOB)))+length(CAST(COALESCE(payload,'') AS BLOB))","SELECT entries,bytes FROM _sync_apply_plan WHERE singleton_key=1"),
             listOf("_sync_apply_edges","bytes","64+6*(length(CAST(parent_table AS BLOB))+length(CAST(parent_pk AS BLOB))+length(CAST(child_table AS BLOB))+length(CAST(child_pk AS BLOB)))","SELECT edge_entries,edge_bytes FROM _sync_apply_plan WHERE singleton_key=1"),
         )
         for(owner in owners) {
@@ -243,6 +243,11 @@ internal class OversqliteWorkspace(
 
     // One current scalar snapshot, at most one row per owner; never scan payload tables.
     suspend fun usage(unit: String, apply: WorkspaceCharge? = null, push: WorkspaceCharge? = null, statementCache: StatementCache? = null): WorkspaceCharge {
+        val memo = currentCoroutineContext()[ProvenanceReadScope]?.takeIf { it.db === db }?.charge ?: WorkspaceCharge()
+        return add(unit, usageWithoutProvenanceMemo(unit, apply, push, statementCache), memo)
+    }
+
+    private suspend fun usageWithoutProvenanceMemo(unit: String, apply: WorkspaceCharge?, push: WorkspaceCharge?, statementCache: StatementCache?): WorkspaceCharge {
         val snapshot = currentCoroutineContext()[PushPlanningWorkspaceSnapshot]?.takeIf { it.db === db }
         if (snapshot == null) return usageUncached(unit, apply, push, statementCache)
         val cacheCharge = if (snapshot.guard == null) pushPlanningWorkspaceCharge
@@ -269,8 +274,10 @@ internal class OversqliteWorkspace(
             ${if (abandonedReservations) "0" else "length(CAST(o.workspace_context AS BLOB))"}+length(CAST(o.kind AS BLOB))+
             length(CAST(o.target_user_id AS BLOB))+length(CAST(o.reason AS BLOB))+
             length(CAST(o.replacement_source_id AS BLOB))+length(CAST(o.staged_snapshot_id AS BLOB))+
-            length(CAST(o.snapshot_stage_guard AS BLOB)),
-            $applyColumns,$pushColumns
+            length(CAST(o.snapshot_stage_guard AS BLOB))+length(CAST(o.snapshot_transfer AS BLOB))+length(CAST(o.recovery_state AS BLOB)),
+            $applyColumns,$pushColumns,
+            (SELECT count(*) FROM _sync_upload_journal),
+            COALESCE((SELECT 512+6*length(CAST(binding AS BLOB))+length(request_body)+length(outcome_body) FROM _sync_upload_journal WHERE singleton_key=1),0)
             FROM _sync_operation_state o
             ${if (apply == null) "LEFT JOIN _sync_apply_plan a ON a.singleton_key=1" else ""}
             ${if (push == null) "LEFT JOIN _sync_push_plan p ON p.singleton_key=1" else ""}
@@ -295,7 +302,7 @@ internal class OversqliteWorkspace(
                     add(unit, WorkspaceCharge(statement.getLong(12), statement.getLong(13)),
                         WorkspaceCharge(1, checkedAdd(unit, "bytes", 2048, scale(unit, statement.getLong(14), 6))))
             }
-            add(unit, total, pushCharge)
+            add(unit, add(unit,total,pushCharge),WorkspaceCharge(statement.getLong(15),statement.getLong(16)))
         }
     }
 

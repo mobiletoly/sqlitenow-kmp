@@ -17,6 +17,7 @@ import io.ktor.http.headersOf
 import io.ktor.utils.io.InternalAPI
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.encodeToString
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
@@ -57,7 +58,7 @@ internal class SnapshotRequestMediaTypeTest {
             }
             assertContentEquals(expectedBody, bytes)
             respond(
-                """{"snapshot_id":"snapshot-media-type","snapshot_bundle_seq":7,"row_count":1,"logical_byte_count":24,"expires_at":"2099-01-01T00:00:00Z"}""",
+                Json.encodeToString(SnapshotSession.serializer(),sealedSnapshotForTest(generation,"source-a","snapshot-media-type",7,emptyList())),
                 headers = headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()),
             )
         }) { defaultRequest { url("https://sync.test/api/") } }

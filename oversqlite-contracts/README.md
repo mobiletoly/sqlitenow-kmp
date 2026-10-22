@@ -3,7 +3,7 @@
 This directory contains versioned, language-neutral protocol and behavior fixtures consumed by Kotlin, Swift, and Go validation surfaces. Fixture changes must preserve manifest integrity and be exercised by their owning test suites.
 
 `CLASSIFICATIONS.json` is the authoritative active-versus-historical index. The
-entries under `currentProtocolFixtures` are the P0-P4 direct-protocol corpus.
+entries under `currentProtocolFixtures` are the active sole-v1 corpus. Explicit historical paths never grant legacy compatibility.
 Entries under `historicalFixtureInputs` are retained only as explicitly named
 pre-simplification local-layout or migration inputs; their capability, push-session,
 committed-row, verbose-row, or old runtime-state vocabulary is not active wire
@@ -66,3 +66,14 @@ Guarded replay-decision continuation retains fully charged primary copies, compa
 Empty dependency traversal requires a completed zero-edge index and current physical absence proof; it preserves step weights, slice quanta, hard limits and the nonempty-graph path.
 
 Public independent-node planning requires zero recorded edges, current physical absence and a pristine node; nonempty/partial DFS and raw kernels retain their original path. Work weights and writer quantum are unchanged.
+
+C01 durable recovery activates one wire authority: Go `swagger/two_way_sync.yaml`.
+`recovery/authority-pins.json` binds the current paired authority files; old hashes
+above describe historical amendments, not the current candidate. `recovery/protocol.json`
+contains independently generated terminal-outcome and framed snapshot vectors, exact
+int64 projection, strict requests and pure lifecycle traces. The original push/snapshot
+envelopes and error/fault/request-count traces are explicitly historical codec/regression
+input. New ordinary terminal upload adds one acknowledgment exchange; no-change Sync adds none.
+The protocol marker is solely `v1`; old payloads/formats have no compatibility path.
+Workflow reducers and JVM contract bodies do not qualify persistence, server outcomes,
+Activity runtime cases, platforms or live clients. Those remain C02-C07 obligations.

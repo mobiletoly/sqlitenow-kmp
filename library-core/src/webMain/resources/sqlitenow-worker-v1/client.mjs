@@ -969,6 +969,10 @@ export function createSqliteWorkerClient(
         readyResolve = resolve;
         readyReject = reject;
       });
+      // Cancellation may exit startup before it awaits readiness. Own that
+      // rejection immediately; awaiting the original promise still propagates
+      // the same startup error to its caller.
+      void ready.catch(() => {});
       client = {
         worker,
         configJson,

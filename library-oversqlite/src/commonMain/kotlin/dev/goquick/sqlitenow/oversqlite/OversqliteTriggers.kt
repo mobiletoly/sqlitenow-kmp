@@ -184,7 +184,7 @@ private fun baselineLookup(data: TriggerData, key: String): String =
 
 private fun ensureNewBaselineSql(data: TriggerData): String = """
  INSERT INTO _sync_row_state(schema_name,table_name,key_json,row_version,server_kind,server_payload,server_provenance,relationships_known)
- SELECT '${data.schemaName}','${data.tableName}',${data.newKeyJson},0,'unpublished',NULL,${baselineProvenanceSql("'never_published'","0","NULL")},1 WHERE true
+ SELECT '${data.schemaName}','${data.tableName}',${data.newKeyJson},0,'unpublished',NULL,${baselineProvenanceSql("'never_published'","NULL")},1 WHERE true
  ON CONFLICT(schema_name,table_name,key_json) DO NOTHING;
 """.trimIndent()
 

@@ -1,0 +1,70 @@
+{
+  "schema_version": 1,
+  "status": "fixed-input-definitions; native compact requests and transcripts must be derived and bound separately",
+  "uuid_ordinal_format": "00000000-0000-4000-8000-%012x",
+  "timestamp": "2026-01-01T00:00:00Z",
+  "optional_columns": "Use the live rich-v0 declaration's exact null/default values.",
+  "isolation": "Separate user/source identities and fresh SQLite database for each workload; fresh authority/reset domain per runtime.",
+  "workloads": [
+    {
+      "id": "small-single-row-insert",
+      "operation": "insert",
+      "table": "categories",
+      "rows": 1,
+      "name": "a",
+      "parent_id": null,
+      "encoding": "identity-below-2048"
+    },
+    {
+      "id": "small-single-row-delete",
+      "operation": "delete",
+      "table": "categories",
+      "rows": 1,
+      "prepare": "Synchronize the same deterministic one-category input in this workload's isolated scope; use its exact current version/base.",
+      "encoding": "identity-below-2048"
+    },
+    {
+      "id": "two-hundred-one-table-push",
+      "operation": "one-complete-push",
+      "table": "categories",
+      "rows": 200,
+      "name_repeat": {"byte": "A", "count": 128},
+      "parent_id": null,
+      "encoding": "gzip-iff-strictly-smaller-above-2048"
+    },
+    {
+      "id": "mixed-table-push",
+      "operation": "one-complete-push",
+      "user": {"rows": 1, "name": "a", "email": "a@example.invalid"},
+      "posts": {"rows": 200, "title": "a", "content_repeat": {"byte": "A", "count": 128}},
+      "foreign_keys": "Every post references the one inserted user.",
+      "encoding": "gzip-iff-strictly-smaller-above-2048"
+    },
+    {
+      "id": "ordinary-multi-bundle-pull",
+      "operation": "ordinary-pull-to-stable-checkpoint",
+      "committed_bundles": 3,
+      "rows_per_bundle": 100,
+      "table": "categories",
+      "name_repeat": {"byte": "A", "count": 128},
+      "capture": "Every actual ordinary response and canonical bundle hash."
+    },
+    {
+      "id": "large-snapshot-chunk",
+      "operation": "fresh-follower-snapshot",
+      "table": "categories",
+      "rows": 1000,
+      "name_repeat": {"byte": "A", "count": 1024},
+      "prepare": "Raw uses five200-row SDK insert/push batches. Browser/Wasm use the same five200-row frozen batches through normal ScopeManager.ExecWrite before readiness; native credit remains zero for setup. Create the fresh measured follower only after all five commits. Snapshot transfer/config limits remain defaults.",
+      "capture": "Every actual chunk and exact declared/logical totals under unchanged default limits."
+    },
+    {
+      "id": "deterministic-incompressible-above-threshold",
+      "operation": "GET /qualification/wire/incompressible",
+      "body_bytes": 4096,
+      "generator": "current deterministicCorpusBody xorshift64star, original prefix/suffix and fill offsets",
+      "encoding": "identity-because-gzip-is-not-strictly-smaller",
+      "protocol_hash": "not-applicable; exact opaque byte equality/SHA256 required"
+    }
+  ]
+}

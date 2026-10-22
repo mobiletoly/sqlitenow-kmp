@@ -117,8 +117,8 @@ internal class ReplayStatementReuseTest : SurvivorTestSupport() {
                     it.message?.contains("actual SQLite storage integer does not match its declared affinity") == true
                 })
                 assertEquals(before, baselineQualificationVector(db, listOf("nodes") + oversqliteRetainedTableDdl.keys))
-                assertEquals(1, observed.prepares.getValue("SELECT table_name,local_pk,payload,wire,role,source_ordinal FROM _sync_apply_rows WHERE ordinal=?"))
-                assertTrue(observed.resets.getValue("SELECT table_name,local_pk,payload,wire,role,source_ordinal FROM _sync_apply_rows WHERE ordinal=?") > 1)
+                assertEquals(1, observed.prepares.getValue("SELECT table_name,local_pk,payload,wire,role,source_ordinal,saved_rowid FROM _sync_apply_rows WHERE ordinal=?"))
+                assertTrue(observed.resets.getValue("SELECT table_name,local_pk,payload,wire,role,source_ordinal,saved_rowid FROM _sync_apply_rows WHERE ordinal=?") > 1)
                 observed.assertClosed()
             } finally { client.closeFromCoordinatedOwner() }
         }
@@ -147,12 +147,13 @@ internal class ReplayStatementReuseTest : SurvivorTestSupport() {
                     for (kind in listOf("pull", "settlement", "snapshot", "conflict")) {
                         db.execSQL("DELETE FROM _sync_apply_plan")
                         val unit = applyUnit("initial-$kind", 0, "")
-                        val guard = OversqliteWorkspace(db, config).contextGuard(state, unit)
+                        val guard = OversqliteWorkspace(db, config).contextGuard(state, unit) + ":" + config.serviceId +
+                            if (kind == "snapshot") ":${scalarLong(db, "PRAGMA main.schema_version")}:${scalarLong(db, "PRAGMA temp.schema_version")}" else ""
                         checkpoint(unit, kind)
                         assertEquals(emptyPlan(unit, guard, kind), readPlan(db))
                     }
                     val unit = applyUnit("loaded-plan", 0, "")
-                    val guard = OversqliteWorkspace(db, config).contextGuard(state, unit)
+                    val guard = OversqliteWorkspace(db, config).contextGuard(state, unit) + ":" + config.serviceId
                     // Deliberately unreachable cursor values exercise all bindings after the
                     // work meter is exhausted. This is a persistence-codec witness, not a
                     // valid resumable discovery fixture; stale cleanup resets it before commit.
@@ -165,7 +166,7 @@ internal class ReplayStatementReuseTest : SurvivorTestSupport() {
                         assertEquals(values, readPlan(db), "all 19 typed fields survive reuse, including cursor=$cursor")
                     }
                     val next = applyUnit("replacement-plan", 0, "")
-                    val nextGuard = OversqliteWorkspace(db, config).contextGuard(state, next)
+                    val nextGuard = OversqliteWorkspace(db, config).contextGuard(state, next) + ":" + config.serviceId
                     checkpoint(next, "pull", exhaust = false)
                     assertEquals(emptyPlan(next, nextGuard, "pull"), readPlan(db), "stale context clears all old fields")
                     val writes = observed.prepares.filterKeys { it.startsWith("INSERT INTO _sync_apply_plan(") }

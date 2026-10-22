@@ -23,6 +23,7 @@ import kotlinx.coroutines.ensureActive
 
 internal const val outboxStateNone = "none"
 internal const val outboxStatePrepared = "prepared"
+internal const val outboxStateRejected = "rejected"
 
 internal data class OversqliteOutboxBundleState(
     val state: String = outboxStateNone,
@@ -220,7 +221,10 @@ internal class OversqliteOutboxStateStore(
         }
     }
 
-    suspend fun clearBundleAndRows(statementCache: StatementCache? = null, pagedSettlement: Boolean = false) {
+    suspend fun clearBundleAndRows(statementCache: StatementCache? = null, pagedSettlement: Boolean = false, terminalDisposition: Boolean = false) {
+        val current=loadBundleState()
+        if(terminalDisposition && current.state==outboxStatePrepared) markUploadDisposition(db,statementCache)
+        else requireUploadRelease(db)
         if (pagedSettlement) {
             // Settlement prepaid this cleanup in its atomic work bound. Pages
             // keep cancellation observable; its enclosing writer owns rollback.
@@ -235,6 +239,27 @@ internal class OversqliteOutboxStateStore(
             state = OversqliteOutboxBundleState(),
             statementCache = statementCache,
         )
+    }
+
+    // Called inside the existing policy writer; admit all capture copies before
+    // loading them, then reuse the same original-base/current-intent requeue.
+    suspend fun requeueRejectedIntent(config: OversqliteConfig,generationId: Long=config.generationId) {
+        check(loadBundleState().state==outboxStateRejected)
+        val generation=OversqliteContractStore(db).readGeneration(generationId)
+        val oldConfig=config.copy(generationId=generationId,syncTables=generation.tables.map {SyncTable(it.table,syncKeyColumns=it.syncKeyColumns)})
+        val validated=SyncRuntimeInitializer(oldConfig,TableInfoCache()).validateConfig(db).withGeneration(generation)
+        val local=OversqliteLocalStore(db,kotlinx.serialization.json.Json) {validated}
+        val sync=OversqliteSyncStateStore(db) {local}
+        val workspace=OversqliteWorkspace(db,config)
+        val bytes=db.scalarLong("""SELECT COALESCE(sum(2048+length(CAST(COALESCE(local_payload,'') AS BLOB))+length(CAST(COALESCE(wire_payload,'') AS BLOB))+length(CAST(COALESCE(base_payload,'') AS BLOB))+length(CAST(base_provenance AS BLOB))+length(CAST(key_json AS BLOB))+length(CAST(wire_key_json AS BLOB))),0) FROM _sync_outbox_rows""")
+        workspace.check("rejected intent",WorkspaceCharge(32*countRows(),workspace.scale("rejected intent",bytes,64)+65536))
+        for(row in loadRows()) sync.requeueOriginalIntent(row.schemaName,row.tableName,row.keyJson,row.op,row.baseRowVersion,row.localPayload,row.base)
+    }
+
+    suspend fun retainRejected() {
+        check(loadBundleState().state==outboxStatePrepared) { "rejection requires frozen ownership" }
+        markUploadDisposition(db)
+        db.execSQL("UPDATE _sync_outbox_bundle SET state='rejected' WHERE singleton_key=1")
     }
 
     suspend fun rebindBundleSource(

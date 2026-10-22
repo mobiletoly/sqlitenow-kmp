@@ -142,7 +142,8 @@ class AndroidMockWebServerParityTest {
         val http = newMockWebServerHttpClient(server)
         try {
             db.execSQL("CREATE TABLE users (id TEXT PRIMARY KEY NOT NULL, name TEXT NOT NULL)")
-            val committedBundleHash = "29d27bd2015db825f6b2af4c08cf81883ad20d75584918caedd859d2270c9266"
+            // Current committed-effect row versions equal their authority bundle sequence.
+            val committedBundleHash = "323899966dbf0be8488d3bf3d8552ed830ee569eb33ea67c0e7f684cea60d1da"
             val canonicalRequestHash = sha256Hex(
                 """{"generation_fingerprint":"8cd94e6ebb91e4022dd8bb64f7d60048b8bf380d5af4982313d23d2d7999b625","generation_id":"1","rows":[{"base_row_version":"0","key":{"id":"user-1"},"op":"INSERT","payload":{"id":"user-1","name":"Ada Local"},"row_ordinal":"0","schema":"main","table":"users"}],"type":"oversync.generation-pinned-push-request.v1"}""".encodeToByteArray()
             )
@@ -154,17 +155,9 @@ class AndroidMockWebServerParityTest {
             val sourceId = client.sourceInfo().getOrThrow().currentSourceId
             enqueueDiscovery(server, "users")
             enqueueInitializeEmptyConnect(server)
-            server.enqueue(
-                jsonMockResponse(
-                    """
-                        {
-                          "bundle_seq": 1,
-                          "bundle_hash": "$committedBundleHash",
-                          "rows": [[0, 0, [["i", ["user-1"], 7, {"id":"user-1","name":"Ada Local"}]]]]
-                        }
-                    """.trimIndent()
-                )
-            )
+            server.enqueue(committedResponse(sourceId, "8cd94e6ebb91e4022dd8bb64f7d60048b8bf380d5af4982313d23d2d7999b625", canonicalRequestHash,
+                    "users", 1, committedBundleHash, """[[0,0,[["i",["user-1"],1,{"id":"user-1","name":"Ada Local"}]]]]"""))
+            server.enqueue(MockResponse.Builder().code(204).build())
             server.enqueue(
                 jsonMockResponse(
                     """
@@ -176,27 +169,16 @@ class AndroidMockWebServerParityTest {
                               "bundle_seq": 2,
                               "source_id": "peer-a",
                               "source_bundle_id": 11,
-                              "bundle_hash": "08c2b0e67ed8b95ec86536881fdc92d72ca64bde1dace715a4d8ac2c20f5137d",
-                              "rows": [[0, 0, [["i", ["user-2"], 1, {"id":"user-2","name":"Grace Hopper"}]]]]
+                              "bundle_hash": "bf4811a43c8c18bbb75fcd214a7cc432fad4cc92d2097c5f70c4178f52b13f8f",
+                              "rows": [[0, 0, [["i", ["user-2"], 2, {"id":"user-2","name":"Grace Hopper"}]]]]
                             }
                           ]
                         }
                     """.trimIndent()
                 )
             )
-            server.enqueue(
-                jsonMockResponse(
-                    """
-                        {
-                          "snapshot_id": "snapshot-hydrate",
-                          "snapshot_bundle_seq": 9,
-                          "row_count": 1,
-                          "logical_byte_count": 63,
-                          "expires_at": "2026-03-22T00:00:00Z"
-                        }
-                    """.trimIndent()
-                )
-            )
+            server.enqueue(snapshotResponse(sourceId, "8cd94e6ebb91e4022dd8bb64f7d60048b8bf380d5af4982313d23d2d7999b625",
+                    "snapshot-hydrate", 9, 63, """["i",0,["user-3"],4,{"id":"user-3","name":"Katherine Johnson"}]""", recoveryFloor = 2))
             server.enqueue(
                 jsonMockResponse(
                     """
@@ -248,6 +230,10 @@ class AndroidMockWebServerParityTest {
             assertEquals("0", compactGroup[0].jsonPrimitive.content)
             assertEquals("user-1", compactGroup[2].jsonArray.single().jsonArray[1].jsonArray.single().jsonPrimitive.content)
 
+            val ackRequest = server.takeRequest(5, TimeUnit.SECONDS)
+            assertNotNull(ackRequest)
+            assertAcknowledgedOutcome(ackRequest!!, sourceId, "8cd94e6ebb91e4022dd8bb64f7d60048b8bf380d5af4982313d23d2d7999b625", canonicalRequestHash)
+
             val pullRequest = server.takeRequest(5, TimeUnit.SECONDS)
             assertNotNull(pullRequest)
             assertEquals("/sync/pull", pullRequest?.url?.encodedPath)
@@ -256,6 +242,7 @@ class AndroidMockWebServerParityTest {
             val snapshotCreateRequest = server.takeRequest(5, TimeUnit.SECONDS)
             assertNotNull(snapshotCreateRequest)
             assertEquals("/sync/snapshot-sessions", snapshotCreateRequest?.url?.encodedPath)
+            assertSnapshotRequest(snapshotCreateRequest!!, sourceId, "8cd94e6ebb91e4022dd8bb64f7d60048b8bf380d5af4982313d23d2d7999b625", 2)
 
             val snapshotChunkRequest = server.takeRequest(5, TimeUnit.SECONDS)
             assertNotNull(snapshotChunkRequest)
@@ -281,6 +268,12 @@ class AndroidMockWebServerParityTest {
         val http = newMockWebServerHttpClient(server)
         try {
             db.execSQL("CREATE TABLE users (id TEXT PRIMARY KEY NOT NULL, name TEXT NOT NULL)")
+            val client = newCoordinatedClient(
+                db,
+                http,
+                syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")),
+            )
+            val sourceId = client.sourceInfo().getOrThrow().currentSourceId
             enqueueDiscovery(server, "users")
             enqueueInitializeEmptyConnect(server)
             server.enqueue(
@@ -290,19 +283,8 @@ class AndroidMockWebServerParityTest {
                     .body("""{"error":"history_pruned","message":"after_bundle_seq 0 is below retained floor 5"}""")
                     .build()
             )
-            server.enqueue(
-                jsonMockResponse(
-                    """
-                        {
-                          "snapshot_id": "snapshot-pruned",
-                          "snapshot_bundle_seq": 9,
-                          "row_count": 1,
-                          "logical_byte_count": 49,
-                          "expires_at": "2026-03-22T00:00:00Z"
-                        }
-                    """.trimIndent()
-                )
-            )
+            server.enqueue(snapshotResponse(sourceId, "8cd94e6ebb91e4022dd8bb64f7d60048b8bf380d5af4982313d23d2d7999b625",
+                    "snapshot-pruned", 9, 49, """["i",0,["user-1"],2,{"id":"user-1","name":"Ada"}]""", recoveryFloor = 0))
             server.enqueue(
                 jsonMockResponse(
                     """
@@ -317,11 +299,6 @@ class AndroidMockWebServerParityTest {
             )
             server.enqueue(MockResponse.Builder().code(204).build())
 
-            val client = newCoordinatedClient(
-                db,
-                http,
-                syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")),
-            )
             client.openAndAttach("user-1").getOrThrow()
             client.pullToStable().getOrThrow()
 
@@ -345,6 +322,7 @@ class AndroidMockWebServerParityTest {
             val snapshotCreateRequest = server.takeRequest(5, TimeUnit.SECONDS)
             assertNotNull(snapshotCreateRequest)
             assertEquals("/sync/snapshot-sessions", snapshotCreateRequest?.url?.encodedPath)
+            assertSnapshotRequest(snapshotCreateRequest!!, sourceId, "8cd94e6ebb91e4022dd8bb64f7d60048b8bf380d5af4982313d23d2d7999b625", 0)
 
             val snapshotChunkRequest = server.takeRequest(5, TimeUnit.SECONDS)
             assertNotNull(snapshotChunkRequest)
@@ -389,6 +367,17 @@ class AndroidMockWebServerParityTest {
                 """.trimIndent()
             )
 
+            val pullClient = newCoordinatedClient(
+                pullDb,
+                pullHttp,
+                syncTables = listOf(SyncTable("files", syncKeyColumnName = "id")),
+            )
+            val hydrateClient = newCoordinatedClient(
+                hydrateDb,
+                hydrateHttp,
+                syncTables = listOf(SyncTable("files", syncKeyColumnName = "id")),
+            )
+            val sourceId = hydrateClient.sourceInfo().getOrThrow().currentSourceId
             enqueueDiscovery(server, "files")
             enqueueInitializeEmptyConnect(server)
             enqueueDiscovery(server, "files")
@@ -416,19 +405,8 @@ class AndroidMockWebServerParityTest {
                     """.trimIndent()
                 )
             )
-            server.enqueue(
-                jsonMockResponse(
-                    """
-                        {
-                          "snapshot_id": "snapshot-blob",
-                          "snapshot_bundle_seq": 1,
-                          "row_count": 1,
-                          "logical_byte_count": 89,
-                          "expires_at": "2026-03-22T00:00:00Z"
-                        }
-                    """.trimIndent()
-                )
-            )
+            server.enqueue(snapshotResponse(sourceId, "9046cec4c1d716e38af72cd55222f0fd3a624bcc9875948e077ccffaba64d6f0",
+                    "snapshot-blob", 1, 89, """["i",0,["file-1"],1,{"id":"file-1","name":"Blob File","data":"AAECAwQFBgcICQoLDA0ODw=="}]""", recoveryFloor = 0))
             server.enqueue(
                 jsonMockResponse(
                     """
@@ -447,16 +425,7 @@ class AndroidMockWebServerParityTest {
             )
             server.enqueue(MockResponse.Builder().code(204).build())
 
-            val pullClient = newCoordinatedClient(
-                pullDb,
-                pullHttp,
-                syncTables = listOf(SyncTable("files", syncKeyColumnName = "id")),
-            )
-            val hydrateClient = newCoordinatedClient(
-                hydrateDb,
-                hydrateHttp,
-                syncTables = listOf(SyncTable("files", syncKeyColumnName = "id")),
-            )
+
 
             pullClient.openAndAttach("user-1").getOrThrow()
             hydrateClient.openAndAttach("user-1").getOrThrow()
@@ -468,6 +437,16 @@ class AndroidMockWebServerParityTest {
             assertEquals("000102030405060708090A0B0C0D0E0F", scalarText(pullDb, "SELECT hex(data) FROM files WHERE id = 'file-1'"))
             assertEquals(16L, scalarLong(hydrateDb, "SELECT length(data) FROM files WHERE id = 'file-1'"))
             assertEquals("000102030405060708090A0B0C0D0E0F", scalarText(hydrateDb, "SELECT hex(data) FROM files WHERE id = 'file-1'"))
+            for (path in listOf("/sync/generations/1", "/sync/connect", "/sync/generations/1", "/sync/connect", "/sync/pull")) {
+                assertEquals(path, server.takeRequest(5, TimeUnit.SECONDS)?.url?.encodedPath)
+            }
+            val create = server.takeRequest(5, TimeUnit.SECONDS)
+            assertNotNull(create)
+            assertSnapshotRequest(create!!, sourceId, "9046cec4c1d716e38af72cd55222f0fd3a624bcc9875948e077ccffaba64d6f0", 0)
+            assertEquals("/sync/snapshot-sessions/snapshot-blob", server.takeRequest(5, TimeUnit.SECONDS)?.url?.encodedPath)
+            val retire = server.takeRequest(5, TimeUnit.SECONDS)
+            assertEquals("DELETE", retire?.method)
+            assertEquals("/sync/snapshot-sessions/snapshot-blob", retire?.url?.encodedPath)
         } finally {
             pullHttp.close()
             hydrateHttp.close()
@@ -507,21 +486,9 @@ class AndroidMockWebServerParityTest {
 
             enqueueDiscovery(server, "files")
             enqueueInitializeEmptyConnect(server)
-            server.enqueue(
-                jsonMockResponse(
-                    """
-                        {
-                          "bundle_seq": 1,
-                          "bundle_hash": "$bundleHash",
-                          "rows": [[0, 0, [["i", ["file-1"], 1, {
-                                "id":"file-1",
-                                "name":"Blob File",
-                                "data":"AAECAwQFBgcICQoLDA0ODw=="
-                              }]]]]
-                        }
-                    """.trimIndent()
-                )
-            )
+            server.enqueue(committedResponse(sourceId, "9046cec4c1d716e38af72cd55222f0fd3a624bcc9875948e077ccffaba64d6f0", canonicalRequestHash,
+                    "files", 1, bundleHash, """[[0,0,[["i",["file-1"],1,{"id":"file-1","name":"Blob File","data":"AAECAwQFBgcICQoLDA0ODw=="}]]]]"""))
+            server.enqueue(MockResponse.Builder().code(204).build())
 
             client.attach("user-1").getOrThrow()
             db.execSQL(
@@ -546,6 +513,9 @@ class AndroidMockWebServerParityTest {
             assertEquals("/sync/push", pushRequest?.url?.encodedPath)
             val createPushJson = testJson.parseToJsonElement(pushRequest!!.body!!.utf8()).jsonObject
             assertEquals(canonicalRequestHash, createPushJson["canonical_request_hash"]!!.jsonPrimitive.content)
+            val ackRequest = server.takeRequest(5, TimeUnit.SECONDS)
+            assertNotNull(ackRequest)
+            assertAcknowledgedOutcome(ackRequest!!, sourceId, "9046cec4c1d716e38af72cd55222f0fd3a624bcc9875948e077ccffaba64d6f0", canonicalRequestHash)
             val payloadJson = createPushJson.getValue("rows").jsonArray[0].jsonArray[2].jsonArray[0].jsonArray[3].jsonObject
             assertEquals("AAECAwQFBgcICQoLDA0ODw==", payloadJson["data"]!!.jsonPrimitive.content)
 
@@ -557,6 +527,135 @@ class AndroidMockWebServerParityTest {
             db.close()
         }
     }
+
+    // This HTTP fixture implements the specification framing independently from
+    // the SDK recovery encoder/decoder; literals still define payloads/versions.
+    private fun fixtureCanonical(value: kotlinx.serialization.json.JsonElement): String = when (value) {
+        is kotlinx.serialization.json.JsonObject -> value.entries.sortedBy { it.key }.joinToString(",", "{", "}") {
+            JsonPrimitive(it.key).toString() + ":" + fixtureCanonical(it.value)
+        }
+        is kotlinx.serialization.json.JsonArray -> value.joinToString(",", "[", "]", transform = ::fixtureCanonical)
+        else -> value.toString()
+    }
+
+    private fun fixtureSha(bytes: ByteArray): String = java.security.MessageDigest.getInstance("SHA-256")
+        .digest(bytes).joinToString("") { "%02x".format(it.toInt() and 255) }
+
+    private fun assertSnapshotRequest(
+        request: mockwebserver3.RecordedRequest, source: String,
+        fingerprint: String, floor: Long,
+    ) {
+        assertEquals("POST", request.method)
+        assertEquals("/sync/snapshot-sessions", request.url.encodedPath)
+        assertEquals("v1", request.headers["Oversync-Protocol-Version"])
+        assertEquals(source, request.headers["Oversync-Source-ID"])
+        assertEquals("1", request.headers["Oversync-Schema-Generation-ID"])
+        assertEquals(fingerprint, request.headers["Oversync-Schema-Generation-Fingerprint"])
+        val expected = buildJsonObject { put("recovery", buildJsonObject { put("minimum_bundle_seq", JsonPrimitive(floor)) }) }
+        assertEquals("snapshot seal must echo this exact original source and installed observation floor",
+            expected, testJson.parseToJsonElement(request.body!!.utf8()).jsonObject)
+    }
+
+    private val committedOutcomeHashes = mutableMapOf<String, String>()
+
+    private fun assertAcknowledgedOutcome(
+        request: mockwebserver3.RecordedRequest, source: String,
+        fingerprint: String, requestHash: String,
+    ) {
+        assertEquals("POST", request.method)
+        assertEquals("/sync/push-outcomes/ack", request.url.encodedPath)
+        assertEquals("v1", request.headers["Oversync-Protocol-Version"])
+        assertEquals(source, request.headers["Oversync-Source-ID"])
+        assertEquals("1", request.headers["Oversync-Schema-Generation-ID"])
+        assertEquals(fingerprint, request.headers["Oversync-Schema-Generation-Fingerprint"])
+        val expected = buildJsonObject {
+            put("source_bundle_id", JsonPrimitive(1))
+            put("canonical_request_hash", JsonPrimitive(requestHash))
+            put("outcome_hash", JsonPrimitive(committedOutcomeHashes.getValue(source)))
+        }
+        assertEquals("ack must bind the exact independently framed committed certificate",
+            expected, testJson.parseToJsonElement(request.body!!.utf8()).jsonObject)
+    }
+
+    private fun committedResponse(
+        source: String, fingerprint: String, requestHash: String,
+        table: String, bundleSeq: Long, bundleHash: String, rows: String,
+    ): MockResponse {
+        val compact = testJson.parseToJsonElement(rows).jsonArray
+        val logical = kotlinx.serialization.json.buildJsonArray {
+            for (group in compact) for (row in group.jsonArray[2].jsonArray) {
+                val fields = row.jsonArray
+                assertEquals(bundleSeq.toString(), fields[2].jsonPrimitive.content)
+                add(kotlinx.serialization.json.buildJsonArray {
+                    add(JsonPrimitive("main"));add(JsonPrimitive(table))
+                    add(buildJsonObject { put("id", fields[1].jsonArray.single()) })
+                    add(JsonPrimitive("I"));add(JsonPrimitive(bundleSeq.toString()));add(fields[3])
+                })
+            }
+        }
+        val effect = buildJsonObject {
+            put("bundle_seq", JsonPrimitive(bundleSeq));put("bundle_hash", JsonPrimitive(bundleHash))
+            put("row_count", JsonPrimitive(logical.size));put("rows", compact)
+        }
+        val projection = kotlinx.serialization.json.buildJsonArray {
+            add(JsonPrimitive("oversqlite.push-outcome.v1"));add(JsonPrimitive(source));add(JsonPrimitive("1"))
+            add(JsonPrimitive(fingerprint));add(JsonPrimitive("1"));add(JsonPrimitive(requestHash))
+            add(kotlinx.serialization.json.JsonNull);add(JsonPrimitive("committed"))
+            add(kotlinx.serialization.json.buildJsonArray {
+                add(JsonPrimitive(bundleSeq.toString()));add(JsonPrimitive(bundleHash))
+                add(JsonPrimitive(logical.size.toString()));add(logical)
+            })
+            add(kotlinx.serialization.json.JsonNull)
+        }
+        val outcomeHash = fixtureSha(fixtureCanonical(projection).encodeToByteArray())
+        committedOutcomeHashes[source] = outcomeHash
+        return jsonMockResponse(buildJsonObject {
+            put("source_id", JsonPrimitive(source));put("schema_generation_id", JsonPrimitive("1"))
+            put("schema_generation_fingerprint", JsonPrimitive(fingerprint));put("source_bundle_id", JsonPrimitive(1))
+            put("canonical_request_hash", JsonPrimitive(requestHash));put("initialization_id", kotlinx.serialization.json.JsonNull)
+            put("status", JsonPrimitive("committed"));put("committed", effect)
+            put("outcome_hash", JsonPrimitive(outcomeHash))
+        }.toString())
+    }
+
+    private fun snapshotResponse(
+        source: String, fingerprint: String, id: String, boundary: Long,
+        logicalBytes: Long, row: String, recoveryFloor: Long? = null,
+    ): MockResponse {
+        val wire = testJson.parseToJsonElement(row).jsonArray
+        assertEquals(logicalBytes, fixtureCanonical(wire).encodeToByteArray().size.toLong())
+        val recovery = recoveryFloor?.let { buildJsonObject { put("minimum_bundle_seq", JsonPrimitive(it)) } }
+        val projectedRecovery = recoveryFloor?.let { buildJsonObject { put("minimum_bundle_seq", JsonPrimitive(it.toString())) } }
+        val frames = listOf(
+            kotlinx.serialization.json.buildJsonArray {
+                add(JsonPrimitive("oversqlite.snapshot.v1"));add(JsonPrimitive(source));add(JsonPrimitive("1"))
+                add(JsonPrimitive(fingerprint));add(JsonPrimitive(id));add(JsonPrimitive(boundary.toString()))
+                add(projectedRecovery ?: kotlinx.serialization.json.JsonNull)
+            },
+            kotlinx.serialization.json.buildJsonArray {
+                add(wire[0]);add(JsonPrimitive(wire[1].jsonPrimitive.content));add(wire[2])
+                add(JsonPrimitive(wire[3].jsonPrimitive.content));add(wire[4])
+            },
+            kotlinx.serialization.json.buildJsonArray {
+                add(JsonPrimitive("end"));add(JsonPrimitive("1"));add(JsonPrimitive(logicalBytes.toString()))
+            },
+        )
+        val framed = java.io.ByteArrayOutputStream()
+        java.io.DataOutputStream(framed).use { stream ->
+            for (frame in frames) {
+                val bytes = fixtureCanonical(frame).encodeToByteArray()
+                stream.writeLong(bytes.size.toLong());stream.write(bytes)
+            }
+        }
+        return jsonMockResponse(buildJsonObject {
+            put("snapshot_id", JsonPrimitive(id));put("snapshot_bundle_seq", JsonPrimitive(boundary))
+            put("row_count", JsonPrimitive(1));put("logical_byte_count", JsonPrimitive(logicalBytes))
+            put("expires_at", JsonPrimitive("2099-01-01T00:00:00Z"))
+            put("snapshot_hash", JsonPrimitive(fixtureSha(framed.toByteArray())))
+            if (recovery != null) put("recovery", recovery)
+        }.toString())
+    }
+
 
     private fun newMockWebServerHttpClient(server: MockWebServer): HttpClient {
         return HttpClient(OkHttp) {

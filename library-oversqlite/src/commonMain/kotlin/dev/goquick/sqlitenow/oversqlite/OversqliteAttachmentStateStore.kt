@@ -30,6 +30,7 @@ internal data class OversqliteAttachmentState(
     val lastBundleSeqSeen: Long = 0,
     val rebuildRequired: Boolean = false,
     val pendingInitializationId: String = "",
+    val initializationReconnectRequired: Boolean = false,
 )
 
 internal class OversqliteAttachmentStateStore(
@@ -39,7 +40,7 @@ internal class OversqliteAttachmentStateStore(
         return db.queryRequiredSingle(
             sql = """
                 SELECT current_source_id, binding_state, attached_user_id, schema_name,
-                       last_bundle_seq_seen, rebuild_required, pending_initialization_id, attachment_epoch
+                       last_bundle_seq_seen, rebuild_required, pending_initialization_id, attachment_epoch, initialization_reconnect_required
                 FROM _sync_attachment_state
                 WHERE singleton_key = 1
             """.trimIndent(),
@@ -48,6 +49,7 @@ internal class OversqliteAttachmentStateStore(
             OversqliteAttachmentState(
                 currentSourceId = requireValidOptionalOversqliteSourceId(st.getText(0)),
                 attachmentEpoch = st.getLong(7),
+                initializationReconnectRequired = st.getLong(8)==1L,
                 bindingState = st.getText(1),
                 attachedUserId = st.getText(2),
                 schemaName = st.getText(3),
@@ -75,6 +77,7 @@ internal class OversqliteAttachmentStateStore(
                     last_bundle_seq_seen = ?,
                     rebuild_required = ?,
                     pending_initialization_id = ?,
+                    initialization_reconnect_required = ?,
                     attachment_epoch = attachment_epoch + CASE WHEN ? = 0 AND (current_source_id <> ? OR binding_state <> ? OR attached_user_id <> ?) THEN 1 ELSE 0 END
                 WHERE singleton_key = 1
             """.trimIndent(),
@@ -87,10 +90,11 @@ internal class OversqliteAttachmentStateStore(
             st.bindLong(5, state.lastBundleSeqSeen)
             st.bindLong(6, if (state.rebuildRequired) 1 else 0)
             st.bindText(7, state.pendingInitializationId)
-            st.bindLong(8, if (epochAlreadyAdvanced) 1 else 0)
-            st.bindText(9, state.currentSourceId)
-            st.bindText(10, state.bindingState)
-            st.bindText(11, state.attachedUserId)
+            st.bindLong(8,if(state.initializationReconnectRequired)1 else 0)
+            st.bindLong(9, if (epochAlreadyAdvanced) 1 else 0)
+            st.bindText(10, state.currentSourceId)
+            st.bindText(11, state.bindingState)
+            st.bindText(12, state.attachedUserId)
             st.step()
         }
         bindLocalBaselineContext(db)
@@ -182,7 +186,8 @@ internal class OversqliteAttachmentStateStore(
                 SET last_bundle_seq_seen = CASE
                       WHEN last_bundle_seq_seen + 1 = ? THEN ?
                       ELSE last_bundle_seq_seen
-                    END
+                    END,
+                    pending_initialization_id='',initialization_reconnect_required=0
                 WHERE singleton_key = 1
             """.trimIndent(),
             statementCache = statementCache,

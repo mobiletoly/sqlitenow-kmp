@@ -36,25 +36,23 @@ final class GeneratedSyncOwnershipScenarios: XCTestCase, @unchecked Sendable {
 
             let advance = Task { try await fixture.opening.advance() }
             await fulfillment(of: [entered], timeout: 10)
-            let close: Task<Void, Error>?
-            if owner == "client" {
-                observedClient.load()?.close()
-                close = nil
-            } else {
-                close = Task { () throws -> Void in
-                    switch owner {
-                    case "opening": try await fixture.opening.close()
-                    case "database": try await fixture.database.close()
-                    default: XCTFail("Unknown close owner: \(owner)")
-                    }
+            do {
+                switch owner {
+                case "opening": try await fixture.opening.close()
+                case "database": try await fixture.database.close()
+                case "client": observedClient.load()?.close()
+                default: XCTFail("Unknown close owner: \(owner)")
                 }
+            } catch {
+                barrier.release()
+                _ = try? await advance.value
+                throw error
             }
             barrier.release()
             do {
                 _ = try await advance.value
                 XCTFail("Publication won after \(owner) close")
             } catch {}
-            if let close { _ = try? await close.value }
             if owner == "client" { try? await fixture.opening.close() }
 
             XCTAssertNil(fixture.opening.readyOrNil(), owner)

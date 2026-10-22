@@ -137,14 +137,15 @@ class WorkerWorkspaceCleanupTest {
         val terminal = scenario.startsWith("close") || scenario == "reset-terminal"
         val deniedRollback = scenario == "reset-rollback-denied"
         val graph = observed?.let(::failureGraph).orEmpty()
-        println("W1_COMPOSITION_RECEIPT " + buildJsonObject {
+        val receipt = buildJsonObject {
             put("scenario", scenario); put("body", body.name); put("beforeShutdown", before); put("afterShutdown", after)
             observed?.let { put("failure", failureTree(it)) }
             probeFailure?.let { put("probeFailure", failureTree(it)) }
             ownerShutdownFailure?.let { put("ownerShutdownFailure", failureTree(it)) }
             put("durableValue", JsonPrimitive(durableValue)); put("durableApplyMode", JsonPrimitive(durableApplyMode))
             put("durableReopenClassification", if (before.text("runtime") == "browser-worker") "fresh" else "not-applicable-transient-node")
-        })
+        }.let(::encodeWorkerQualificationReceipt).chunked(4000)
+        receipt.forEachIndexed { index, chunk -> println("W1_COMPOSITION_RECEIPT_CHUNK ${index + 1}/${receipt.size} $chunk") }
 
         assertTrue(dispatch("reset") >= 0); assertTrue(dispatch("clearBindings") > dispatch("reset"))
         if (scenario == "reset-terminal") {

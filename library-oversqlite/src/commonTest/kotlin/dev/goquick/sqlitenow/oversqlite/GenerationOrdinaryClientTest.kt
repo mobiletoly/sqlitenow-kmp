@@ -33,7 +33,7 @@ internal class GenerationOrdinaryClientTest : CrossTargetSyncTestSupport() {
                 insertUser(db, "u1", "one request")
                 server.requestTrace.clear()
                 client.sync().getOrThrow()
-                assertEquals(listOf("POST /sync/push", "GET /sync/pull"), server.requestTrace)
+                assertEquals(listOf("POST /sync/push", "POST /sync/push-outcomes/ack", "GET /sync/pull"), server.requestTrace)
                 assertEquals(1, server.discoverySourceIds.size)
             } finally { client.close(); http.close(); db.close() }
         }
@@ -64,19 +64,24 @@ internal class GenerationOrdinaryClientTest : CrossTargetSyncTestSupport() {
                 insertUser(db, "u2", "sibling frozen")
                 client.open().getOrThrow()
                 client.attach("user-1").getOrThrow()
+                client.pushPending().getOrThrow() // finish the real initialization upload before forcing ordinary conflict
+                db.execSQL("UPDATE users SET name='frozen' WHERE id='u1'")
+                db.execSQL("UPDATE users SET name='sibling frozen' WHERE id='u2'")
                 server.beforePushResponse = {
-                    db.execSQL(mutation)
-                    db.execSQL("UPDATE users SET name='sibling newer' WHERE id='u2'")
+                    server.beforePushResponse = {
+                        db.execSQL(mutation)
+                        db.execSQL("UPDATE users SET name='sibling newer' WHERE id='u2'")
+                    }
                 }
                 // Conflict evidence and subsequent accepted versions must describe the same server history.
-                server.addRemoteBundleForTest(listOf(BundleRow("main","users",mapOf("id" to "u1"),"INSERT",1L,buildJsonObject {
+                server.addRemoteBundleForTest(listOf(BundleRow("main","users",mapOf("id" to "u1"),"UPDATE",2L,buildJsonObject {
                     put("id",JsonPrimitive("u1")); put("name",JsonPrimitive("server"))
                 })))
                 server.conflictOverride = { row, _, _ ->
                     if (row.key["id"] == "u1") {
                         server.conflictOverride = null
                         PushConflictDetails(row.schema, row.table, row.key, row.op,
-                            row.baseRowVersion, 1L, false, buildJsonObject {
+                            row.baseRowVersion, 2L, false, buildJsonObject {
                                 put("id", JsonPrimitive("u1"))
                                 put("name", JsonPrimitive("server"))
                             })
@@ -107,9 +112,9 @@ internal class GenerationOrdinaryClientTest : CrossTargetSyncTestSupport() {
                 client.pushPending().getOrThrow()
                 assertEquals(0L, db.scalarLong("SELECT count(*) FROM _sync_dirty_rows"), name)
                 assertEquals(
-                    3L,
+                    5L,
                     db.scalarLong("SELECT next_source_bundle_id FROM _sync_source_state"),
-                    "$resolution / $name must advance only after each committed direct push",
+                    "$resolution / $name must consume the rejected operation and both successor commits after initialization",
                 )
             } finally { client.close(); http.close(); db.close() }
         }

@@ -3,8 +3,13 @@ package dev.goquick.sqlitenow.core.test
 import dev.goquick.sqlitenow.core.test.db.AddressType
 import dev.goquick.sqlitenow.core.test.db.LibraryTestDatabase
 import dev.goquick.sqlitenow.core.test.db.PersonAddressQuery
-import dev.goquick.sqlitenow.core.test.db.PersonAddressRow
 import dev.goquick.sqlitenow.core.test.db.PersonQuery
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.channels.ClosedReceiveChannelException
+import kotlinx.coroutines.channels.ReceiveChannel
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
@@ -28,7 +33,6 @@ class ForeignKeyCascadeNotificationTest {
     @Test
     fun cascadingUpdateAndDeleteNotifyChildTable() = runDatabaseTest {
             database.open()
-            database.enableTableChangeNotifications()
             database.connection().execSQL("PRAGMA foreign_keys = ON")
 
             val person = database.person.add.one(
@@ -54,25 +58,13 @@ class ForeignKeyCascadeNotificationTest {
                 ),
             )
 
-            coroutineScope {
-                val flow = database.personAddress.selectAll.asFlow()
-                val emissions = mutableListOf<List<PersonAddressRow>>()
-                val collector = launch {
-                    flow.collect { rows ->
-                        emissions += rows
-                    }
-                }
+            val initialRows = database.personAddress.selectAll.asList()
+            assertEquals(1, initialRows.size, "The inserted address must be visible")
+            database.enableTableChangeNotifications()
 
-                suspend fun awaitEmissions(target: Int) {
-                    assertTrue(awaitConditionWithRealTimeout(timeoutMs = 5_000) { emissions.size >= target }, "Expected at least $target emissions")
-                }
-
-                awaitEmissions(1)
-                assertEquals(1, emissions.size, "Expected one initial emission")
-                assertEquals(1, emissions.first().size, "Initial emission should contain the inserted address")
-
-                val initialAddressId = emissions.first().first().id
-
+            // This is the first notified write in a fresh lease. Equal child rows
+            // must still be published for the declared parent-update dependency.
+            database.personAddress.selectAll.asFlow().observeCascadePhase(initialRows, initialRows) {
                 database.person.updateById(
                     PersonQuery.UpdateById.Params(
                         id = person.id,
@@ -80,23 +72,73 @@ class ForeignKeyCascadeNotificationTest {
                         lastName = "Parent",
                         email = person.email,
                         phone = person.phone,
-                        birthDate = person.birthDate
-                    )
+                        birthDate = person.birthDate,
+                    ),
                 )
-
-                awaitEmissions(2)
-                val afterUpdate = emissions[1]
-                assertEquals(1, afterUpdate.size, "Cascade update should preserve address rows")
-                assertEquals(initialAddressId, afterUpdate.first().id, "Cascade update should not alter address identity")
-
-                database.person.deleteByIdReturning.one(PersonQuery.DeleteByIdReturning.Params(id = person.id))
-
-                awaitEmissions(3)
-                val afterDelete = emissions[2]
-                collector.cancelAndJoin()
-
-                assertTrue(database.personAddress.selectAll.asList().isEmpty(), "Cascade should remove addresses from the table")
-                assertEquals(0, afterDelete.size, "Cascade path should eventually clear child rows")
             }
+            assertEquals(initialRows, database.personAddress.selectAll.asList())
+
+            database.personAddress.selectAll.asFlow().observeCascadePhase(initialRows, emptyList()) {
+                database.person.deleteByIdReturning.one(PersonQuery.DeleteByIdReturning.Params(id = person.id))
+            }
+            assertTrue(database.personAddress.selectAll.asList().isEmpty(), "Cascade should remove addresses")
+    }
+}
+
+/** A fresh subscription acknowledges its initial query before the mutation. */
+internal suspend fun <T> Flow<List<T>>.observeCascadePhase(
+    before: List<T>,
+    after: List<T>,
+    changeTimeoutMs: Long = 5_000,
+    mutate: suspend () -> Unit,
+) = coroutineScope {
+    val observations = Channel<List<T>>(Channel.UNLIMITED)
+    val releaseInitial = CompletableDeferred<Unit>()
+    val collector = launch(start = CoroutineStart.UNDISPATCHED) {
+        var initial = true
+        collect { rows ->
+            observations.send(rows)
+            if (initial) {
+                initial = false
+                releaseInitial.await()
+            }
+        }
+    }
+    try {
+        assertEquals(before, withRealTimeout(5_000) { observations.receive() })
+        mutate()
+        releaseInitial.complete(Unit)
+        assertEquals(after, awaitCascadeRows(observations, changeTimeoutMs) { it == after })
+    } finally {
+        releaseInitial.complete(Unit)
+        collector.cancelAndJoin()
+        observations.cancel()
+    }
+}
+
+internal suspend fun <T> awaitCascadeRows(
+    observations: ReceiveChannel<List<T>>,
+    timeoutMs: Long = 5_000,
+    accept: (List<T>) -> Boolean,
+): List<T> = withRealTimeout(timeoutMs) {
+    var rows = observations.receive()
+    while (!accept(rows)) rows = observations.receive()
+    rows
+}
+
+/** Duplicated old values cannot satisfy deletion; a missing transition fails closed. */
+internal suspend fun verifyCascadeObservationControls() {
+    val duplicate = Channel<List<Int>>(Channel.UNLIMITED)
+    duplicate.trySend(listOf(1))
+    duplicate.trySend(listOf(1))
+    duplicate.trySend(emptyList())
+    duplicate.close()
+    assertEquals(emptyList(), awaitCascadeRows(duplicate) { it.isEmpty() })
+    val lost = Channel<List<Int>>(Channel.UNLIMITED)
+    lost.trySend(listOf(1))
+    lost.trySend(listOf(1))
+    lost.close()
+    assertFailsWith<ClosedReceiveChannelException> {
+        awaitCascadeRows(lost) { it.isEmpty() }
     }
 }

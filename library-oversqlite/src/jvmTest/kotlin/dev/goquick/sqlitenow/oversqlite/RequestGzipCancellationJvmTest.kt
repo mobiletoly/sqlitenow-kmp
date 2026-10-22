@@ -102,10 +102,12 @@ internal class RequestGzipCancellationJvmTest : CrossTargetSyncTestSupport() {
             assertEquals(1, streamsCreated.get())
             assertEquals(1, streamsClosed.get())
             assertEquals(1, server.pushRequestCount)
+            assertEquals(1,server.resolveRequests.size)
+            assertEquals(2,server.ackRequests.size)
             assertEquals(0L, scalarLong(db, "SELECT COUNT(*) FROM _sync_outbox_rows"))
             assertEquals(outboxStateNone, scalarText(db, "SELECT state FROM _sync_outbox_bundle"))
             assertEquals(
-                nextSourceBundleId + 1L,
+                nextSourceBundleId + 2L,
                 scalarLong(db, "SELECT next_source_bundle_id FROM _sync_source_state WHERE source_id = '$sourceId'"),
             )
         } finally {

@@ -34,6 +34,12 @@ internal class OversqliteContractGateway(
         if (sessionState.admittedContract != null) return false
         val current = sessionState.requireValidatedConfig()
         val sourceId = sessionState.requireCurrentSourceId()
+        if(loadUploadJournal(db)!=null || OversqliteOutboxStateStore(db).loadBundleState().state==outboxStateRejected) {
+            val original=checkNotNull(OversqliteContractStore(db).readAdmission(config.generationId)) { "missing original upload admission" }
+            check(current.generation?.id==original.generation.id && current.generation.fingerprint==original.generation.fingerprint)
+            sessionState.admittedContract=original
+            return false
+        }
         val contract = operationController.withTransientRetry("generation discovery") {
             remoteApi.fetchGeneration(sourceId, config.generationId)
         }
@@ -74,6 +80,7 @@ internal class OversqliteContractGateway(
             tableInfoCache.install(candidate.tableInfoByName)
             sessionState.validatedConfig = candidate
         }
+        db.transaction(TransactionMode.IMMEDIATE) { OversqliteContractStore(db).recordAdmission(contract) }
         sessionState.admittedContract = contract
         return true
     }

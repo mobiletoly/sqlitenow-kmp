@@ -603,7 +603,7 @@ This owner-authorized amendment supersedes public work-yield behavior in earlier
 
 Continuation resumes the current local phase after a useful safe checkpoint and successful cleanup, under the same outer operation owner. It preserves exact frozen request, snapshot/replacement, pull ceiling, retry budgets, attempt/round allowances and accumulated uniquely confirmed effects. Slice accounting and the first-ready-atomic allowance may reset only at a safe boundary. Every positive target must allow a bounded useful step or admissible ready atomic unit; setup must not starve progress. A slice that yields without actual progress fails explicitly rather than spinning. Mixed work/cleanup failures, cancellation and actionable errors retain precedence. Scheduling yields do not escape ordinary public APIs or enter transport backoff. Historical work-error types remain available; internal bounded-step tests may observe them. No local format or HTTP change is authorized by this amendment.
 
-The scoped qualification profile is the paired work-slice completion program, not a routine-maintenance exemption or full protocol/release acceptance. Fresh evidence requires paired corpus/boundary consumers; Go owning-client and nested-module tests with Go 1.25.12 and focused race instrumentation; KMP common/JVM comprehensive coverage; affected Android/JVM/iOS/macOS/JS Node/browser/Wasm and Swift cancellation/mapping; isolated live multi-batch, replay/restart, snapshot and cancellation; default-budget 100-user/50-concurrency complex scenario with verification; and current 1,000/10,000-row resource evidence. Add a synthetic 14-table/3,399-row witness for the historical DayTempo shape. Do not schedule retired 50,000-row replay campaigns. Existing per-command deadlines, failure diagnosis, candidate freezes and evidence invalidation rules remain.
+The scoped qualification profile is the paired work-slice completion program, not a routine-maintenance exemption or full protocol/release acceptance. Fresh evidence requires paired corpus/boundary consumers; Go owning-client and nested-module tests with Go 1.25.12 and focused race instrumentation; KMP common/JVM comprehensive coverage; affected Android/JVM/iOS/macOS/JS Node/browser/Wasm and Swift cancellation/mapping; isolated live multi-batch, replay/restart, snapshot and cancellation; for future approved-profile candidates, the default-budget1/5/10/25-user complex scenario ladder with matching concurrency and verification (former50/100 requirements retired with no equivalent credit); and current 1,000/10,000-row resource evidence. Add a synthetic 14-table/3,399-row witness for the maintained synthetic activity shape. Do not schedule retired 50,000-row replay campaigns. Existing per-command deadlines, failure diagnosis, candidate freezes and evidence invalidation rules remain.
 
 Implementation ledger: Go `.artifacts/work-slice-completion-20261013/ledger.txt`, with immutable paired baselines/preimages and a current execution ledger. Specification and corpus changes alone do not assert runtime qualification. Delivery remains separately authorized.
 
@@ -619,3 +619,42 @@ Writer-scoped planning admission snapshots (2026-10-13): while a bounded push-pl
 Writer-scoped planning guard snapshots (2026-10-14): a guard hash, source-bundle ordinal, initialization identity and their previously admitted context-size bounds may be reused only inside the same bounded planning writer transaction. Every step still checks its plan guard and current workspace against those bounds and receives the unchanged full work charge. The cache is charged as 4 entries/8192 bytes in addition to the scalar-owner snapshot; initialization identities over 1024 UTF8 bytes or insufficient optional cache capacity use fresh reads instead. SDK-owned no-op deletion invalidates the cached guard before rebinding. Other guard inputs cannot change under this writer; external changes are read at the next writer and final freeze gate. Release before continuation; no persistence or wire change. Required witnesses retain identical planning steps/work and demonstrate fewer guard reconstructions plus external-write, no-op, hard-limit and cancellation safety.
 
 Decision-copy reservation continuation correction (2026-10-14): capture the operation-owned buffer reservation base once before replay continuation. Each slice admits its complete simultaneous decision-copy workspace relative to that same base, never relative to a previous slice's temporary charge. The decision allowance may conservatively retain its maximum for the one outer operation; it is reused, not accumulated, and the existing once-only outer release remains mandatory. Statement pools remain slice-owned and close/release before progress commit. Retained apply inputs stay fully charged. A paired125-row/8-table/max-push40/default-and-target1 fixture must complete without growing reservation entries as slice count increases. No weights, quotas, public signatures or stored layout change.
+
+## Future work-slice qualification schedule — 2026-10-26
+
+The work-slice validation schedule may use the owner-approved [full-profile manifest](../tools/qualification/profiles/oversqlite-full.json) and [paired validation section9](../../go-oversync/specs/r0001-oversqlite-durable-recovery-validation.md) only for explicitly bound future candidates. This changes command composition/envelopes, not dependency discovery, reservation ownership, work weights, slice quantum, hard limits, ordinary behavior or full-state assertions. Preserve retained125-key/ten-cycle audits, active replay scale/duration, physical reopen/cancellation, typed vectors and supported runtime/provider paths. Adopt normal-entry cap300s and four same-authority1/5/10/25-user load phases with matching concurrency; the former50/100 proof is explicitly retired with zero current credit. E41 identity/contract proof does not supply native/feasibility/isolation evidence.
+
+### Approved E42 repair amendment — 2026-10-27
+
+The owner approved the [combined repair amendment](../../go-oversync/.artifacts/qualification-efficiency-e42-20261026T110553+0200/approved-repair-20261027T0338Z/owner-approval-and-plan.json). The current version2
+profile binds its [successor review packet](../../go-oversync/.artifacts/qualification-efficiency-e42-20261026T110553+0200/approved-repair-20261027T0338Z/reviewed-profile/proposal.md):508 declarations,
+499 normal entries and9 orchestration controllers. The original80-method local
+Node entry is partitioned into32/48 whole-class groups, retaining all methods and
+300-second wall /270-second work /30-second cleanup caps. Other entry membership,
+source workload sizes, body deadlines and the25-user maximum remain unchanged.
+
+The three identified stale fixture files use causal cascade-observation phases
+and exclusive-lifetime migration ownership. The worker client immediately owns
+its internal readiness rejection while preserving caller-visible errors and
+bounded cleanup; only its client asset size/hash changes in the manifest.
+These are approved fixture/ownership repairs, with no wire/schema/provider or
+SDK-default change. Original coverage columns remain frozen baseline evidence;
+additive current fixture bindings identify the four repaired method bodies.
+
+Historical receipts and predecessor seals retain their original identities.
+Reuse requires reviewed dependency nonreach; affected web Worker/Fetch/Browser
+isolation evidence must be refreshed after the client repair. Linuxx64/ARM64
+retain97selected methods each and remain owner-blocked. Approval does not grant
+native qualification, E43 acceptance, commit, push, release or deployment.
+
+
+### SQLiteNow compact retained provenance
+
+The logical provenance and typed A/B authority above use the normalized SQLiteNow
+`complete-context-v1` layout specified in
+[the local planning contract](../oversqlite-contracts/local-planning/README.md#sqlitenow-complete-context-retained-format-normative).
+This is a local persistence-format change, independent of application local_version
+and the unchanged HTTP/Go contracts. Full context identity is immutable and shared;
+compact observations retain origin/sequence and integer roots, with versions owned
+by existing row/base fields. Historical capture, frozen wire identity, attachment
+epoch guards and primary-storage exemptions retain their governing meanings.

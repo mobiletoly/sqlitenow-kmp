@@ -14,7 +14,8 @@ final class SQLiteNowSyncRuntimeTests: XCTestCase {
             remediation: "upgrade_application",
             retryable: false,
             generationId: "1",
-            incompleteReason: nil, dirtyCount: 0, outboundCount: 0, confirmedBundleCount: 0, pushAttempts: 0
+            incompleteReason: nil, dirtyCount: 0, outboundCount: 0, confirmedBundleCount: 0, pushAttempts: 0,
+            localPlanningJson: nil
         )
 
         XCTAssertTrue(payload.remoteContract)

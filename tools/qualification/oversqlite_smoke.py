@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -23,7 +24,10 @@ import uuid
 import xml.etree.ElementTree as ET
 
 ROOT = Path(__file__).resolve().parents[2]
-GO_TEST = "TestMobileFlow_DirectSyncDrainsSeveralAdmittedBatchesOnce"
+GO_TESTS = (
+    "TestMobileFlow_DirectSyncDrainsSeveralAdmittedBatchesOnce",
+    "TestMobileFlow_DirectSyncRecoveryPreservesIntent",
+)
 GO_PACKAGE = "github.com/mobiletoly/go-oversync/integration/mobile_flow"
 SWIFT_MODULE = "SQLiteNowSyncSupportTests"
 SWIFT_CLASS = "SyncCallerCancellationLiveTests"
@@ -36,6 +40,9 @@ SWIFT_STATE_TESTS = (
     "testSnapshotCancellationPreservesStateAndResumes",
 )
 SWIFT_CONFLICT_TEST = "testReachedConflictCancellationRollsBackOwnedState"
+SWIFT_RECOVERY_TEST = "testFinalStateRecoveryCancellationPreservesOriginalIntent"
+SWIFT_RECOVERY_PHASES = ("resolve", "snapshot_download", "final_apply", "ack")
+SWIFT_RECOVERY_EVIDENCE_ENV = "OVERSQLITE_SWIFT_RECOVERY_EVIDENCE_ROOT"
 DATABASE_ENV = "OVERSYNC_EXAMPLE_TEST_DATABASE_URL"
 PACKAGE_TASK = ":swift:runtime:sync:packageDebugRuntimeXcframework"
 FIXTURE = "./integration/nethttp_server/cmd/swift_cancel_fixture"
@@ -122,11 +129,13 @@ def sha(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def identity(root: Path, env: dict[str, str]) -> str:
-    head = inspect_command(["git", "rev-parse", "HEAD"], root, env)
-    status = inspect_command(["git", "status", "--porcelain=v1", "-uall"], root, env)
-    diff = inspect_command(["git", "diff", "--binary", "HEAD"], root, env)
-    untracked = inspect_command(["git", "ls-files", "--others", "--exclude-standard", "-z"], root, env)
+def identity(root: Path, env: dict[str, str], *, inspector=None) -> str:
+    def inspect(argv):
+        return inspector(argv,cwd=root,env=env)if inspector is not None else inspect_command(argv,root,env)
+    head = inspect(["git", "rev-parse", "HEAD"])
+    status = inspect(["git", "status", "--porcelain=v1", "-uall"])
+    diff = inspect(["git", "diff", "--binary", "HEAD"])
+    untracked = inspect(["git", "ls-files", "--others", "--exclude-standard", "-z"])
     digest = hashlib.sha256()
     for name in sorted(filter(None, untracked.split("\0"))):
         path = root / name
@@ -135,18 +144,68 @@ def identity(root: Path, env: dict[str, str]) -> str:
     return f"HEAD={head}; status={sha(status.encode())}; diff={sha(diff.encode())}; untracked={digest.hexdigest()}"
 
 
+def required_authorities(root: Path, go: Path) -> dict[str, Path]:
+    """Real r0001 replacements; historical absent filenames are not authority."""
+    return {
+        "go/AGENTS.md": go / "AGENTS.md",
+        "kotlin/AGENTS.md": root / "AGENTS.md",
+        "kotlin/docs-engineering/oversqlite-validation.md": root / "docs-engineering/oversqlite-validation.md",
+        **{"go/" + name: go / name for name in (
+            "specs/p0000-oversqlite-protocol-simplification-and-efficiency.md",
+            "specs/p0001-oversqlite-fk-safe-sync-and-automatic-resolution.md",
+            "specs/r0001-oversqlite-durable-recovery.md",
+            "specs/r0001-oversqlite-durable-recovery-checklist.md",
+            "specs/r0001-oversqlite-durable-recovery-validation.md",
+            "swagger/two_way_sync.yaml",
+        )},
+        **{"kotlin/" + name: root / name for name in (
+            "specs/oversqlite-fk-safe-sync-and-automatic-resolution.md",
+            "specs/oversqlite-durable-recovery.md",
+        )},
+    }
+
+
+def verified_corpus(root: Path) -> Path:
+    corpus = root / "oversqlite-contracts"
+    manifest = corpus / "MANIFEST.sha256"
+    if not manifest.is_file():
+        raise SmokeError("missing governing input: " + str(manifest))
+    records = []
+    for line in manifest.read_text().splitlines():
+        match = re.fullmatch(r"([0-9a-f]{64})  ([^\\]+)", line)
+        if not match:
+            raise SmokeError("invalid corpus manifest record")
+        digest, name = match.groups()
+        path = Path(name)
+        if path.is_absolute() or path.as_posix() != name or any(p in (".", "..") for p in name.split("/")):
+            raise SmokeError("invalid corpus manifest path")
+        records.append((name, digest))
+    names = [name for name, _ in records]
+    actual = sorted(p.relative_to(corpus).as_posix() for p in corpus.rglob("*") if p.is_file() and p != manifest)
+    if not records or names != sorted(set(names)) or names != actual:
+        raise SmokeError("corpus manifest inventory mismatch")
+    for name, digest in records:
+        if sha((corpus / name).read_bytes()) != digest:
+            raise SmokeError("corpus manifest hash mismatch: " + name)
+    return corpus
+
+
 def contract_hashes(root: Path, go: Path) -> dict[str, str]:
-    paths = [root / "AGENTS.md", go / "AGENTS.md",
-             root / "docs-engineering/oversqlite-validation.md",
-             root / "specs/oversqlite-protocol-simplification-and-efficiency.md",
-             root / "specs/oversqlite-convergent-sync.md",
-             root / "specs/oversqlite-platform-gzip-implementation.md",
-             go / "specs/p0000-oversqlite-protocol-simplification-and-efficiency.md",
-             go / "swagger/two_way_sync.yaml", root / "oversqlite-contracts/MANIFEST.sha256"]
-    missing = [str(p) for p in paths if not p.is_file()]
+    paths = required_authorities(root, go)
+    missing = [str(p) for p in paths.values() if not p.is_file()]
     if missing:
         raise SmokeError("missing governing input: " + ", ".join(missing))
-    return {str(p): sha(p.read_bytes()) for p in paths}
+    corpus = verified_corpus(root)
+    pins = corpus / "recovery/authority-pins.json"
+    if not pins.is_file():
+        raise SmokeError("missing governing input: " + str(pins))
+    expected = json.loads(pins.read_text())
+    if set(expected) != set(paths):
+        raise SmokeError("governing input pin inventory mismatch")
+    for name, path in paths.items():
+        if sha(path.read_bytes()) != expected[name]:
+            raise SmokeError("governing input hash mismatch: " + name)
+    return {str(p): sha(p.read_bytes()) for p in [*paths.values(), pins, corpus / "MANIFEST.sha256"]}
 
 
 class Child:
@@ -279,15 +338,17 @@ def go_results(path: Path) -> str:
     if any(not isinstance(e, dict) or "Action" not in e for e in events):
         raise SmokeError("malformed Go test events")
     tests = [e for e in events if e.get("Test") and e["Action"] in ("pass", "fail", "skip")]
-    if len(tests) != 1 or tests[0].get("Test") != GO_TEST or tests[0].get("Package") != GO_PACKAGE:
-        raise SmokeError("Go selected test did not execute exactly once")
-    if tests[0]["Action"] != "pass" or any(e["Action"] in ("fail", "skip") for e in events):
+    if (len(tests) != len(GO_TESTS) or sorted(e.get("Test", "") for e in tests) != sorted(GO_TESTS)
+            or any(e.get("Package") != GO_PACKAGE for e in tests)):
+        raise SmokeError("Go selected tests did not execute exactly once each")
+    if any(e["Action"] in ("fail", "skip") for e in events):
         raise SmokeError("Go test failed or skipped")
-    if sum(e["Action"] == "run" and e.get("Test") == GO_TEST for e in events) != 1:
-        raise SmokeError("Go test must have exactly one execution event")
+    for name in GO_TESTS:
+        if sum(e["Action"] == "run" and e.get("Test") == name and e.get("Package") == GO_PACKAGE for e in events) != 1:
+            raise SmokeError("Go test must have exactly one execution event")
     if not any(e["Action"] == "pass" and e.get("Package") == GO_PACKAGE and "Test" not in e for e in events):
         raise SmokeError("Go package did not pass")
-    return f"{GO_TEST}: tests=1 passed=1 skipped=0 failed=0"
+    return f"{','.join(GO_TESTS)}: tests={len(GO_TESTS)} passed={len(GO_TESTS)} skipped=0 failed=0"
 
 
 def swift_results(path: Path, log: Path, test_class: str = SWIFT_CLASS,
@@ -324,6 +385,58 @@ def swift_results(path: Path, log: Path, test_class: str = SWIFT_CLASS,
     return f"{test_class}.{','.join(tests)}: tests={len(tests)} passed={len(tests)} skipped=0 failed=0"
 
 
+def valid_vector_field(field: object) -> bool:
+    if not isinstance(field, dict) or set(field) != {"storage", "value"}:
+        return False
+    storage, value = field["storage"], field["value"]
+    if not isinstance(storage, str) or storage not in ("null", "text", "integer", "real", "blob"):
+        return False
+    if storage == "null":
+        return value is None
+    if not isinstance(value, str):
+        return False
+    if storage == "integer":
+        return bool(re.fullmatch(r"-?(?:0|[1-9][0-9]*)", value)) and -(1 << 63) <= int(value) < (1 << 63)
+    if storage == "blob":
+        return bool(re.fullmatch(r"(?:[0-9a-fA-F]{2})*", value))
+    if storage == "real":
+        return bool(re.fullmatch(r"-?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?", value)) and math.isfinite(float(value))
+    return True
+
+
+def recovery_evidence(output: Path, log: Path) -> dict[str, str]:
+    root = output / "state-vectors"
+    expected = {phase + ".json" for phase in SWIFT_RECOVERY_PHASES}
+    if not root.is_dir() or {p.name for p in root.iterdir()} != expected:
+        raise SmokeError("Swift recovery requires exactly four phase vector files")
+    content = log.read_text()
+    required = {"users", "_sync_row_state", "_sync_dirty_rows", "_sync_outbox_rows", "_sync_outbox_bundle",
+                "_sync_upload_journal", "_sync_source_state", "_sync_attachment_state", "_sync_relationships",
+                "_sync_conflict_state", "_sync_opening_state", "_sync_contract_identity", "_sync_admitted_contracts",
+                "_sync_managed_tables", "_sync_apply_plan", "_sync_apply_rows", "_sync_apply_edges", "_sync_apply_state",
+                "_sync_operation_state", "_sync_snapshot_stage", "_sync_push_plan", "_sync_push_nodes", "_sync_push_edges"}
+    hashes = {}
+    for phase in SWIFT_RECOVERY_PHASES:
+        path = root / (phase + ".json")
+        value = json.loads(path.read_text())
+        if not isinstance(value, dict) or set(value) != required:
+            raise SmokeError("Swift recovery vector omits a required owner")
+        for rows in value.values():
+            if not isinstance(rows, list) or any(not isinstance(row, str) for row in rows):
+                raise SmokeError("Swift recovery vector rows must retain typed values")
+            for row in rows:
+                fields = json.loads(row)
+                if not isinstance(fields, list) or any(not valid_vector_field(field) for field in fields):
+                    raise SmokeError("Swift recovery vector has malformed typed fields")
+        marker = rf"^RECOVERY_SWIFT_BOUNDARY {phase} vector_file={phase}\.json(?: .*)?$"
+        if len(re.findall(marker, content, re.M)) != 1:
+            raise SmokeError("Swift recovery phase must complete exactly once")
+        hashes[phase] = sha(path.read_bytes())
+    if len(re.findall(r"^RECOVERY_SWIFT_COMPLETE original_intent resolve snapshot_download final_apply ack reopen$", content, re.M)) != 1:
+        raise SmokeError("Swift recovery completion witness absent or duplicated")
+    return hashes
+
+
 def authority_url(child: Child, seconds: float) -> str:
     end = time.monotonic() + seconds
     while time.monotonic() < end:
@@ -337,13 +450,20 @@ def authority_url(child: Child, seconds: float) -> str:
     raise SmokeError("authority readiness timed out")
 
 
-def go_argv(go: Path) -> list[str]:
+def go_argv(go: Path, seconds: float = 210) -> list[str]:
+    seconds = min(210, seconds)
+    if seconds <= 0:
+        raise SmokeError("Go test stage budget exhausted before launch")
     return [str(go / "scripts/go-test-with-cleanup.sh"), "-json", "-count=1",
-            "-timeout=3m30s", "-run", f"^{GO_TEST}$", "."]
+            f"-timeout={seconds:.3f}s", "-run", "^(" + "|".join(map(re.escape, GO_TESTS)) + ")$", "."]
 
 
 class Run:
-    def __init__(self, mode: str, root: Path, go: Path, output: Path, env: dict[str, str]):
+    def __init__(self, mode: str, root: Path, go: Path, output: Path, env: dict[str, str],
+                 state_selection: str = "all"):
+        if state_selection not in ("all", "conflict", "recovery") or (mode != "swift-cancellation-state" and state_selection != "all"):
+            raise SmokeError("targeted Swift state selection requires swift-cancellation-state mode")
+        self.state_selection = state_selection
         self.mode, self.root, self.go, self.output = mode, root, go, output
         self.env = {**env, "GOTOOLCHAIN": "go1.25.12",
                     "OVERSYNC_SMOKE_DATABASE_NAME": "oversync_smoke_" + uuid.uuid4().hex,
@@ -393,8 +513,8 @@ class Run:
                 result = subprocess.run(["git", "check-ignore", "-q", str(self.output)], cwd=repo)
                 if result.returncode:
                     raise SmokeError("output inside a repository must be Git-ignored")
-        self.before = {str(p): identity(p, self.env) for p in (self.root, self.go)}
         self.hashes = contract_hashes(self.root, self.go)
+        self.before = {str(p): identity(p, self.env) for p in (self.root, self.go)}
         self.notes.extend(f"- Before {p}: {value}" for p, value in self.before.items())
         self.notes.extend(f"- SHA-256 `{p}`: `{value}`" for p, value in self.hashes.items())
         for name in (DATABASE_ENV, "GOTOOLCHAIN", "OVERSYNC_SMOKE_DATABASE_NAME", "OVERSYNC_TEST_RUN_ID",
@@ -411,11 +531,16 @@ class Run:
         self.notes.append(f"- Authority/cleanup executable SHA-256: {sha(self.fixture.read_bytes())}")
         if self.mode == "go-direct-sync":
             self.database_may_exist = True
-            result = self.command("go-tests", go_argv(self.go), self.go / "integration/mobile_flow", deadline - time.monotonic())
+            remaining = deadline - time.monotonic()
+            result = self.command("go-tests", go_argv(self.go, remaining), self.go / "integration/mobile_flow", remaining)
             self.notes.append("- Results: " + go_results(result))
             self.notes.append("- Authority startup and in-test cleanup: included in Go command; separate duration unknown")
             return
-        self.command("prepare-runtime", [str(self.root / "gradlew"), "-Pa3SwiftTestBridge=false", PACKAGE_TASK],
+        bridge_only = self.mode == "swift-cancellation-state" and self.state_selection != "all"
+        if bridge_only:
+            self.env["OVERSQLITE_A3_SWIFT_TEST_BRIDGE"] = "1"
+        self.notes.append(f"- Swift state selection: {self.state_selection}; each selected invocation retains 240s")
+        self.command("prepare-runtime", [str(self.root / "gradlew"), f"-Pa3SwiftTestBridge={str(bridge_only).lower()}", PACKAGE_TASK],
                      self.root, deadline - time.monotonic())
         self.command("prepare-swift", ["swift", "build", "--build-tests"], self.root / "swift/support", deadline - time.monotonic())
         self.database_may_exist = True
@@ -429,13 +554,18 @@ class Run:
             self.notes.append(f"- Authority startup: {time.monotonic() - start:.3f}s")
         self.env["OVERSQLITE_SWIFT_CONVERGENT_BASE_URL"] = base_url
         if self.mode == "swift-cancellation-state":
-            self.swift_cases("swift-state-default", SWIFT_STATE_CLASS, SWIFT_STATE_TESTS)
-            self.env["OVERSQLITE_A3_SWIFT_TEST_BRIDGE"] = "1"
-            self.command("prepare-bridge-runtime", [str(self.root / "gradlew"),
-                         "-Pa3SwiftTestBridge=true", PACKAGE_TASK], self.root, deadline - time.monotonic())
-            self.command("prepare-bridge-swift", ["swift", "build", "--build-tests"],
-                         self.root / "swift/support", deadline - time.monotonic())
-            self.swift_cases("swift-state-conflict", SWIFT_STATE_CLASS, (SWIFT_CONFLICT_TEST,))
+            if bridge_only:
+                name = SWIFT_CONFLICT_TEST if self.state_selection == "conflict" else SWIFT_RECOVERY_TEST
+                self.swift_cases("swift-state-" + self.state_selection, SWIFT_STATE_CLASS, (name,))
+            else:
+                self.swift_cases("swift-state-default", SWIFT_STATE_CLASS, SWIFT_STATE_TESTS)
+                self.env["OVERSQLITE_A3_SWIFT_TEST_BRIDGE"] = "1"
+                self.command("prepare-bridge-runtime", [str(self.root / "gradlew"),
+                             "-Pa3SwiftTestBridge=true", PACKAGE_TASK], self.root, deadline - time.monotonic())
+                self.command("prepare-bridge-swift", ["swift", "build", "--build-tests"],
+                             self.root / "swift/support", deadline - time.monotonic())
+                self.swift_cases("swift-state-conflict", SWIFT_STATE_CLASS, (SWIFT_CONFLICT_TEST,))
+                self.swift_cases("swift-state-recovery", SWIFT_STATE_CLASS, (SWIFT_RECOVERY_TEST,))
         else:
             self.swift_cases("swift-tests", SWIFT_CLASS, (SWIFT_TEST,))
 
@@ -447,6 +577,8 @@ class Run:
                     rf"{re.escape(test_class)}/(?:{'|'.join(map(re.escape, tests))})$")
         # SwiftPM emits XCTest XML only through the parallel runner. One worker
         # keeps shared authority barriers serial; verbose retains skip evidence.
+        if tests == (SWIFT_RECOVERY_TEST,):
+            self.env[SWIFT_RECOVERY_EVIDENCE_ENV] = str(output / "state-vectors")
         capture = SwiftXMLCapture(output, self.env)
         try:
             log = self.command(label, ["swift", "test", "--skip-build", "--parallel", "--num-workers", "1",
@@ -456,6 +588,10 @@ class Run:
         finally:
             capture.finish()
         self.notes.append("- Results: " + swift_results(capture.output, log, test_class, tests))
+        if tests == (SWIFT_RECOVERY_TEST,):
+            hashes = recovery_evidence(output, log)
+            (output / "state-vector-hashes.json").write_text(json.dumps(hashes, indent=2) + "\n")
+            self.notes.append("- Recovery phase vector SHA-256: " + json.dumps(hashes, sort_keys=True))
 
     def cleanup(self) -> None:
         start = time.monotonic()
@@ -512,10 +648,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("mode", choices=["swift-cancellation", "swift-cancellation-state", "go-direct-sync"])
     parser.add_argument("--go-repo", type=Path, default=ROOT.parent / "go-oversync")
     parser.add_argument("--output", type=Path)
+    parser.add_argument("--swift-state-selection", choices=["all", "conflict", "recovery"], default="all",
+                        help="explicit focused state rerun; default all retains every required state selection")
     args = parser.parse_args(argv)
+    if args.mode != "swift-cancellation-state" and args.swift_state_selection != "all":
+        parser.error("--swift-state-selection requires swift-cancellation-state")
     output = (args.output or ROOT / ".artifacts/oversqlite-smoke" / (time.strftime("%Y%m%dT%H%M%S") + "-" + uuid.uuid4().hex[:8])).resolve()
     output.mkdir(parents=True, exist_ok=False)
-    run = Run(args.mode, ROOT, args.go_repo.resolve(), output, dict(os.environ))
+    run = Run(args.mode, ROOT, args.go_repo.resolve(), output, dict(os.environ), args.swift_state_selection)
     run.notes.append(f"- Started UTC: {time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}")
     previous = {}
 

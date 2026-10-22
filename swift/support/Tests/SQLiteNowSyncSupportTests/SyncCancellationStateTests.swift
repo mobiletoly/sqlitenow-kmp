@@ -164,10 +164,11 @@ final class SyncCancellationStateTests: XCTestCase, @unchecked Sendable {
                 let frozenHash = try await text(finishCore,"SELECT canonical_request_hash FROM _sync_outbox_bundle")
                 XCTAssertEqual(frozenHash.count,64)
                 let frozenRequest = try await persistentVector(finishCore,
-                    tables: ["_sync_outbox_bundle", "_sync_outbox_rows", "_sync_source_state"])
+                    tables: ["_sync_outbox_bundle", "_sync_outbox_rows", "_sync_source_state", "_sync_upload_journal"])
                 // The fixture exposes arrival counts, not HTTP bodies. Prove exact
                 // retained request/source state across a second cancelled attempt;
                 // do not label eventual drain as a wire-byte replay witness.
+                try await setBarrier(baseURL,path:"resolve")
                 let replayBlocked = try await blockedCount(baseURL)
                 let replay = Task { try await box.client.pushPending() }
                 defer { replay.cancel() }
@@ -176,10 +177,15 @@ final class SyncCancellationStateTests: XCTestCase, @unchecked Sendable {
                 do { _ = try await replay.value; XCTFail("Cancelled replay returned success") }
                 catch is CancellationError {}
                 let retainedRequest = try await persistentVector(finishCore,
-                    tables: ["_sync_outbox_bundle", "_sync_outbox_rows", "_sync_source_state"])
+                    tables: ["_sync_outbox_bundle", "_sync_outbox_rows", "_sync_source_state", "_sync_upload_journal"])
                 XCTAssertEqual(frozenRequest, retainedRequest, "retry retains the complete frozen request and source state")
                 try await setBarrier(baseURL,path:"none")
-                _ = try await finish.pushPending() // replay the original retained request
+                _ = try await finish.pushPending() // resolve and acknowledge the cancelled original F
+                let restored = try await text(finishCore,"SELECT count(*) FROM _sync_dirty_rows")
+                XCTAssertEqual(restored,"1","cancelled F restores original intent for its successor")
+                _ = try await finish.pushPending()
+                let drained = try await text(finishCore,"SELECT count(*) FROM _sync_dirty_rows")
+                XCTAssertEqual(drained,"0")
                 let remaining = try await text(finishCore,"SELECT count(*) FROM _sync_outbox_rows");XCTAssertEqual(remaining,"0")
             }
         }
@@ -213,6 +219,173 @@ final class SyncCancellationStateTests: XCTestCase, @unchecked Sendable {
             }
         }
     }
+
+    func testFinalStateRecoveryCancellationPreservesOriginalIntent() async throws {
+#if A3_TEST_BRIDGE
+        try await withLiveFixture { fixture in
+            let id = "11111111-1111-4111-8111-111111111111"
+            var originalRequest = ""
+            var originalHash = ""
+            var originalSource = ""
+            var terminal = ""
+            var retainedCertificate: [String: [String]] = [:]
+            try await withConnection(fixture) { core, client in
+                try await core.execute(sql: "UPDATE users SET name='frozen recovery' WHERE id='\(id)'", bindValues: [], affectedTables: ["users"])
+                // The authority has committed before it holds this response.
+                try await cancelPushAtBarrier(fixture.baseURL, client: client, phase: "push-response")
+                originalRequest = try await text(core,"SELECT hex(request_body) FROM _sync_upload_journal")
+                originalHash = try await text(core,"SELECT canonical_request_hash FROM _sync_outbox_bundle")
+                originalSource = try await text(core,"SELECT source_id FROM _sync_source_state")
+                XCTAssertFalse(originalRequest.isEmpty)
+                XCTAssertEqual(originalHash.count,64)
+                try await core.execute(sql: "UPDATE users SET name='later intent' WHERE id='\(id)'", bindValues: [], affectedTables: ["users"])
+                let beforeResolve = try await persistentVector(core, includeApplyOwners: true)
+                try await cancelPushAtBarrier(fixture.baseURL, client: client, phase: "resolve")
+                let afterResolve = try await persistentVector(core, includeApplyOwners: true)
+                XCTAssertEqual(beforeResolve,afterResolve,"resolve cancellation retains complete original F, bases and later intent")
+                try recordRecoveryVector("resolve", afterResolve, detail: "source=\(originalSource) hash=\(originalHash)")
+                try await setBarrier(fixture.baseURL,path:"none")
+                retainedCertificate = afterResolve
+            }
+            // Reopen the file before consuming the immutable terminal result.
+            try await withConnection(fixture) { core, client in
+                let reopened = try await persistentVector(core, includeApplyOwners: true)
+                XCTAssertEqual(retainedCertificate,reopened)
+                let oldState = try await persistentVector(core)
+                try await cancelPushAtFinalApply(client)
+                let captured = try await persistentVector(core)
+                XCTAssertEqual(oldState.filter { $0.key != "_sync_upload_journal" },
+                               captured.filter { $0.key != "_sync_upload_journal" },
+                               "precommit cancellation preserves every old business, base, capture, dirty, source and checkpoint field")
+                let request = try await text(core,"SELECT hex(request_body) FROM _sync_upload_journal")
+                let hash = try await text(core,"SELECT canonical_request_hash FROM _sync_outbox_bundle")
+                let phase = try await text(core,"SELECT phase FROM _sync_upload_journal")
+                let outcomeStatus = try await text(core,"SELECT json_extract(CAST(outcome_body AS TEXT),'$.status') FROM _sync_upload_journal")
+                terminal = try await text(core,"SELECT hex(outcome_body) FROM _sync_upload_journal")
+                XCTAssertEqual(originalRequest,request);XCTAssertEqual(originalHash,hash)
+                XCTAssertEqual("frozen",phase);XCTAssertEqual("committed",outcomeStatus);XCTAssertFalse(terminal.isEmpty)
+                try await assertReleasedApplyOwners(core)
+                // The second cut starts with durable C already present. Nothing,
+                // including C or reusable preparation, may change across rollback.
+                let beforeFinal = try await persistentVector(core, includeApplyOwners: true)
+                try await cancelPushAtFinalApply(client)
+                let afterFinal = try await persistentVector(core, includeApplyOwners: true)
+                XCTAssertEqual(beforeFinal,afterFinal,"final apply cancellation preserves complete pre-existing F/C state")
+                retainedCertificate = afterFinal
+                try recordRecoveryVector("final_apply", afterFinal)
+            }
+            try await withConnection(fixture) { core, client in
+                let reopened = try await persistentVector(core, includeApplyOwners: true)
+                XCTAssertEqual(retainedCertificate,reopened,"terminal evidence survives physical reopen")
+                try await cancelPushAtBarrier(fixture.baseURL, client: client, phase: "ack")
+                let phase = try await text(core,"SELECT phase FROM _sync_upload_journal")
+                let request = try await text(core,"SELECT hex(request_body) FROM _sync_upload_journal")
+                let outcome = try await text(core,"SELECT hex(outcome_body) FROM _sync_upload_journal")
+                let name = try await text(core,"SELECT name FROM users WHERE id='\(id)'")
+                let dirty = try await text(core,"SELECT count(*) FROM _sync_dirty_rows")
+                let outbox = try await text(core,"SELECT count(*) FROM _sync_outbox_rows")
+                let next = try await text(core,"SELECT next_source_bundle_id FROM _sync_source_state")
+                let checkpoint = try await text(core,"SELECT last_bundle_seq_seen FROM _sync_attachment_state")
+                let source = try await text(core,"SELECT source_id FROM _sync_source_state")
+                XCTAssertEqual("ack_pending",phase,"after-commit cancellation retains durable completion")
+                XCTAssertEqual(originalRequest,request);XCTAssertEqual(terminal,outcome);XCTAssertEqual(originalSource,source)
+                XCTAssertEqual("later intent",name);XCTAssertEqual("1",dirty);XCTAssertEqual("0",outbox)
+                XCTAssertEqual("3",next);XCTAssertEqual("2",checkpoint)
+                try await assertReleasedApplyOwners(core)
+                let committed = try await persistentVector(core, includeApplyOwners: true)
+                try recordRecoveryVector("ack", committed)
+                try await setBarrier(fixture.baseURL,path:"none")
+                _ = try await client.pushPending() // retries only the retained ack
+                let released = try await text(core,"SELECT count(*) FROM _sync_upload_journal")
+                XCTAssertEqual("0",released)
+                _ = try await client.pushPending() // publish the later edit as its own successor
+                let remaining = try await text(core,"SELECT count(*) FROM _sync_dirty_rows")
+                XCTAssertEqual("0",remaining)
+                let beforeDownload = try await persistentVector(core, snapshotAdmission: true)
+                let box = CancellationClientBox(client)
+                let blocked = try await blockedCount(fixture.baseURL)
+                try await setBarrier(fixture.baseURL,path:"snapshot")
+                let snapshot = Task { try await box.client.rebuild() }
+                do {
+                    try await waitForBarrier(fixture.baseURL,after:blocked)
+                    snapshot.cancel()
+                    do { _ = try await snapshot.value;XCTFail("snapshot cancellation returned success") } catch is CancellationError {}
+                } catch {
+                    snapshot.cancel();_ = try? await snapshot.value;throw error
+                }
+                let afterDownload = try await persistentVector(core, snapshotAdmission: true)
+                XCTAssertEqual(beforeDownload,afterDownload,"download cancellation preserves the full old logical state")
+                try await assertReleasedApplyOwners(core)
+                let staged = try await persistentVector(core, includeApplyOwners: true)
+                try recordRecoveryVector("snapshot_download", staged)
+                try await setBarrier(fixture.baseURL,path:"none")
+                _ = try await client.rebuild()
+                let finalName = try await text(core,"SELECT name FROM users WHERE id='\(id)'")
+                let journal = try await text(core,"SELECT count(*) FROM _sync_upload_journal")
+                let stage = try await text(core,"SELECT count(*) FROM _sync_snapshot_stage")
+                XCTAssertEqual("later intent",finalName);XCTAssertEqual("0",journal);XCTAssertEqual("0",stage)
+                try await assertReleasedApplyOwners(core)
+            }
+        }
+        FileHandle.standardOutput.write(Data("RECOVERY_SWIFT_COMPLETE original_intent resolve snapshot_download final_apply ack reopen\n".utf8))
+#else
+        throw XCTSkip("Final-state apply cancellation requires the isolated test framework")
+#endif
+    }
+
+    // Persist large vectors separately so XCTest stderr cannot split its native
+    // completion line into the middle of a long stdout write.
+    private func recordRecoveryVector(_ phase: String, _ vector: [String: [String]], detail: String = "") throws {
+        guard let path = ProcessInfo.processInfo.environment["OVERSQLITE_SWIFT_RECOVERY_EVIDENCE_ROOT"] else {
+            throw SQLiteNowError.protocol(message: "Owned recovery evidence directory is required")
+        }
+        let root = URL(fileURLWithPath: path, isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let target = root.appendingPathComponent("\(phase).json")
+        guard !FileManager.default.fileExists(atPath: target.path) else {
+            throw SQLiteNowError.protocol(message: "Recovery phase evidence already exists")
+        }
+        try JSONSerialization.data(withJSONObject: vector, options: [.sortedKeys]).write(to: target, options: .atomic)
+        FileHandle.standardOutput.write(Data("RECOVERY_SWIFT_BOUNDARY \(phase) vector_file=\(target.lastPathComponent) \(detail)\n".utf8))
+    }
+
+    private func cancelPushAtBarrier(_ baseURL: URL, client: SQLiteNowSyncClient, phase: String) async throws {
+        let box = CancellationClientBox(client)
+        let blocked = try await blockedCount(baseURL)
+        try await setBarrier(baseURL,path:phase)
+        let operation = Task { try await box.client.pushPending() }
+        do {
+            try await waitForBarrier(baseURL,after:blocked)
+            operation.cancel()
+            do { _ = try await operation.value;XCTFail("\(phase) cancellation returned success") } catch is CancellationError {}
+        } catch {
+            operation.cancel();_ = try? await operation.value;throw error
+        }
+    }
+
+    private func assertReleasedApplyOwners(_ core: SQLiteNowCoreRuntimeDatabase) async throws {
+        let apply = try await text(core,"SELECT apply_mode FROM _sync_apply_state")
+        let reservation = try await text(core,"SELECT reserved_entries+reserved_bytes+length(workspace_context) FROM _sync_operation_state")
+        let foreignKeys = try await text(core,"SELECT count(*) FROM pragma_foreign_key_check")
+        XCTAssertEqual("0",apply);XCTAssertEqual("0",reservation);XCTAssertEqual("0",foreignKeys)
+    }
+
+#if A3_TEST_BRIDGE
+    private func cancelPushAtFinalApply(_ client: SQLiteNowSyncClient) async throws {
+        XCTAssertEqual(1,SwiftA3ConflictApplyProbeKt.armRecoveryApplyForSwiftTest())
+        let box = CancellationClientBox(client)
+        let operation = Task { try await box.client.pushPending() }
+        do {
+            try await waitForConflictApplyMarker()
+            operation.cancel()
+            do { _ = try await operation.value;XCTFail("final apply cancellation returned success") } catch is CancellationError {}
+        } catch {
+            operation.cancel();_ = SwiftA3ConflictApplyProbeKt.releaseA3ConflictApplyForSwiftTest()
+            _ = try? await operation.value;throw error
+        }
+        XCTAssertEqual(1,SwiftA3ConflictApplyProbeKt.releaseA3ConflictApplyForSwiftTest())
+    }
+#endif
 
     private func withLiveFixture(_ body: (CancellationFixture) async throws -> Void) async throws {
         guard let rawURL = ProcessInfo.processInfo.environment["OVERSQLITE_SWIFT_CONVERGENT_BASE_URL"],
@@ -299,7 +472,7 @@ final class SyncCancellationStateTests: XCTestCase, @unchecked Sendable {
                                   includeApplyOwners: Bool = false,
                                   tables selectedTables: [String]? = nil) async throws -> [String: [String]] {
         var vector: [String: [String]] = [:]
-        let tables = selectedTables ?? (["users","_sync_row_state","_sync_dirty_rows","_sync_outbox_rows","_sync_outbox_bundle","_sync_source_state","_sync_attachment_state","_sync_relationships","_sync_conflict_state",
+        let tables = selectedTables ?? (["users","_sync_row_state","_sync_dirty_rows","_sync_outbox_rows","_sync_outbox_bundle","_sync_upload_journal","_sync_source_state","_sync_attachment_state","_sync_relationships","_sync_conflict_state",
             "_sync_opening_state","_sync_contract_identity","_sync_admitted_contracts","_sync_managed_tables"] +
             (includeApplyOwners ? ["_sync_apply_plan","_sync_apply_rows","_sync_apply_edges","_sync_apply_state","_sync_operation_state","_sync_snapshot_stage","_sync_push_plan","_sync_push_nodes","_sync_push_edges"] : []))
         for table in tables {

@@ -19,6 +19,7 @@ import androidx.sqlite.SQLiteStatement
 import dev.goquick.sqlitenow.core.SafeSQLiteConnection
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 
 internal class StatementCacheOperations(
     val prepare: suspend (SafeSQLiteConnection, String) -> SQLiteStatement = { db, sql -> db.prepare(sql) },
@@ -74,6 +75,10 @@ internal class StatementCache(
     private val db: SafeSQLiteConnection,
     private val operations: StatementCacheOperations = StatementCacheOperations(),
 ) {
+    internal var uniqueRequired: Boolean = false
+    internal var uniqueInstalled: Boolean = false
+    internal var snapshotPreserved: Boolean = false
+
     private val statements = linkedMapOf<String, SQLiteStatement>()
     private var closed = false
 
@@ -125,8 +130,10 @@ internal class StatementCache(
 
 internal suspend fun <T> SafeSQLiteConnection.withStatementCache(
     operations: StatementCacheOperations = StatementCacheOperations(),
+    cleanupTimeoutMillis: Long? = null,
     block: suspend (StatementCache) -> T,
 ): T {
+    require(cleanupTimeoutMillis == null || cleanupTimeoutMillis > 0)
     val cache = StatementCache(this, operations)
     var primaryFailure: Throwable? = null
     try {
@@ -136,7 +143,10 @@ internal suspend fun <T> SafeSQLiteConnection.withStatementCache(
         throw failure
     } finally {
         try {
-            withContext(NonCancellable) { cache.close() }
+            withContext(NonCancellable) {
+                if (cleanupTimeoutMillis == null) cache.close()
+                else withTimeout(cleanupTimeoutMillis) { cache.close() }
+            }
         } catch (closeFailure: Throwable) {
             val primary = primaryFailure
             if (primary == null) {

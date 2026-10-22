@@ -68,7 +68,7 @@ internal class OversqliteClientSyncCoordinator(
     internal suspend fun retryConflict(selected: PendingConflict): Result<Unit> =
         operations.runSyncOperation("retryConflict()") {
             session.requireValidatedConfig()
-            pushWorkflow.retryConflict(selected)
+            pushWorkflow.retryConflict(session.requireConnectedRuntimeState("retryConflict()"),selected)
         }
 
     internal suspend fun resolveConflict(
@@ -173,6 +173,7 @@ internal class OversqliteClientSyncCoordinator(
         operationName: String,
         finalizer: suspend () -> Unit = {},
     ): Result<RemoteSyncReport> = operations.runSyncOperation(operationName) {
+        downloadWorkflow.requireCleanSnapshotEntry()
         contractGateway.requireAdmittedRuntime(operationName)
         val plan = selectRebuildPlan()
         operations.withOperationProgress(plan.operation) {
@@ -195,8 +196,9 @@ internal class OversqliteClientSyncCoordinator(
         invocation: InteractiveSyncInvocation? = null,
     ): ClientSyncPushExecution {
         val state = session.requireConnectedRuntimeState(operationName)
+        pushWorkflow.acknowledgePending(state)
         val durableOperation = operationStateStore.loadState()
-        if (durableOperation.isSourceRecoveryRequired()) {
+        if (durableOperation.isSourceRecoveryRequired() && !pushWorkflow.frozenMayResume(state)) {
             throw SourceRecoveryRequiredException(durableOperation.requireSourceRecoveryReason())
         }
         operations.setProgress(
@@ -224,14 +226,10 @@ internal class OversqliteClientSyncCoordinator(
             attachmentStateStore.setRebuildRequired(true)
             if (allowCheckpointRecovery) throw error
             throw RebuildRequiredException()
-        } catch (error: InitializationLeaseInvalidException) {
-            session.clearStaleInitializationState()
-            throw error
         }
         invocation?.confirmedBundles?.addAll(workflowResult.confirmedBundles)
         pushWorkflow.completePushPlanCleanup()
         if (state.pendingInitializationId.isNotEmpty() && workflowResult.outcome == PushOutcome.COMMITTED) {
-            attachmentStateStore.clearPendingInitializationId()
             session.pendingInitializationId = ""
         }
         return ClientSyncPushExecution(
@@ -248,6 +246,8 @@ internal class OversqliteClientSyncCoordinator(
         operation: OversqliteOperation,
         invocation: InteractiveSyncInvocation,
     ): ClientSyncExecution {
+        val connected=session.requireConnectedRuntimeState(operationName)
+        pushWorkflow.acknowledgePending(connected)
         session.ensureNoDestructiveTransition()
         val updatedTables = linkedSetOf<String>()
         while (true) {
@@ -271,15 +271,14 @@ internal class OversqliteClientSyncCoordinator(
                 continue
             }
 
-            val remote = try {
+            var remote = try {
                 if (recovering) {
-                    executeSnapshotRebuild(
-                        operationName, operation, null, SnapshotRebuildOutboxMode.CLEAR_ALL, null,
-                    )
+                    executeRemoteDownload(operationName,operation) { state,phase -> downloadWorkflow.resumeAutomaticRecovery(state,phase) }
                 } else {
                     executePullToStable(operationName, operation)
                 }
             } catch (error: Throwable) {
+                if (downloadWorkflow.automaticActive()) throw error
                 if (error is DirtyStateRejectedException || error is PendingPushReplayException) {
                     continue
                 }
@@ -292,6 +291,12 @@ internal class OversqliteClientSyncCoordinator(
                 throw error
             }
             updatedTables += remote.updatedTables
+            if (remote.report.outcome==RemoteSyncOutcome.APPLIED_SNAPSHOT) {while(true){
+                val following=executePullToStable(operationName,operation)
+                updatedTables+=following.updatedTables
+                remote=remote.copy(report=remote.report.copy(status=following.report.status,restore=following.report.restore ?: remote.report.restore))
+                if(following.report.outcome!=RemoteSyncOutcome.APPLIED_SNAPSHOT)break
+            } }
             val (remainingDirty, remainingOutbound) = pendingCounts()
             if (remainingDirty > 0 || remainingOutbound > 0) continue
             return ClientSyncExecution(
@@ -399,7 +404,7 @@ internal class OversqliteClientSyncCoordinator(
                     operationName,
                     operation,
                     null,
-                    SnapshotRebuildOutboxMode.PRESERVE_PREPARED,
+                    SnapshotRebuildOutboxMode.CLEAN,
                     null,
                 )
             } catch (error: Throwable) {
@@ -431,13 +436,7 @@ internal class OversqliteClientSyncCoordinator(
                 )
             }
         }
-        return executeSnapshotRebuild(
-            operationName,
-            operation,
-            null,
-            SnapshotRebuildOutboxMode.CLEAR_ALL,
-            null,
-        )
+        return executeRemoteDownload(operationName,operation) { state,phase -> downloadWorkflow.resumeAutomaticRecovery(state,phase) }
     }
 
     private suspend fun executeSnapshotRebuild(
@@ -497,18 +496,14 @@ internal class OversqliteClientSyncCoordinator(
                 operation = OversqliteOperation.REBUILD_ROTATE_SOURCE,
                 rotatedSourceId = requireValidOversqliteSourceId(operation.replacementSourceId),
                 sourceReplacementReason = reason,
-                outboxMode = SnapshotRebuildOutboxMode.PRESERVE_SOURCE_RECOVERY,
+                outboxMode = SnapshotRebuildOutboxMode.SOURCE_RECOVERY,
             )
         }
         return ClientRebuildPlan(
             operation = OversqliteOperation.REBUILD_KEEP_SOURCE,
             rotatedSourceId = null,
             sourceReplacementReason = null,
-            outboxMode = if (outboxStateStore.loadBundleState().state == outboxStatePrepared) {
-                SnapshotRebuildOutboxMode.PRESERVE_PREPARED
-            } else {
-                SnapshotRebuildOutboxMode.CLEAR_ALL
-            },
+            outboxMode = SnapshotRebuildOutboxMode.CLEAN,
         )
     }
 }

@@ -18,6 +18,7 @@ package dev.goquick.sqlitenow.oversqlite
 import androidx.sqlite.async.step
 import dev.goquick.sqlitenow.core.SafeSQLiteConnection
 import dev.goquick.sqlitenow.core.TransactionMode
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 
@@ -34,12 +35,13 @@ private data class StagedSnapshotPageProgress(
 )
 
 internal enum class SnapshotRebuildOutboxMode {
-    CLEAR_ALL,
-    PRESERVE_PREPARED,
-    PRESERVE_SOURCE_RECOVERY,
+    CLEAN,
+    SOURCE_RECOVERY,
 }
 
 internal class OversqliteDownloadWorkflow(
+    private val automaticRecovery: OversqliteAutomaticRecovery,
+    private val operations: OversqliteClientOperationController,
     private val db: SafeSQLiteConnection,
     private val config: OversqliteConfig,
     private val remoteApi: OversqliteRemoteApi,
@@ -68,6 +70,34 @@ internal class OversqliteDownloadWorkflow(
         retiredSnapshotId = id
     }
 
+    internal suspend fun requireCleanSnapshotEntry() = requireCleanSnapshotWork(db)
+
+    private val installation by lazy { OversqliteSnapshotInstallation(db, config, localStore, bundleApplier.survivors, json) }
+
+    internal fun retainedSnapshotSession(operation: OversqliteOperationState, source: String): SnapshotSession =
+        checkNotNull(installation.retained(operation, source)) { "retained snapshot authority changed" }
+
+    internal suspend fun retainGenerationSnapshot(state: RuntimeState, session: SnapshotSession, source: String) {
+        requireCleanSnapshotEntry()
+        check(session.snapshotBundleSeq >= installation.floor()) { "snapshot boundary precedes installed observation floor" }
+        val lifecycle = OversqliteApplyLifecycle(db, config, localStore, bundleApplier.survivors, json)
+        val current = operationStateStore.loadState()
+        operationStateStore.persistState(current.copy(stagedSnapshotId = session.snapshotId,
+            snapshotBundleSeq = session.snapshotBundleSeq, snapshotRowCount = session.rowCount,
+            snapshotByteCount = session.logicalByteCount, snapshotStageComplete = false,
+            snapshotStagedRowCount = 0, snapshotStagedByteCount = 0,
+            snapshotStageGuard = lifecycle.snapshotStageGuard(state, session), snapshotTransfer = installation.encodeSeal(session, source)))
+    }
+
+    internal suspend fun verifyGenerationSnapshot(state: RuntimeState, session: SnapshotSession, source: String, phase: String) {
+        syncPhase(phase, session.rowCount, session.logicalByteCount) {
+            db.withStatementCache(cleanupTimeoutMillis = 5_000) { cache -> installation.verify(state, session, source, cache) }
+        }
+    }
+
+    internal suspend fun generationRecoveryRequest(): SnapshotSessionCreateRequest =
+        SnapshotSessionCreateRequest(recovery = SnapshotRecovery(installation.floor()))
+
     suspend fun pullToStable(
         state: RuntimeState,
         onPhaseChanged: suspend (OversqlitePhase) -> Unit = {},
@@ -87,44 +117,36 @@ internal class OversqliteDownloadWorkflow(
             )
             log { "oversqlite pullToStable finished successfully" }
             result
-        } catch (e: HistoryPrunedException) {
-            markCheckpointRecoveryRequired("history_pruned")
-            val result = rebuildFromSnapshot(
-                state = state,
-                rotatedSourceId = null,
-                sourceReplacementReason = null,
-                outboxMode = SnapshotRebuildOutboxMode.CLEAR_ALL,
-                onPhaseChanged = onPhaseChanged,
-            )
-            log { "oversqlite pullToStable recovered via snapshot rebuild" }
-            result
-        } catch (e: CheckpointAheadException) {
-            markCheckpointRecoveryRequired("checkpoint_ahead")
-            val result = rebuildFromSnapshot(
-                state = state,
-                rotatedSourceId = null,
-                sourceReplacementReason = null,
-                outboxMode = SnapshotRebuildOutboxMode.CLEAR_ALL,
-                onPhaseChanged = onPhaseChanged,
-            )
-            log { "oversqlite pullToStable recovered ahead checkpoint via snapshot rebuild" }
-            result
+        } catch (error: Throwable) {
+            val reason=historicalRecoveryReason(error) ?: throw error
+            if(!automaticRecovery.enabled())throw error
+            bundleApplier.survivors.inspectSnapshotCapabilities(state)
+            if (error !is HistoricalBaselineRequired) automaticRecovery.capture(state,reason,0,reason) { installation.context(state,"automatic-recovery",automatic=false) }
+            resumeAutomaticRecovery(state,onPhaseChanged)
         }
     }
+
+    internal suspend fun automaticActive(): Boolean = automaticRecovery.active()
+    internal suspend fun resumeAutomaticRecovery(state: RuntimeState,onPhaseChanged: suspend (OversqlitePhase)->Unit = {}): DownloadWorkflowResult =
+        automaticRecovery.run(state,{ installation.context(state,"automatic-recovery",automatic=false) }) {
+            rebuildFromSnapshot(state,null,null,SnapshotRebuildOutboxMode.CLEAN,onPhaseChanged)
+        }
 
     suspend fun rebuildFromSnapshot(
         state: RuntimeState,
         rotatedSourceId: String?,
         sourceReplacementReason: String?,
-        outboxMode: SnapshotRebuildOutboxMode = SnapshotRebuildOutboxMode.CLEAR_ALL,
+        outboxMode: SnapshotRebuildOutboxMode = SnapshotRebuildOutboxMode.CLEAN,
         onPhaseChanged: suspend (OversqlitePhase) -> Unit = {},
         finalizer: suspend () -> Unit = {},
     ): DownloadWorkflowResult {
+        requireCleanSnapshotEntry()
+        bundleApplier.survivors.inspectSnapshotCapabilities(state)
         val diagnostics = requireNotNull(snapshotDiagnostics()) {
             "snapshot diagnostics scope is missing for rebuild"
         }
         diagnostics.markRestoreAttempt()
-        if (rotatedSourceId == null && outboxMode == SnapshotRebuildOutboxMode.CLEAR_ALL) {
+        if (rotatedSourceId == null && outboxMode == SnapshotRebuildOutboxMode.CLEAN) {
             markCheckpointRecoveryRequired("explicit_rebuild")
         }
         requireSnapshotRebuildState(outboxMode)
@@ -132,6 +154,7 @@ internal class OversqliteDownloadWorkflow(
         val (session, guard) = ensureOperationSnapshotStaged(state, outboxMode,
             rotatedSourceId, sourceReplacementReason)
         diagnostics.recordStagedRows(session.rowCount)
+        automaticRecovery.phase("prepare_transition")
         onPhaseChanged(OversqlitePhase.APPLYING_REMOTE_STATE)
         return applyStagedSnapshot(state, session, rotatedSourceId, outboxMode, guard, finalizer)
     }
@@ -144,77 +167,78 @@ internal class OversqliteDownloadWorkflow(
         remoteReplace: Boolean = false,
         allowSessionRefresh: Boolean = true,
     ): Pair<SnapshotSession, SnapshotApplyGuard> {
+        requireCleanSnapshotEntry()
+        bundleApplier.survivors.inspectSnapshotCapabilities(state)
+        // Intrinsic row/apply capacity is known from admitted authority and
+        // must fail before any recovery snapshot request or replacement.
+        val limits=negotiateSnapshotLimits(state.admittedContract,config)
         var guard = snapshotGate.pin(mode, remoteReplace, if (remoteReplace) state.userId else "")
         var operation = guard.lifecycle.operation
         val source = rotatedSourceId ?: state.sourceId
         val lifecycle = OversqliteApplyLifecycle(db, config, localStore, bundleApplier.survivors, json)
-        // A recorded recovery session proves replacement already happened remotely.
-        var replacementEstablished = rotatedSourceId != null && operation.stagedSnapshotId.isNotEmpty()
-        var session = operation.stagedSnapshotId.takeIf { it.isNotEmpty() }?.let {
-            SnapshotSession(it, operation.snapshotBundleSeq, operation.snapshotRowCount, operation.snapshotByteCount, "")
-        }
+        val replacementEstablished = rotatedSourceId != null && operation.stagedSnapshotId.isNotEmpty()
+        var session = installation.retained(operation, source)
         if (session != null) {
-            val retainedSession = session
-            val matches = db.transaction(TransactionMode.DEFERRED) {
-                snapshotGate.validateFinal(guard, retainedSession)
-                val currentGuard = lifecycle.snapshotStageGuard(state, retainedSession, mode != SnapshotRebuildOutboxMode.CLEAR_ALL)
-                if (currentGuard != operation.snapshotStageGuard) false else {
-                    validateOperationSnapshotCursor(operation)
-                    true
-                }
-            }
+            val retained = session
+            val matches = operations.completeWorkPhase("retained snapshot admission") { db.transaction(TransactionMode.DEFERRED) {
+                snapshotGate.validateFinal(guard)
+                if (lifecycle.snapshotStageGuard(state, retained) != operation.snapshotStageGuard ||
+                    (!remoteReplace && retained.snapshotBundleSeq < installation.floor())) false
+                else { validateOperationSnapshotCursor(operation); true }
+            } }
             if (!matches) {
-                retireOperationSnapshot(retainedSession.snapshotId, source)
+                if(currentCoroutineContext()[AutomaticRecoveryContext]!=null)operations.chargeRecoveryReplan()
                 session = null
             }
         }
         if (session == null) {
-            val request = if (rotatedSourceId != null && !replacementEstablished) {
-                val reason = replacementReason?.trim()
-                check(!reason.isNullOrBlank()) { "rotated rebuild requires a non-blank source replacement reason" }
+            val floor = if (remoteReplace) 0L else operations.completeWorkPhase("snapshot floor") { db.transaction(TransactionMode.DEFERRED) { installation.floor() } }
+            val request = if (remoteReplace) null else if (rotatedSourceId != null && !replacementEstablished) {
+                val reason = checkNotNull(replacementReason)
+                check(reason.isNotEmpty())
                 SnapshotSessionCreateRequest(SnapshotSourceReplacement(state.sourceId, rotatedSourceId, reason))
-            } else null
-            session = if (remoteReplace) stageStore.withSnapshotTransportRetry("remote_replace snapshot create") {
-                remoteApi.createSnapshotSession(if (replacementEstablished) source else state.sourceId, request)
-            } else remoteApi.createSnapshotSession(if (replacementEstablished) source else state.sourceId, request)
-            val created = checkNotNull(session)
-            guard = publishSnapshotSession(state, mode, created, guard, source)
+            } else SnapshotSessionCreateRequest(recovery = SnapshotRecovery(floor))
+            session = createGuardedSnapshotSession(state, if (replacementEstablished) source else state.sourceId, request, guard)
+            check(session.snapshotBundleSeq >= floor) { "snapshot boundary precedes installed observation floor" }
+            guard = publishSnapshotSession(state, mode, session, guard, source)
             operation = guard.lifecycle.operation
         }
         val current = checkNotNull(session)
-        if (operation.snapshotStageComplete) {
-            retireOperationSnapshot(current.snapshotId, source)
-        } else {
+        if (!operation.snapshotStageComplete) {
             try {
                 downloadSnapshotSession(state.copy(sourceId = source), current,
-                    negotiateSnapshotLimits(state.admittedContract, config),
-                    initialTotals = SnapshotTransferTotals(operation.snapshotStagedRowCount, operation.snapshotStagedByteCount),
-                    fetchChunk = if (remoteReplace) ({ after -> stageStore.withSnapshotTransportRetry("remote_replace snapshot fetch") {
-                        fetchSnapshotChunkWithOneRowProgress(state.copy(sourceId = source), current, after,
-                            negotiateSnapshotLimits(state.admittedContract, config))
-                    } }) else null) { totals ->
-                    snapshotGate.validateFinal(guard, current)
+                    limits,
+                    initialTotals = SnapshotTransferTotals(operation.snapshotStagedRowCount, operation.snapshotStagedByteCount)) { totals ->
+                    snapshotGate.validateFinal(guard)
+                    check(lifecycle.snapshotStageGuard(state, current) == operation.snapshotStageGuard) { "snapshot staging context changed" }
+                    val complete = totals.rows == current.rowCount && totals.bytes == current.logicalByteCount
+                    if (complete) verifyGenerationSnapshot(state, current, source, "verification_last_chunk")
                     val next = operation.copy(snapshotStagedRowCount = totals.rows, snapshotStagedByteCount = totals.bytes,
-                        snapshotStageComplete = totals.rows == current.rowCount && totals.bytes == current.logicalByteCount)
+                        snapshotStageComplete = complete)
                     operationStateStore.persistState(next)
                     operation = next
                     guard = guard.copy(lifecycle = guard.lifecycle.copy(operation = next))
                 }
             } catch (error: SnapshotHttpException) {
                 if (!allowSessionRefresh || (error.errorCode != "snapshot_session_expired" && error.errorCode != "snapshot_session_not_found")) throw error
-                // Keep the durable replacement receipt and cursor until a fresh session is acquired.
-                // Expiry requests an ordinary snapshot, never another replacement of the retired source.
-                val fresh = remoteApi.createSnapshotSession(source)
+                operations.chargeExpiredSnapshotReplacement()
+                validateSnapshotDispatch(state.copy(sourceId = source),current)
+                val floor = if (remoteReplace) 0L else operations.completeWorkPhase("snapshot floor") { db.transaction(TransactionMode.DEFERRED) { installation.floor() } }
+                val request = if (remoteReplace) null else SnapshotSessionCreateRequest(recovery = SnapshotRecovery(floor))
+                val fresh = remoteApi.createSnapshotSession(source, request) {
+                    validateSnapshotDispatch(state.copy(sourceId = source), current)
+                }
+                check(fresh.snapshotBundleSeq >= floor)
                 publishSnapshotSession(state, mode, fresh, guard, source)
-                return ensureOperationSnapshotStaged(state, mode, rotatedSourceId, replacementReason,
-                    remoteReplace, allowSessionRefresh = false)
-            } catch (error: Throwable) {
-                if (error !is SyncWorkLimitException && error !is kotlinx.coroutines.CancellationException)
-                    retireOperationSnapshot(current.snapshotId, source)
-                throw error
+                return ensureOperationSnapshotStaged(state, mode, rotatedSourceId, replacementReason, remoteReplace, false)
             }
-            retireOperationSnapshot(current.snapshotId, source)
         }
+        // Complete verified local staging owns its lifetime independently of server TTL.
+        operations.completeWorkPhase("snapshot seal verification") { db.transaction(TransactionMode.DEFERRED) {
+            snapshotGate.validateFinal(guard)
+            check(lifecycle.snapshotStageGuard(state, current) == operation.snapshotStageGuard) { "snapshot staging context changed" }
+            verifyGenerationSnapshot(state, current, source, "verification_seal")
+        } }
         return current to guard
     }
 
@@ -222,18 +246,19 @@ internal class OversqliteDownloadWorkflow(
         session: SnapshotSession, guard: SnapshotApplyGuard, source: String): SnapshotApplyGuard {
         val lifecycle = OversqliteApplyLifecycle(db, config, localStore, bundleApplier.survivors, json)
         try {
-            val operation = db.transaction(TransactionMode.IMMEDIATE) {
-                snapshotGate.validateFinal(guard, session)
+            val operation = operations.completeWorkPhase("snapshot publication") { db.transaction(TransactionMode.IMMEDIATE) {
+                snapshotGate.validateFinal(guard)
                 stageStore.clearAllSnapshotStages()
                 val next = guard.lifecycle.operation.copy(stagedSnapshotId = session.snapshotId,
                     snapshotBundleSeq = session.snapshotBundleSeq, snapshotRowCount = session.rowCount,
                     snapshotByteCount = session.logicalByteCount, snapshotStageComplete = false,
                     snapshotStagedRowCount = 0, snapshotStagedByteCount = 0,
-                    snapshotStageGuard = lifecycle.snapshotStageGuard(state, session, mode != SnapshotRebuildOutboxMode.CLEAR_ALL))
+                    snapshotStageGuard = lifecycle.snapshotStageGuard(state, session),
+                    snapshotTransfer = installation.encodeSeal(session, source))
                 operationStateStore.persistState(next)
                 OversqliteWorkspace(db, config).check(applyUnit("snapshot-stage", session.snapshotBundleSeq, session.snapshotId))
                 next
-            }
+            } }
             return guard.copy(lifecycle = guard.lifecycle.copy(operation = operation))
         } catch (error: Throwable) {
             try {
@@ -269,11 +294,12 @@ internal class OversqliteDownloadWorkflow(
         initialTotals: SnapshotTransferTotals = SnapshotTransferTotals(),
         fetchChunk: (suspend (afterRowOrdinal: Long) -> SnapshotChunkResponse)? = null,
         onChunkStaged: suspend (SnapshotTransferTotals) -> Unit = {},
-    ): SnapshotTransferTotals {
+    ): SnapshotTransferTotals = syncPhase("download_staging", session.rowCount, session.logicalByteCount) {
         var totals = initialTotals
         var afterRowOrdinal = initialTotals.rows
         while (true) {
             stageStore.ensureSnapshotWorkAvailable(applyUnit("snapshot-stage", session.snapshotBundleSeq, session.snapshotId))
+            validateSnapshotDispatch(state,session)
             val chunk = fetchChunk?.invoke(afterRowOrdinal) ?: fetchSnapshotChunkWithOneRowProgress(
                 state, session, afterRowOrdinal, limits,
             )
@@ -300,8 +326,44 @@ internal class OversqliteDownloadWorkflow(
                 afterRowOrdinal = chunk.nextRowOrdinal
                 continue
             }
-            return totals
+            return@syncPhase totals
         }
+        @Suppress("UNREACHABLE_CODE")
+        error("snapshot transfer did not terminate")
+    }
+
+    internal suspend fun createGuardedSnapshotSession(
+        state: RuntimeState,
+        source: String,
+        request: SnapshotSessionCreateRequest?,
+        pinned: SnapshotApplyGuard? = null,
+    ): SnapshotSession {
+        val guard = pinned ?: snapshotGate.pin(SnapshotRebuildOutboxMode.CLEAN)
+        val unit = "snapshot-create"
+        val authority = operations.completeWorkPhase("snapshot create admission") { db.transaction(TransactionMode.DEFERRED) {
+            requireCleanSnapshotWork(db)
+            snapshotGate.validateFinal(guard)
+            installation.context(state, unit)
+        } }
+        return remoteApi.createSnapshotSession(source, request) {
+            bundleApplier.survivors.beginSnapshotVerification()
+            db.transaction(TransactionMode.DEFERRED) {
+                requireCleanSnapshotWork(db)
+                snapshotGate.validateFinal(guard)
+                check(installation.context(state, unit) == authority) { "snapshot dispatch context changed" }
+            }
+        }
+    }
+
+    internal suspend fun validateSnapshotDispatch(state: RuntimeState, session: SnapshotSession) {
+        operations.completeWorkPhase("snapshot dispatch admission") { db.transaction(TransactionMode.DEFERRED) {
+            kotlinx.coroutines.currentCoroutineContext()[AutomaticRecoveryContext]?.pin?.let { automaticRecovery.validate(it) }
+            requireCleanSnapshotWork(db)
+            val operation = operationStateStore.loadState()
+            require(installation.retained(operation,state.sourceId) == session) { "snapshot dispatch context changed" }
+            val lifecycle = OversqliteApplyLifecycle(db,config,localStore,bundleApplier.survivors,json)
+            check(lifecycle.snapshotStageGuard(state,session) == operation.snapshotStageGuard) { "snapshot dispatch context changed" }
+        } }
     }
 
     private suspend fun pullIncremental(state: RuntimeState): IncrementalPullResult {
@@ -334,7 +396,14 @@ internal class OversqliteDownloadWorkflow(
             }
 
             for (bundle in response.bundles) {
-                updatedTables += applyPulledBundle(state, bundle)
+                try { updatedTables += applyPulledBundle(state,bundle) }
+                catch (failure: Throwable) {
+                    val reason=historicalRecoveryReason(failure) ?: throw failure
+                    if(!automaticRecovery.enabled())throw failure
+                    bundleApplier.survivors.inspectSnapshotCapabilities(state)
+                    automaticRecovery.capture(state,reason,bundle.bundleSeq,bundle.bundleHash) { installation.context(state,"automatic-recovery",automatic=false) }
+                    throw HistoricalBaselineRequired(bundle.bundleSeq,bundle.bundleHash,reason)
+                }
                 afterBundleSeq = bundle.bundleSeq
             }
 
@@ -386,6 +455,7 @@ internal class OversqliteDownloadWorkflow(
                         workspaceStatementCache = statementCache, replayStatementCache = statementCache)
                 } else bundleApplier.survivors.wire(row.table, pk, row.payload)
             }
+            bundleApplier.survivors.installUniqueFinalState(state,statementCache)
             for (row in bundle.rows) {
                 val schema = state.validated.schemaForTable(row.table)
                 val (keyJson, localPk) = localStore.bundleRowKeyToLocalKey(state, row.table, row.key)
@@ -427,31 +497,30 @@ internal class OversqliteDownloadWorkflow(
         }
         val guard = pinnedGuard ?: snapshotGate.pin(outboxMode)
         val result = applyExecutor.inApplyModeTransaction(state) { statementCache ->
-            snapshotGate.validateFinal(guard, session)
+            snapshotGate.validateFinal(guard)
             val lifecycle = OversqliteApplyLifecycle(db, config, localStore, bundleApplier.survivors, json, statementCache)
-            val preserve = outboxMode != SnapshotRebuildOutboxMode.CLEAR_ALL
-            lifecycle.prepareSnapshot(state, session, preserve)
+            if (guard.lifecycle.operation.snapshotStageGuard.isNotEmpty())
+                check(lifecycle.snapshotStageGuard(state, session) == guard.lifecycle.operation.snapshotStageGuard) { "snapshot final context changed" }
+            if (!guard.remoteReplace) check(session.snapshotBundleSeq >= installation.floor()) { "snapshot boundary precedes installed observations" }
+            syncPhase("preparation_reconciliation", session.rowCount, session.logicalByteCount) { lifecycle.prepareSnapshot(state, session) }
+            operations.admitSnapshotFinalTransition {
+                syncPhase("verification_final_apply", session.rowCount, session.logicalByteCount) {
+                    installation.verify(state, session, rotatedSourceId ?: state.sourceId, statementCache)
+                }
+                bundleApplier.survivors.validateSnapshotPreservation(state, statementCache)
+            }
+            automaticRecovery.ready()
+            val targetContext = OversqliteProvenanceContextStore(db).target(state, rotatedSourceId ?: state.sourceId)
+            bundleApplier.survivors.installUniqueFinalState(state, statementCache)
             var stagedRowCount = 0L
             var afterRowOrdinal = 0L
-            var snapshotUpserts: SnapshotUpsertPlan? = null
+            syncPhase("row_installation", session.rowCount, session.logicalByteCount) {
             while (true) {
                 val progress = consumeNextStagedSnapshotPage(
                     state = state,
                     session = session,
                     afterRowOrdinal = afterRowOrdinal,
                 ) { rows ->
-                    if (snapshotUpserts == null) {
-                        require(session.rowCount == 0L || rows.isNotEmpty()) {
-                            "staged snapshot is missing its first declared row"
-                        }
-                        snapshotUpserts = localStore.prepareSnapshotUpsertPlan(statementCache)
-                        clearManagedTables(
-                            state = state,
-                            statementCache = statementCache,
-                            clearOutbox = outboxMode == SnapshotRebuildOutboxMode.CLEAR_ALL,
-                        )
-                    }
-                    val upserts = checkNotNull(snapshotUpserts)
                     for (row in rows) {
                         try {
                             val payload = json.parseToJsonElement(row.payload) as? JsonObject
@@ -459,7 +528,7 @@ internal class OversqliteDownloadWorkflow(
                                     "bundle row payload must be a JSON object for " +
                                         "${row.schemaName}.${row.tableName}",
                                 )
-                            upserts.upsertAuthoritativeRow(row.tableName, payload)
+                            localStore.upsertRow(row.tableName,payload,PayloadSource.AUTHORITATIVE_WIRE,statementCache)
                             syncStateStore.installAuthoritativeBaseline(
                                 schemaName = row.schemaName,
                                 tableName = row.tableName,
@@ -467,7 +536,7 @@ internal class OversqliteDownloadWorkflow(
                                 rowVersion = row.rowVersion,
                                 kind = "live", payload = localStore.captureAuthoritativePayload(row.tableName,payload,statementCache),
                                 origin = "snapshot", bundleSeq = session.snapshotBundleSeq, statementCache = statementCache,
-                                projectionStatementCache = statementCache,
+                                projectionStatementCache = statementCache, targetContext = targetContext,
                             )
                             applyExecutor.afterAppliedRowForTest()
                         } catch (error: Throwable) {
@@ -488,57 +557,18 @@ internal class OversqliteDownloadWorkflow(
                 afterRowOrdinal = lastRowOrdinal
             }
 
+            }
             if (stagedRowCount != session.rowCount) {
                 throw SnapshotSemanticException(SnapshotSemanticFailure.INVALID_CHUNK)
             }
-            snapshotUpserts?.finish()
 
-            val preservedOutbox = outboxStateStore.loadBundleState()
-            if (rotatedSourceId != null) {
-                if (state.sourceId != rotatedSourceId) {
-                    sourceStateStore.markRotated(state.sourceId, rotatedSourceId)
-                }
-            }
+            if (rotatedSourceId != null && state.sourceId != rotatedSourceId) sourceStateStore.markRotated(state.sourceId, rotatedSourceId)
             val currentSourceId = rotatedSourceId ?: state.sourceId
-            when (outboxMode) {
-                SnapshotRebuildOutboxMode.CLEAR_ALL -> Unit
-
-                SnapshotRebuildOutboxMode.PRESERVE_PREPARED -> {
-                    if (preservedOutbox.state == outboxStatePrepared) {
-                        db.withPreparedStatement("""INSERT INTO _sync_row_state(schema_name,table_name,key_json,row_version,server_kind,server_payload,server_provenance,relationships_known)
- SELECT o.schema_name,o.table_name,o.key_json,0,'absent',NULL,${baselineProvenanceSql("'snapshot'","0","?")},1 FROM _sync_outbox_rows o WHERE NOT EXISTS(SELECT 1 FROM _sync_row_state a WHERE a.schema_name=o.schema_name AND a.table_name=o.table_name AND a.key_json=o.key_json)""",statementCache) { st -> st.bindLong(1,session.snapshotBundleSeq); st.step() }
-
-                        replayPreparedOutboxIntent(
-                            state = state,
-                            sourceBundleId = preservedOutbox.sourceBundleId,
-                            expectedRowCount = preservedOutbox.rowCount,
-                            statementCache = statementCache,
-                        )
-                    }
-                }
-
-                SnapshotRebuildOutboxMode.PRESERVE_SOURCE_RECOVERY -> {
-                    if (preservedOutbox.state == outboxStatePrepared) {
-                        db.withPreparedStatement("""INSERT INTO _sync_row_state(schema_name,table_name,key_json,row_version,server_kind,server_payload,server_provenance,relationships_known)
- SELECT o.schema_name,o.table_name,o.key_json,0,'absent',NULL,${baselineProvenanceSql("'snapshot'","0","?")},1 FROM _sync_outbox_rows o WHERE NOT EXISTS(SELECT 1 FROM _sync_row_state a WHERE a.schema_name=o.schema_name AND a.table_name=o.table_name AND a.key_json=o.key_json)""",statementCache) { st -> st.bindLong(1,session.snapshotBundleSeq); st.step() }
-
-                        replayPreparedOutboxIntent(
-                            state = state,
-                            sourceBundleId = preservedOutbox.sourceBundleId,
-                            expectedRowCount = preservedOutbox.rowCount,
-                            statementCache = statementCache,
-                        )
-                        sourceStateStore.upsertNextSourceBundleIdFloor(currentSourceId, 2L)
-                        outboxStateStore.rebindBundleSource(
-                            sourceId = currentSourceId,
-                            sourceBundleId = 1L,
-                            statementCache = statementCache,
-                        )
-                    }
-                }
+            installation.installAbsence(state, session, statementCache, targetContext)
+            syncPhase("final_validation", session.rowCount, session.logicalByteCount) {
+                lifecycle.restoreAndVerify(state, statementCache)
+                lifecycle.verifySnapshot(state, session, statementCache)
             }
-            lifecycle.restoreAndVerify(state, statementCache)
-            lifecycle.verifySnapshot(state, session, preserve, statementCache)
             bundleApplier.survivors.finish(replayStatementCache = statementCache)
             attachmentStateStore.persistAttachedState(
                 sourceId = currentSourceId,
@@ -549,6 +579,7 @@ internal class OversqliteDownloadWorkflow(
                 pendingInitializationId = "",
                 statementCache = statementCache,
             )
+            automaticRecovery.completed(session.snapshotBundleSeq)
             operationStateStore.persistState(OversqliteOperationState(), statementCache)
 
             finalizer()
@@ -565,60 +596,9 @@ internal class OversqliteDownloadWorkflow(
             )
         }
         snapshotDiagnostics()?.recordAppliedRows(session.rowCount)
+        retireOperationSnapshot(session.snapshotId, rotatedSourceId ?: state.sourceId)
         notifyUpdatedTables(result.updatedTables)
         return result
-    }
-
-    private suspend fun replayPreparedOutboxIntent(
-        state: RuntimeState,
-        sourceBundleId: Long,
-        expectedRowCount: Long,
-        statementCache: StatementCache,
-    ) {
-        val sourceRowCount = outboxStateStore.countRowsForSourceBundle(sourceBundleId)
-        val totalRowCount = outboxStateStore.countRows()
-        val counts = OversqliteCountEvaluation(
-            dirtyRowCount = 0L,
-            outboundRowCount = totalRowCount,
-            sourceBundleRowCount = sourceRowCount,
-            expectedOutboxRowCount = expectedRowCount,
-        )
-        require(counts.preparedOutboxMatches) {
-            "prepared outbox row count $sourceRowCount does not match expected row_count $expectedRowCount"
-        }
-        var replayedRowCount = 0L
-        var afterRowOrdinal = -1L
-        while (true) {
-            val row = outboxStateStore.loadReplayRowAfter(
-                sourceBundleId = sourceBundleId,
-                afterRowOrdinal = afterRowOrdinal,
-                statementCache = statementCache,
-            ) ?: break
-            when (row.op) {
-                "DELETE" -> {
-                    val (localPk, _) = localStore.decodeDirtyKeyForPush(state, row.tableName, row.keyJson)
-                    localStore.deleteLocalRow(state, row.tableName, localPk, statementCache)
-                }
-                "INSERT", "UPDATE" -> {
-                    val payload = row.localPayload?.let(json::parseToJsonElement) as? JsonObject
-                        ?: throw IllegalStateException("prepared outbox row is missing a valid local payload")
-                    localStore.upsertRow(
-                        tableName = row.tableName,
-                        payload = payload,
-                        payloadSource = PayloadSource.LOCAL_STATE,
-                        statementCache = statementCache,
-                    )
-                }
-                else -> throw IllegalStateException("prepared outbox row has an unsupported operation")
-            }
-            replayedRowCount = checkedAddSnapshotLong(replayedRowCount, 1L) {
-                "prepared outbox replay row count overflow"
-            }
-            afterRowOrdinal = row.rowOrdinal
-        }
-        require(replayedRowCount == expectedRowCount) {
-            "prepared outbox replayed row count $replayedRowCount does not match expected row_count $expectedRowCount"
-        }
     }
 
     private suspend fun consumeNextStagedSnapshotPage(
@@ -639,63 +619,19 @@ internal class OversqliteDownloadWorkflow(
             applyExecutor.afterApplyPageLoadedForTest()
         }
         consume(page.rows)
+        if (page.rows.isNotEmpty()) snapshotDiagnostics()?.recordInstalledPage(page.rows.size, page.retainedTextBytes)
         return StagedSnapshotPageProgress(
             rowCount = page.rows.size,
             lastRowOrdinal = page.lastRowOrdinal,
         )
     }
 
-    private suspend fun clearManagedTables(
-        state: RuntimeState,
-        statementCache: StatementCache? = null,
-        clearOutbox: Boolean = true,
-    ) {
-        val reverseDependencyOrder = state.validated.tables.sortedByDescending {
-            state.validated.tableOrder[it.tableName.lowercase()] ?: Int.MIN_VALUE
-        }
-        for (table in reverseDependencyOrder) {
-            db.execSQL("DELETE FROM ${quoteIdent(table.tableName)}")
-            syncStateStore.clearStructuredRowState(state.validated.schemaForTable(table.tableName), table.tableName, statementCache)
-        }
-        syncStateStore.clearDirtyRows()
-        if (clearOutbox) {
-            outboxStateStore.clearBundleAndRows(statementCache)
-        }
-    }
-
     private suspend fun requireIncrementalPullState(state: RuntimeState) {
-        requireSnapshotRebuildState(SnapshotRebuildOutboxMode.CLEAR_ALL)
+        requireSnapshotRebuildState(SnapshotRebuildOutboxMode.CLEAN)
         requireOrdinarySyncAllowed()
     }
 
-    private suspend fun requireSnapshotRebuildState(outboxMode: SnapshotRebuildOutboxMode) {
-        val outboxState = outboxStateStore.loadBundleState()
-        val pendingOutboundCount = outboxStateStore.countRows()
-        when (outboxMode) {
-            SnapshotRebuildOutboxMode.CLEAR_ALL -> {
-                if (pendingOutboundCount > 0) {
-                    throw PendingPushReplayException(pendingOutboundCount)
-                }
-            }
-
-            SnapshotRebuildOutboxMode.PRESERVE_PREPARED -> {
-                if (pendingOutboundCount > 0 && outboxState.state != outboxStatePrepared) {
-                    throw PendingPushReplayException(pendingOutboundCount)
-                }
-            }
-
-            SnapshotRebuildOutboxMode.PRESERVE_SOURCE_RECOVERY -> {
-                if (pendingOutboundCount > 0 && outboxState.state == outboxStateNone) {
-                    throw PendingPushReplayException(pendingOutboundCount)
-                }
-            }
-        }
-
-        val pendingCount = syncStateStore.countDirtyRows()
-        if (pendingCount > 0) {
-            throw DirtyStateRejectedException(pendingCount)
-        }
-    }
+    private suspend fun requireSnapshotRebuildState(outboxMode: SnapshotRebuildOutboxMode) = requireCleanSnapshotEntry()
 
     private suspend fun requireOrdinarySyncAllowed() {
         val operation = operationStateStore.loadState()
@@ -739,6 +675,7 @@ internal class OversqliteDownloadWorkflow(
             maxRows = limits.maxRows,
             maxBytes = limits.maxBytes,
             admittedMaxBytes = state.admittedContract.limits.maxSnapshotDecodedBytesPerChunk,
+            beforeDispatch = { validateSnapshotDispatch(state, session) },
         )
     } catch (tooSmall: SnapshotChunkTooSmallException) {
         val hardLimit = state.admittedContract.limits.maxSnapshotDecodedBytesPerChunk
@@ -754,6 +691,7 @@ internal class OversqliteDownloadWorkflow(
                 maxRows = 1,
                 maxBytes = tooSmall.requiredBytes,
                 admittedMaxBytes = hardLimit,
+                beforeDispatch = { validateSnapshotDispatch(state, session) },
             )
         } catch (_: SnapshotChunkTooSmallException) {
             throw SnapshotSemanticException(SnapshotSemanticFailure.INVALID_CHUNK)
@@ -770,7 +708,7 @@ internal class OversqliteDownloadWorkflow(
 }
 
 internal fun isCheckpointRecoveryReason(reason: String): Boolean =
-    reason in setOf("history_pruned", "checkpoint_ahead", "explicit_rebuild", "resume")
+    reason in setOf("history_pruned", "checkpoint_ahead", "historical_repair_required", "conflicting_desired_state", "explicit_rebuild", "resume")
 
 internal data class IncrementalPullResult(
     val updatedTables: Set<String>,

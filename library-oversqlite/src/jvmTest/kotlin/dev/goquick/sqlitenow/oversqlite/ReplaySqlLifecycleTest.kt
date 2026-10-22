@@ -168,7 +168,8 @@ internal class ReplaySqlLifecycleTest : SurvivorTestSupport() {
         val db = newDb()
         try {
             db.execSQL("CREATE TABLE items(id TEXT PRIMARY KEY NOT NULL,i INTEGER,r REAL,t TEXT,b BLOB,n INTEGER)")
-            db.execSQL(oversqliteRetainedTableDdl.getValue("_sync_operation_state")); db.execSQL(applyPlanDdl); db.execSQL(pushPlanDdl)
+            db.execSQL(oversqliteRetainedTableDdl.getValue("_sync_operation_state"))
+            db.execSQL(oversqliteRetainedTableDdl.getValue("_sync_upload_journal")); db.execSQL(applyPlanDdl); db.execSQL(pushPlanDdl)
             db.execSQL("INSERT INTO _sync_operation_state(singleton_key) VALUES(1)")
             db.execSQL("INSERT INTO _sync_apply_plan(singleton_key,unit,guard,phase,root_cursor,visit_cursor,table_cursor,fk_cursor,entries,bytes,edge_entries,edge_bytes) VALUES(1,'u','g','ready',0,0,0,0,2,10,3,20)")
             db.execSQL("INSERT INTO _sync_push_plan(singleton_key,unit,guard,phase,state,entries,bytes) VALUES(1,'u','g','ready','{}',4,40)")

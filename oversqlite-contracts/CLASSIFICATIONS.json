@@ -2,16 +2,18 @@
   "formatVersion": 1,
   "currentProtocolFixtures": [
     "local-apply/a1.json",
+    "local-apply/unique-final-state.json",
     "protocol-handshake/connect.json",
     "protocol-http/requests.json",
-    "pull-snapshot/basic.json",
-    "push/basic-insert.json",
     "watch/basic.json",
-    "wire/"
+    "wire/compact-rows.json",
+    "wire/compression.json",
+    "wire/limits.json",
+    "recovery/protocol.json"
   ],
   "contractConsumerCoverage": {
-    "go": "Semantic execution of every current wire family against normative Go codecs, hashes, HTTP boundaries, and declared invariants.",
-    "jvm": "Independent pure-contract semantic execution of every current wire family; this is not SQLiteNow K0 runtime implementation.",
+    "go": "Every current family executes in V01 against codecs, hashes, boundary validators or explicit pure-contract reducers; historical lifecycle traces are separately classified.",
+    "jvm": "Every current family executes in the selected SharedRecoveryProtocolFixtureTest including existing contract executors; pure contract proof is separate from platform/live runtime qualification.",
     "localExecutionContract": {
       "scope": "internal-work-slice",
       "publicSchedulingYield": false,
@@ -84,6 +86,23 @@
         "rawKernelsUnchanged": true,
         "workWeightsAndQuantumUnchanged": true
       }
+    },
+    "finalStateUniqueRuntime": {
+      "fixtures": [
+        "local-apply/unique-final-state.json"
+      ],
+      "go": "oversqlite.TestSharedFinalStateUniqueFixtures executes every case against SQLite",
+      "jvm": "SharedFinalStateUniqueFixtureTest executes every case against SQLite; common/platform tests supplement it",
+      "wireChanges": false
+    },
+    "durableRecovery": {
+      "fixture": "recovery/protocol.json",
+      "goConsumer": "TestSharedRecoveryProtocolFixtures",
+      "jvmConsumer": "SharedRecoveryProtocolFixtureTest",
+      "runtimeQualification": "pending C02-C07; workflow reducers are contract proof only",
+      "wireMarker": "v1",
+      "legacySupport": false,
+      "sourceOwnership": "Client upload and trusted writer source IDs are disjoint per scope; existing source_generation_conflict409 is contract-covered. Actual ownership, zero callback/receipt/effect mutation and cleanup/restart fences are V02server runtime obligations."
     }
   },
   "historicalFixtureInputs": [
@@ -122,6 +141,26 @@
     {
       "path": "schema-evolution/sqlitenow-adapter/v1.json",
       "reason": "Historical dispatch index for the accepted client-upgrade corpus; not current wire authority."
+    },
+    {
+      "path": "pull-snapshot/basic.json",
+      "reason": "Historical pre-durable-recovery envelope input; retained unchanged only for original codec/hash regression, never accepted as current terminal/snapshot envelope."
+    },
+    {
+      "path": "push/basic-insert.json",
+      "reason": "Historical pre-durable-recovery envelope input; retained unchanged only for original codec/hash regression, never accepted as current terminal/snapshot envelope."
+    },
+    {
+      "path": "wire/faults.json",
+      "reason": "Historical pre-durable-recovery lifecycle/ordering trace; new outcome/ack/sequence semantics execute in recovery/protocol.json. Existing transport/codec arithmetic remains regression input."
+    },
+    {
+      "path": "wire/request-counts.json",
+      "reason": "Historical pre-durable-recovery lifecycle/ordering trace; new outcome/ack/sequence semantics execute in recovery/protocol.json. Existing transport/codec arithmetic remains regression input."
+    },
+    {
+      "path": "wire/errors.json",
+      "reason": "Historical pre-durable-recovery lifecycle/ordering trace; new outcome/ack/sequence semantics execute in recovery/protocol.json. Existing transport/codec arithmetic remains regression input."
     }
   ],
   "localContractCandidates": [
@@ -161,6 +200,22 @@
         "a3-workspace",
         "a3-replay",
         "a3-format"
+      ]
+    }
+  ],
+  "localPersistenceFormats": [
+    {
+      "path": "local-planning/provenance-storage.json",
+      "contract": "sqlite-now-complete-context",
+      "formatIdentity": "complete-context-v1",
+      "jvmConsumer": "SharedProvenanceStorageContractTest",
+      "goConsumer": null,
+      "scope": "Kotlin SDK retained layout only; existing paired logical planning and HTTP fixtures unchanged",
+      "families": [
+        "complete-context-equality",
+        "reference-integrity",
+        "bounded-cleanup",
+        "logical-storage"
       ]
     }
   ]
