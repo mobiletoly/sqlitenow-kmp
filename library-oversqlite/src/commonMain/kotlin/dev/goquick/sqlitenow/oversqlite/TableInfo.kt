@@ -73,6 +73,8 @@ internal data class TableInfo(
     val strict: Boolean = false,
 ) {
     val columnNamesLower: List<String> = columns.map { it.name.lowercase() }
+    val columnNameSet: Set<String> = columns.map { it.name }.toSet()
+    val columnNamesLowerSet: Set<String> = columnNamesLower.toSet()
     val columnsByNameLower: Map<String, ColumnInfo> = columns.associateBy { it.name.lowercase() }
     val typesByNameLower: Map<String, String> = columns.associate { it.name.lowercase() to it.declaredType }
     val primaryKey: ColumnInfo? = columns.firstOrNull { it.isPrimaryKey }

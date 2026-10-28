@@ -35,8 +35,20 @@ internal data class SnapshotRestoreDiagnostics(
     val capacityWaitMillis: Long = 0,
 )
 
-internal class SnapshotDiagnosticsRecorder(val phases: SyncPhaseDiagnostics = SyncPhaseDiagnostics()) {
-    private val started = TimeSource.Monotonic.markNow()
+internal class SnapshotDiagnosticsRecorder(
+    val phases: SyncPhaseDiagnostics = SyncPhaseDiagnostics(),
+    private val span: dev.goquick.sqlitenow.core.SqliteNowDiagnosticSpan? = null,
+) {
+    private val started = if (span != null) TimeSource.Monotonic.markNow() else null
+    private var lastProgress = Long.MIN_VALUE
+
+    private fun progress(name: String, rows: Long, bytes: Long, basis: String) {
+        val active = span ?: return
+        val now = active.nowNanos()
+        if (lastProgress != Long.MIN_VALUE && now - lastProgress < 1_000_000_000L) return
+        lastProgress = now
+        active.event(name, "progress", { mapOf("rows" to rows, "bytes" to bytes) }, basis)
+    }
     private var sessionCount = 0L
     private var fetchedChunks = 0L
     private var maxValidatedChunkRows = 0
@@ -59,6 +71,7 @@ internal class SnapshotDiagnosticsRecorder(val phases: SyncPhaseDiagnostics = Sy
     fun markRestoreAttempt() {
         restoreAttempted = true
         phases.start()
+        span?.event("snapshot.restore", "started")
     }
 
     fun hasRestoreAttempt(): Boolean = restoreAttempted
@@ -77,6 +90,7 @@ internal class SnapshotDiagnosticsRecorder(val phases: SyncPhaseDiagnostics = Sy
         stagedBytes += declaredBytes
         validatedRows += rows
         phases.progress("download_staging", validatedRows, stagedBytes, "validated")
+        progress("download_staging", validatedRows, stagedBytes, "validated")
         maxValidatedChunkRows = maxOf(maxValidatedChunkRows, rows)
         maxDeclaredChunkBytes = maxOf(maxDeclaredChunkBytes, declaredBytes)
     }
@@ -94,6 +108,7 @@ internal class SnapshotDiagnosticsRecorder(val phases: SyncPhaseDiagnostics = Sy
         installedRows += rows
         installedBytes += stagedTextBytes
         phases.progress("row_installation", installedRows, installedBytes, "installed_uncommitted")
+        progress("row_installation", installedRows, installedBytes, "installed_uncommitted")
     }
 
     fun recordStagedRows(rows: Long) {
@@ -102,6 +117,7 @@ internal class SnapshotDiagnosticsRecorder(val phases: SyncPhaseDiagnostics = Sy
 
     fun recordAppliedRows(rows: Long) {
         finalAppliedRows = rows
+        span?.event("snapshot.committed", "confirmed", { mapOf("rows" to rows) }, "confirmed_committed")
     }
 
     fun recordCapacityResponse() {
@@ -116,7 +132,19 @@ internal class SnapshotDiagnosticsRecorder(val phases: SyncPhaseDiagnostics = Sy
         capacityWaitMillis += waitedMillis.coerceAtLeast(0L)
     }
 
-    fun finish(outcome: String) { phases.finish(outcome, finalAppliedRows, stagedBytes) }
+    fun finish(outcome: String) {
+        phases.finish(outcome, finalAppliedRows, stagedBytes)
+        span?.event("snapshot.resources", outcome, {
+            mapOf("sessions" to sessionCount, "fetched_chunks" to fetchedChunks,
+                "max_validated_chunk_rows" to maxValidatedChunkRows.toLong(),
+                "max_declared_chunk_bytes" to maxDeclaredChunkBytes,
+                "max_decoded_chunk_body_bytes" to maxCompletelyDecodedChunkBodyBytes,
+                "max_live_apply_page_rows" to maxLiveApplyPageRows.toLong(),
+                "max_live_apply_page_bytes" to maxLiveApplyPageStagedTextBytes,
+                "capacity_responses" to capacityResponses, "capacity_retries" to capacityRetries,
+                "capacity_wait_ms" to capacityWaitMillis)
+        }, "observed_high_water_and_totals")
+    }
 
     fun snapshot(): SnapshotRestoreDiagnostics = SnapshotRestoreDiagnostics(
         sessionCount = sessionCount,
@@ -129,7 +157,7 @@ internal class SnapshotDiagnosticsRecorder(val phases: SyncPhaseDiagnostics = Sy
         applyPages = applyPages,
         finalStagedRows = finalStagedRows,
         finalAppliedRows = finalAppliedRows,
-        restoreDurationMillis = started.elapsedNow().inWholeMilliseconds,
+        restoreDurationMillis = started?.elapsedNow()?.inWholeMilliseconds ?: 0,
         capacityResponses = capacityResponses,
         capacityRetries = capacityRetries,
         capacityWaitMillis = capacityWaitMillis,
@@ -146,9 +174,9 @@ internal class SnapshotDiagnosticsState {
     private var published = SnapshotRestoreDiagnostics()
     private var active: SnapshotDiagnosticsRecorder? = null
 
-    fun begin(): SnapshotDiagnosticsScope {
+    fun begin(span: dev.goquick.sqlitenow.core.SqliteNowDiagnosticSpan? = null): SnapshotDiagnosticsScope {
         active?.let { return SnapshotDiagnosticsScope(it, owner = false) }
-        val recorder = SnapshotDiagnosticsRecorder()
+        val recorder = SnapshotDiagnosticsRecorder(span = span)
         active = recorder
         return SnapshotDiagnosticsScope(recorder, owner = true)
     }

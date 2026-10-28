@@ -20,7 +20,7 @@ import dev.goquick.sqlitenow.core.SafeSQLiteConnection
 
 internal val oversqliteRetainedTables = oversqliteRetainedTableDdl.keys
 
-internal val oversqliteManagedIndexes = baselineIndexDdl.keys + pushIndexDdl.keys + setOf("_sync_apply_rows_pending_idx", "_sync_apply_rows_role_ordinal_idx")
+internal val oversqliteManagedIndexes = baselineIndexDdl.keys + pushIndexDdl.keys + applyIndexDdl.keys
 internal val oversqliteStaticTriggers = setOf(
     "_sync_conflict_revision_insert", "_sync_conflict_revision_update", "_sync_conflict_revision_delete",
  "_sync_baseline_revision_insert", "_sync_baseline_revision_update", "_sync_baseline_revision_delete",
@@ -81,8 +81,6 @@ internal suspend fun inspectRetainedRuntime(db: SafeSQLiteConnection): String {
             "malformed retained table $table; recreate this development database explicitly"
         }
     }
-    require(retainedSqlSignature(objects.single { it.name == "_sync_apply_rows_pending_idx" }.sql) ==
-        retainedSqlSignature(applyPendingIndexDdl)) { "malformed retained apply frontier index" }
     for (table in listOf("_sync_contract_identity", "_sync_apply_state", "_sync_conflict_state",
         "_sync_attachment_state", "_sync_operation_state", "_sync_outbox_bundle")) {
         val keys = db.queryList("SELECT singleton_key FROM $table") { it.getLong(0) }
@@ -92,7 +90,7 @@ internal suspend fun inspectRetainedRuntime(db: SafeSQLiteConnection): String {
         "malformed retained apply state"
     }
     require(objects.none { it.name=="idx_sync_dirty_rows_dirty_ordinal" }) { "superseded dirty index must be absent" }
-    for ((name, ddl) in baselineIndexDdl + pushIndexDdl + mapOf("_sync_apply_rows_role_ordinal_idx" to applyRoleIndexDdl)) {
+    for ((name, ddl) in baselineIndexDdl + pushIndexDdl + applyIndexDdl) {
         require(retainedSqlSignature(objects.single { it.name==name }.sql)==retainedSqlSignature(ddl)) { "malformed retained index $name" }
     }
     for ((name,ddl) in snapshotStageAccountingDdl) {
@@ -137,7 +135,7 @@ private fun requireExactReservedObjects(objects: List<RetainedObject>) {
         val expectedOwner = when (expectedType) {
             "table" -> name
             else -> when {
- name in setOf("_sync_apply_rows_pending_idx","_sync_apply_rows_role_ordinal_idx") -> "_sync_apply_rows"
+ name in applyIndexDdl -> "_sync_apply_rows"
  name in snapshotStageAccountingDdl -> "_sync_snapshot_stage"
  name=="_sync_provenance_context_immutable" -> "_sync_provenance_contexts"
  name=="_sync_outbox_rows_context_idx" -> "_sync_outbox_rows"

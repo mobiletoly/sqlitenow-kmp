@@ -277,6 +277,7 @@ internal class OversqliteRemoteApi(
     private val requestGzipEngine: OversqliteRequestGzipEngine = OversqliteRequestGzipEngine(::compressOversqliteRequestGzip),
     private val log: ((() -> String)) -> Unit,
     private val beforeRecoveryExchange: suspend () -> Unit = {},
+    private val diagnostics: dev.goquick.sqlitenow.core.SqliteNowDiagnostics? = null,
 ) {
     private val strictJson = Json(json) { ignoreUnknownKeys = false }
     private val recoveryControlJson=Json { explicitNulls=true;encodeDefaults=true }
@@ -352,7 +353,11 @@ internal class OversqliteRemoteApi(
     }
 
     private suspend fun prepareBoundedJsonBody(raw: String, decodedLimit: Long): OversqliteEncodedBody =
-        encodeOversqliteRequestBody(raw.encodeToByteArray(), decodedLimit, decodedLimit, requestGzipEngine)
+        syncDiagnosticWork("http.request_encoding") {
+            encodeOversqliteRequestBody(raw.encodeToByteArray(), decodedLimit, decodedLimit, requestGzipEngine).also { selected ->
+                syncDiagnosticEvent("http.request_bytes", counts = { mapOf("encoded_bytes" to selected.bytes.size.toLong()) })
+            }
+        }
 
     internal suspend fun prepareConnectBody(raw: String): OversqliteEncodedBody =
         prepareBoundedJsonBody(raw, snapshotControlBodyLimit)
@@ -398,6 +403,12 @@ internal class OversqliteRemoteApi(
         afterBundleSeq: Long,
         onEvent: suspend (BundleChangeEvent) -> Unit,
     ) {
+        val controller = diagnostics
+        if (controller == null) watchBundleChangesImpl(sourceId, afterBundleSeq, onEvent)
+        else controller.operation("sync.watch_request") { watchBundleChangesImpl(sourceId, afterBundleSeq, onEvent) }
+    }
+
+    private suspend fun watchBundleChangesImpl(sourceId: String, afterBundleSeq: Long, onEvent: suspend (BundleChangeEvent) -> Unit) {
         val normalizedAfterBundleSeq = afterBundleSeq.coerceAtLeast(0L)
         val path = "/sync/watch?after_bundle_seq=$normalizedAfterBundleSeq"
         log { "oversqlite http start op=bundle change watch method=GET path=$path" }
@@ -454,6 +465,7 @@ internal class OversqliteRemoteApi(
                             break
                         } ?: break
                         for (event in parser.accept(line)) {
+                            syncDiagnosticEvent("sync.watch_event", counts = { mapOf("bundle_sequence" to event.bundleSeq) })
                             onEvent(event)
                         }
                     }
@@ -896,7 +908,7 @@ internal class OversqliteRemoteApi(
                 requireUniqueSnapshotJsonObjectMembers(raw)
             }
             onSuccessRawBody?.invoke(raw)
-            (successDecoder?.invoke(raw) ?: json.decodeFromString<T>(raw)).also {
+            (syncDiagnosticAggregate("http.json_decode") { successDecoder?.invoke(raw) ?: json.decodeFromString<T>(raw) }).also {
                 onCompleteBody?.invoke(body.byteCount)
             }
         } catch (error: Throwable) {
@@ -917,11 +929,12 @@ internal class OversqliteRemoteApi(
         limit: Long,
         invalidUtf8: () -> Throwable,
     ): BoundedJsonBody {
-        val body = readDecodedBodyBounded(operation, response, limit)
+        val body = syncDiagnosticWork("http.response_body") { readDecodedBodyBounded(operation, response, limit) }
+        syncDiagnosticEvent("http.decoded_body", counts = { mapOf("decoded_bytes" to body.size.toLong()) })
         if (!body.isWellFormedUtf8()) {
             throw invalidUtf8()
         }
-        val raw = body.decodeToString()
+        val raw = syncDiagnosticWork("http.utf8_decode") { body.decodeToString() }
         response.call.attributes.getOrNull(pushBufferGrowthKey)?.grow?.let { growth ->
             val shape=compactResponseAllocationShape(raw)
             growth(body.size.toLong()*2+65536,shape)
@@ -967,6 +980,9 @@ internal class OversqliteRemoteApi(
                 }
             }
             channel.closedCause?.let { throw it }
+            syncDiagnosticEvent("http.received_body", counts = {
+                mapOf("received_bytes" to encoded.size.toLong(), "wire_bytes_available" to if (oversqliteFetchManagesResponseCompression) 0L else 1L)
+            })
             if (encoded.size.toLong() > limit) {
                 throw SnapshotResponseBodyTooLargeException(operation, limit)
             }
@@ -981,7 +997,7 @@ internal class OversqliteRemoteApi(
                         growth(encoded.size.toLong()+declared+65536,0)
                         decodedBound=minOf(limit,declared+1)
                     }
-                    decodeOversqliteSingleMemberGzip(encoded, decodedBound)
+                    syncDiagnosticWork("http.gzip_decode") { decodeOversqliteSingleMemberGzip(encoded, decodedBound) }
                 } catch (error: Throwable) {
                     if (error is CancellationException) throw error
                     if (error is SyncWorkspaceLimitException || error is SyncWorkLimitException) throw error
@@ -1224,7 +1240,7 @@ internal class OversqliteRemoteApi(
             ) { RemoteResponseDecodeException(operation) }.raw
             requireUniqueSnapshotJsonObjectMembers(raw)
             successValidator?.invoke(raw)
-            successDecoder?.invoke(raw) ?: json.decodeFromString<T>(raw)
+            syncDiagnosticAggregate("http.json_decode") { successDecoder?.invoke(raw) ?: json.decodeFromString<T>(raw) }
         } catch (error: Throwable) {
             if (error is Error) throw error
             if (error is SyncWorkspaceLimitException || error is SyncWorkLimitException) throw error
@@ -1248,10 +1264,17 @@ internal class OversqliteRemoteApi(
         crossinline consume: suspend (HttpResponse) -> T,
     ): T {
         log { "oversqlite http start op=$operation method=$method path=$path" }
-        return try {
+        return syncDiagnosticWork("http.request") {
+        val span = dev.goquick.sqlitenow.core.SqliteNowDiagnosticContext.current(kotlinx.coroutines.currentCoroutineContext())?.span
+        val began = span?.nowNanos()
+        span?.event(operation, "dispatch")
+        try {
             executeStreamingCall(
-                prepareCall = { prepareCall() },
+                prepareCall = { syncDiagnosticWork("http.request_prepare") { prepareCall() } },
                 consume = { response ->
+                    span?.event("http.response_headers", counts = {
+                        mapOf("status" to response.status.value.toLong(), "time_to_headers_ns" to (span.nowNanos() - (began ?: 0)))
+                    })
                     log {
                         "oversqlite http response op=$operation method=$method path=$path " +
                             "status=${response.status.value}"
@@ -1268,6 +1291,7 @@ internal class OversqliteRemoteApi(
                     "error=${error.logSummary()}"
             }
             throw error
+        }
         }
     }
 

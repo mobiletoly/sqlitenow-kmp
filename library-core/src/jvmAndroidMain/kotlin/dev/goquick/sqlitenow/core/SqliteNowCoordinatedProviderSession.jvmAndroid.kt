@@ -49,6 +49,7 @@ private suspend fun openReadOnlyInspectionConnection(
             activeClientIdentity = sqliteNowActiveClientIdentity(dbName, connection),
             persistenceController = NoopPersistenceController(),
             executionContextHook = config.executionContextHook,
+                diagnostics = config.diagnostics,
             executionContext = executionContext,
         )
     } catch (failure: Throwable) {

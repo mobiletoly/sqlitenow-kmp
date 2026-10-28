@@ -39,6 +39,24 @@ internal class OversqliteWorkspace(
     private val config: OversqliteConfig,
     private val abandonedReservations: Boolean = false,
 ) {
+    internal val connectionOwner get() = db
+    internal val configurationOwner get() = config
+    internal val permitsReadBase get() = !abandonedReservations
+
+    internal suspend fun readExternalApplyBase(unit: String, cache: StatementCache): WorkspaceCharge =
+        usageUncached(unit, apply = WorkspaceCharge(), statementCache = cache)
+
+    internal suspend fun withCurrentTransientCharges(unit: String, base: WorkspaceCharge): WorkspaceCharge = withTransientCharges(unit, base)
+
+    internal suspend fun readDurableBase(unit: String, cache: StatementCache): WorkspaceCharge =
+        usageUncached(unit, statementCache = cache)
+
+    internal suspend fun checkCapturedReadBase(unit: String, base: WorkspaceCharge, extra: WorkspaceCharge) {
+        val used = withTransientCharges(unit,base)
+        checkDimension(unit, "entries", config.maxSyncWorkspaceEntries, used.entries, extra.entries)
+        checkDimension(unit, "bytes", config.maxSyncWorkspaceBytes, used.bytes, extra.bytes)
+    }
+
     private data class Reservation(val token: String, val unit: String, val context: String, val entries: Long, val bytes: Long)
 
     @OptIn(kotlin.uuid.ExperimentalUuidApi::class)
@@ -242,9 +260,20 @@ internal class OversqliteWorkspace(
         db.withPreparedStatement(sql) { if (it.step()) read(it) else null }
 
     // One current scalar snapshot, at most one row per owner; never scan payload tables.
-    suspend fun usage(unit: String, apply: WorkspaceCharge? = null, push: WorkspaceCharge? = null, statementCache: StatementCache? = null): WorkspaceCharge {
+    suspend fun usage(unit: String, apply: WorkspaceCharge? = null, push: WorkspaceCharge? = null, statementCache: StatementCache? = null, read: SnapshotReadWorkspace? = null): WorkspaceCharge {
+        check(read == null || apply == null && push == null) { "read accounting cannot replace a mutable owner override" }
+        val base = read?.base(this,statementCache) ?: usageWithoutProvenanceMemo(unit, apply, push, statementCache)
+        return withTransientCharges(unit,base)
+    }
+
+    private suspend fun withTransientCharges(unit: String, base: WorkspaceCharge): WorkspaceCharge {
         val memo = currentCoroutineContext()[ProvenanceReadScope]?.takeIf { it.db === db }?.charge ?: WorkspaceCharge()
-        return add(unit, usageWithoutProvenanceMemo(unit, apply, push, statementCache), memo)
+        val preservation = currentCoroutineContext()[OversqliteWorkSlice]?.preservationMetadata
+            ?.takeIf { it.db === db }?.charge ?: WorkspaceCharge()
+        val rows = currentCoroutineContext()[OversqliteWorkSlice]?.snapshotRowLease?.extraCharge(db, unit) ?: WorkspaceCharge()
+        val plan = currentCoroutineContext()[OversqliteWorkSlice]?.snapshotPlanReader?.takeIf { it.connectionOwner === db }?.retainedCharge ?: WorkspaceCharge()
+        val accounting = currentCoroutineContext()[OversqliteWorkSlice]?.snapshotApplyAccounting?.takeIf { it.connectionOwner === db }?.retainedCharge ?: WorkspaceCharge()
+        return add(unit, add(unit, add(unit, add(unit, add(unit, base, memo), preservation), rows), plan), accounting)
     }
 
     private suspend fun usageWithoutProvenanceMemo(unit: String, apply: WorkspaceCharge?, push: WorkspaceCharge?, statementCache: StatementCache?): WorkspaceCharge {
@@ -269,7 +298,7 @@ internal class OversqliteWorkspace(
             length(CAST(a.preserve_schema AS BLOB))+length(CAST(a.preserve_table AS BLOB))+length(CAST(a.preserve_key AS BLOB))"""
         val pushColumns = if (push != null) "NULL,0,0,0" else """p.singleton_key,p.entries,p.bytes,
             length(CAST(p.unit AS BLOB))+length(CAST(p.guard AS BLOB))+length(CAST(p.state AS BLOB))"""
-        return db.withPreparedStatement("""SELECT ${if (abandonedReservations) "0,0" else "o.reserved_entries,o.reserved_bytes"},
+        return syncDiagnosticSql("workspace.usage") { db.withPreparedStatement("""SELECT ${if (abandonedReservations) "0,0" else "o.reserved_entries,o.reserved_bytes"},
             o.snapshot_stage_entries,o.snapshot_stage_bytes,
             ${if (abandonedReservations) "0" else "length(CAST(o.workspace_context AS BLOB))"}+length(CAST(o.kind AS BLOB))+
             length(CAST(o.target_user_id AS BLOB))+length(CAST(o.reason AS BLOB))+
@@ -304,19 +333,50 @@ internal class OversqliteWorkspace(
             }
             add(unit, add(unit,total,pushCharge),WorkspaceCharge(statement.getLong(15),statement.getLong(16)))
         }
+        }
     }
 
     suspend fun check(unit: String, extra: WorkspaceCharge = WorkspaceCharge(), apply: WorkspaceCharge? = null,
-        push: WorkspaceCharge? = null, statementCache: StatementCache? = null) {
+        push: WorkspaceCharge? = null, statementCache: StatementCache? = null, read: SnapshotReadWorkspace? = null) {
+        readAndCheck(unit,extra,apply,push,statementCache,read)
+    }
+
+    /** Fresh usage for one immediate read-only admission decision; never retained across callbacks or writes. */
+    internal suspend fun readAndCheck(unit: String, extra: WorkspaceCharge = WorkspaceCharge(), apply: WorkspaceCharge? = null,
+        push: WorkspaceCharge? = null, statementCache: StatementCache? = null, read: SnapshotReadWorkspace? = null,
+        accounting: SnapshotApplyAccounting? = null): WorkspaceCharge {
+        check(accounting == null || read == null && apply == null && push == null)
         try {
-            val used = usage(unit, apply, push, statementCache)
+            val used = accounting?.usage(this, statementCache) ?: usage(unit, apply, push, statementCache, read)
             checkDimension(unit, "entries", config.maxSyncWorkspaceEntries, used.entries, extra.entries)
             checkDimension(unit, "bytes", config.maxSyncWorkspaceBytes, used.bytes, extra.bytes)
+            return used
         } catch (capacity: SyncWorkspaceLimitException) {
+            if (capacity.suppressedExceptions.isEmpty() && accounting?.retire() == true) {
+                return readAndCheck(unit, extra, apply, push, statementCache, read, accounting)
+            }
+            if (capacity.suppressedExceptions.isEmpty() && read?.retire() == true) {
+                return readAndCheck(unit, extra, apply, push, statementCache, read)
+            }
+            if (capacity.suppressedExceptions.isEmpty() && currentCoroutineContext()[OversqliteWorkSlice]?.snapshotRowLease?.releaseOptionalTyped(db) == true) {
+                return readAndCheck(unit, extra, apply, push, statementCache, read, accounting)
+            }
             val snapshot = currentCoroutineContext()[PushPlanningWorkspaceSnapshot]?.takeIf { it.db === db }
             if (snapshot?.guard == null || capacity.suppressedExceptions.isNotEmpty()) throw capacity
             snapshot.guard = null
-            check(unit, extra, apply, push, statementCache)
+            return readAndCheck(unit, extra, apply, push, statementCache)
+        }
+    }
+
+    internal fun admitOptionalFromFreshRow(unit: String, used: WorkspaceCharge, required: WorkspaceCharge, optional: WorkspaceCharge): Boolean {
+        return try {
+            val requested=add(unit,required,optional)
+            checkDimension(unit,"entries",config.maxSyncWorkspaceEntries,used.entries,requested.entries)
+            checkDimension(unit,"bytes",config.maxSyncWorkspaceBytes,used.bytes,requested.bytes)
+            true
+        } catch (capacity: SyncWorkspaceLimitException) {
+            if(capacity.suppressedExceptions.isNotEmpty())throw capacity
+            false
         }
     }
 

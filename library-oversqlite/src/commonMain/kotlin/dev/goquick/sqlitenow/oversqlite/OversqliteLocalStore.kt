@@ -18,6 +18,7 @@ package dev.goquick.sqlitenow.oversqlite
 import androidx.sqlite.SQLiteStatement
 import androidx.sqlite.async.step
 import dev.goquick.sqlitenow.core.SafeSQLiteConnection
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
@@ -26,6 +27,9 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
+
+internal data class AuthoritativeRowProjection(val version: Long, val kind: String, val payload: String?,
+    val relationshipsKnown: Boolean, val revision: Long, val contextPresent: Boolean, val provenanceMatches: Boolean)
 
 internal class OversqliteLocalStore(
     private val db: SafeSQLiteConnection,
@@ -90,21 +94,46 @@ internal class OversqliteLocalStore(
         }
     }
 
+    internal suspend fun validateStoredServerProjection(schema: String, table: String, key: String,
+        loaded: AuthoritativeRowProjection, retainPayload: Boolean, cache: StatementCache?): SnapshotTypedValues? {
+        check(loaded.contextPresent) { "missing authoritative provenance context" }
+        return validateBaselineProjectionImpl(schema, table, key, "server", null, cache, loaded, retainPayload)
+    }
+
     // Check only the bounded projection owned by this affected key, never business rows.
     suspend fun validateBaselineProjection(schema: String,table: String,key: String,view: String,desired: String?, statementCache: StatementCache? = null) {
+        validateBaselineProjectionImpl(schema, table, key, view, desired, statementCache, null, false)
+    }
+
+    private suspend fun validateBaselineProjectionImpl(schema: String,table: String,key: String,view: String,desired: String?,
+        statementCache: StatementCache?, loaded: AuthoritativeRowProjection?, retainPayload: Boolean): SnapshotTypedValues? {
         val info=configuredTableInfo(table)
         var payload=desired
         var revision=if (view == "desired") db.scalarLong("SELECT dirty_revision FROM _sync_conflict_state WHERE singleton_key=1") else 0L
-        if(view=="server") db.withPreparedStatement("SELECT server_kind,server_payload,relationships_known,server_revision FROM _sync_row_state WHERE schema_name=? AND table_name=? AND key_json=?", statementCache) { st ->
-            st.bindText(1,schema);st.bindText(2,table);st.bindText(3,key)
-            check(st.step()) { "authoritative baseline missing" }
-            check(st.getLong(2)==1L && st.getText(0)!="unknown") { "authoritative relationship evidence unavailable" }
-            payload=if(st.isNull(1)) null else st.getText(1);revision=st.getLong(3)
+        if (view == "server" && loaded != null) {
+            check(loaded.relationshipsKnown && loaded.kind != "unknown") { "authoritative relationship evidence unavailable" }
+            payload = loaded.payload; revision = loaded.revision
+        } else {
+            if(view=="server") db.withPreparedStatement("SELECT server_kind,server_payload,relationships_known,server_revision FROM _sync_row_state WHERE schema_name=? AND table_name=? AND key_json=?", statementCache) { st ->
+                st.bindText(1,schema);st.bindText(2,table);st.bindText(3,key)
+                check(st.step()) { "authoritative baseline missing" }
+                check(st.getLong(2)==1L && st.getText(0)!="unknown") { "authoritative relationship evidence unavailable" }
+                payload=if(st.isNull(1)) null else st.getText(1);revision=st.getLong(3)
+            }
         }
+        var retained: SnapshotTypedValues? = null
+        try {
         val expected=linkedMapOf<String,List<String>>()
         payload?.let { text ->
-            processPayloadForUpload(table,text)
-            val fields=json.parseToJsonElement(text) as JsonObject
+            snapshotRowWork("row_processing.authoritative_decode")
+            val fields = parseStoredPayload(table, text)
+            val values = if (retainPayload) mutableListOf<TypedValue>() else null
+            val span = dev.goquick.sqlitenow.core.SqliteNowDiagnosticContext.current(currentCoroutineContext())?.span
+            for (column in info.columns) {
+                val value = decodeSnapshotScalar(span) { OversqliteValueCodec.decodePayloadValue(column, fields.getValue(column.name), PayloadSource.LOCAL_STATE) }
+                values?.add(value)
+            }
+            if (values != null) retained = SnapshotTypedValues(db, info, PayloadSource.LOCAL_STATE, values, fields, span)
             for(fk in info.foreignKeys) {
                 val captured=fields.getValue(fk.fromCol.lowercase()) as JsonObject
                 if(captured.getValue("storage").jsonPrimitive.content!="null") {
@@ -122,11 +151,16 @@ internal class OversqliteLocalStore(
             st.getText(0) to listOf(st.getText(1),st.getText(2),st.getText(3))
         }
         val actual = (if (statementCache == null) db.queryList(sql, bind, read)
-        else db.withPreparedStatement(sql, statementCache) { st ->
+        else syncDiagnosticSql("snapshot.relationship_projection") { db.withPreparedStatement(sql, statementCache) { st ->
             bind(st)
             buildList { while (st.step()) add(read(st)) }
-        }).toMap()
+        } }).toMap()
         check(actual==expected) { "relationship projection differs from $view owner" }
+        return retained
+        } catch (failure: Throwable) {
+            retained?.close()
+            throw failure
+        }
     }
 
     suspend fun decodeDirtyKeyForPush(
@@ -188,6 +222,7 @@ internal class OversqliteLocalStore(
         tableName: String,
         key: SyncKey,
         payload: JsonObject,
+        decodedValues: MutableList<TypedValue>? = null,
     ): JsonObject {
         val tableInfo = snapshotSemantic(SnapshotSemanticFailure.INVALID_PAYLOAD_SHAPE) {
             configuredTableInfo(tableName)
@@ -207,14 +242,17 @@ internal class OversqliteLocalStore(
         }
 
         var payloadKeyValue: TypedValue? = null
+        val diagnosticSpan = dev.goquick.sqlitenow.core.SqliteNowDiagnosticContext.current(currentCoroutineContext())?.span
         for (column in tableInfo.columns) {
-            val decoded = snapshotSemantic(SnapshotSemanticFailure.INVALID_PAYLOAD_VALUE) {
+            val decoded = decodeSnapshotScalar(diagnosticSpan) { snapshotSemantic(SnapshotSemanticFailure.INVALID_PAYLOAD_VALUE) {
                 OversqliteValueCodec.decodePayloadValue(
                     column = column,
                     value = normalized.getValue(column.name.lowercase()),
                     payloadSource = PayloadSource.AUTHORITATIVE_WIRE,
                 )
             }
+            }
+            decodedValues?.add(decoded)
             if (column.name.equals(keyColumn, ignoreCase = true)) payloadKeyValue = decoded
         }
 
@@ -234,14 +272,37 @@ internal class OversqliteLocalStore(
     }
 
     // Convert validated wire values directly; business triggers cannot alter this evidence.
-    suspend fun captureAuthoritativePayload(tableName: String, payload: JsonObject, statementCache: StatementCache? = null): String {
+    suspend fun captureAuthoritativePayload(tableName: String, payload: JsonObject, statementCache: StatementCache? = null, typedValues: SnapshotTypedValues? = null): String {
+        snapshotRowWork("row_processing.expected_projection_text")
+        return readAuthoritativeProjection(tableName, payload, statementCache, typedValues, false) { _, st -> st.getText(0) }
+    }
+
+    /** Caller admits both typed holders before this allocation; statement cleanup precedes ownership transfer. */
+    suspend fun captureAuthoritativeTypedProjection(tableName: String, payload: JsonObject, statementCache: StatementCache?, typedValues: SnapshotTypedValues?): SnapshotTypedValues {
+        val values = readAuthoritativeProjection(tableName, payload, statementCache, typedValues, true) { info, st ->
+            SnapshotTypedValues.readProjection(info, st)
+        }
+        return SnapshotTypedValues(db, configuredTableInfo(tableName), PayloadSource.LOCAL_STATE, values, null,
+            dev.goquick.sqlitenow.core.SqliteNowDiagnosticContext.current(currentCoroutineContext())?.span)
+    }
+
+    private suspend fun <T> readAuthoritativeProjection(tableName: String, payload: JsonObject, cache: StatementCache?, typedValues: SnapshotTypedValues?, typed: Boolean,
+        read: (TableInfo, SQLiteStatement) -> T): T {
         val config = validatedConfig()
         val info = configuredTableInfo(config, tableName)
-        val normalized = normalizePayloadColumns(payload,info,tableName)
-        require(normalized.keys==info.columns.map { it.name.lowercase() }.toSet()) { "authoritative payload column set mismatch" }
-        return db.withPreparedStatement(config.replaySql.table(tableName.trim().lowercase()).authoritativeSelect,statementCache) { st ->
-            info.columns.forEachIndexed { index,column -> OversqliteValueCodec.bindPayloadValue(st,index+1,column,normalized.getValue(column.name.lowercase()),PayloadSource.AUTHORITATIVE_WIRE) }
-            check(st.step()); st.getText(0)
+        val normalized = normalizePayloadColumns(payload, info, tableName)
+        typedValues?.requireOwner(db, info, payload, PayloadSource.AUTHORITATIVE_WIRE)
+        require(normalized.keys == info.columnNamesLowerSet) { "authoritative payload column set mismatch" }
+        val sql = config.replaySql.table(tableName.trim().lowercase())
+        return syncDiagnosticSql(if (typed) "snapshot.expected_typed_projection" else "row.authoritative_capture") {
+            db.withPreparedStatement(if (typed) sql.authoritativeTypedSelect else sql.authoritativeSelect, cache) { st ->
+                if (typedValues != null) typedValues.bind(st)
+                else info.columns.forEachIndexed { index, column ->
+                    OversqliteValueCodec.bindPayloadValue(st, index + 1, column, normalized.getValue(column.name.lowercase()), PayloadSource.AUTHORITATIVE_WIRE)
+                }
+                check(st.step())
+                read(info, st)
+            }
         }
     }
 
@@ -266,18 +327,14 @@ internal class OversqliteLocalStore(
         }
     }
 
-    suspend fun processPayloadForUpload(
-        tableName: String,
-        payloadText: String,
-    ): JsonElement {
-        val currentPayload = payloadText
-        requireUniqueSnapshotJsonObjectMembers(currentPayload)
-        val payload = json.parseToJsonElement(currentPayload) as? JsonObject
-            ?: error("dirty payload for $tableName must be a JSON object")
-        val tableInfo = configuredTableInfo(tableName)
-        require(payload.keys == tableInfo.columns.map { it.name }.toSet()) { "dirty payload column set mismatch for $tableName" }
+    suspend fun processPayloadForUpload(tableName: String, payloadText: String): JsonElement = payloadForUpload(tableName, payloadText).second
 
-        return buildJsonObject {
+    private suspend fun payloadForUpload(tableName: String, payloadText: String): Pair<JsonObject, JsonObject> {
+        snapshotRowWork("row_processing.authoritative_decode")
+        val payload = parseStoredPayload(tableName, payloadText)
+        val tableInfo = configuredTableInfo(tableName)
+
+        val wire = buildJsonObject {
             for (column in tableInfo.columns) {
                 val key = column.name
                 val value = payload[key]
@@ -285,6 +342,15 @@ internal class OversqliteLocalStore(
                 put(key, OversqliteValueCodec.encodeWirePayloadValue(column, value))
             }
         }
+        return payload to wire
+    }
+
+    private fun parseStoredPayload(tableName: String, payloadText: String): JsonObject {
+        requireUniqueSnapshotJsonObjectMembers(payloadText)
+        val payload = json.parseToJsonElement(payloadText) as? JsonObject
+            ?: error("dirty payload for $tableName must be a JSON object")
+        require(payload.keys == configuredTableInfo(tableName).columnNameSet) { "dirty payload column set mismatch for $tableName" }
+        return payload
     }
 
     suspend fun upsertRow(
@@ -294,18 +360,20 @@ internal class OversqliteLocalStore(
         statementCache: StatementCache? = null,
         skipUniqueReplay: Boolean = false,
         preservedRowId: Long? = null,
+        typedValues: SnapshotTypedValues? = null,
     ) {
         val config = validatedConfig()
         val tableInfo = configuredTableInfo(config, tableName)
         val pkColumn = config.pkByTable[tableName]
             ?: error("table $tableName is not configured for sync")
+        typedValues?.requireOwner(db, tableInfo, payload, payloadSource)
         val normalized = normalizePayloadColumns(payload, tableInfo, tableName)
         val values = tableInfo.columns.map { column ->
             normalized[column.name.lowercase()] ?: error("payload for $tableName is missing column ${column.name}")
         }
         if(!skipUniqueReplay) {
             val rawKey=values[tableInfo.columns.indexOfFirst{it.name.equals(pkColumn,true)}]
-            val typed=OversqliteValueCodec.decodePayloadValue(checkNotNull(tableInfo.primaryKey),rawKey,payloadSource)
+            val typed=typedValues?.value(pkColumn) ?: OversqliteValueCodec.decodePayloadValue(checkNotNull(tableInfo.primaryKey),rawKey,payloadSource)
             val key=when(typed){is TypedValue.Text->typed.value;is TypedValue.Blob->typed.bytes.joinToString(""){it.toUByte().toString(16).padStart(2,'0')};else->error("invalid sync key")}
             if(uniqueReplay?.invoke(tableName,key,statementCache)==true)return
         }
@@ -319,7 +387,8 @@ internal class OversqliteLocalStore(
         }
 
         db.withPreparedStatement(sql = sql, statementCache = statementCache) { st ->
-            tableInfo.columns.forEachIndexed { index, column ->
+            if (typedValues != null) typedValues.bind(st)
+            else tableInfo.columns.forEachIndexed { index, column ->
                 bindPayloadValue(st, index + 1, column, values[index], payloadSource)
             }
             preservedRowId?.let { st.bindLong(tableInfo.columns.size + 1, it) }
@@ -439,7 +508,7 @@ private fun exactWireKeyValue(
     return entry.value
 }
 
-private fun typedValuesEqual(left: TypedValue, right: TypedValue): Boolean = when {
+internal fun typedValuesEqual(left: TypedValue, right: TypedValue): Boolean = when {
     left is TypedValue.Blob && right is TypedValue.Blob -> left.bytes.contentEquals(right.bytes)
     else -> left == right
 }

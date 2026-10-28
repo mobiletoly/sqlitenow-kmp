@@ -15,6 +15,10 @@ internal class OversqliteWorkSlice : AbstractCoroutineContextElement(Key) {
     companion object Key : CoroutineContext.Key<OversqliteWorkSlice>
     var checkpointed = false
     var durable = false
+    var preservationMetadata: SnapshotPreservationMetadata? = null
+    var snapshotRowLease: SnapshotRowLease? = null
+    var snapshotApplyAccounting: SnapshotApplyAccounting? = null
+    var snapshotPlanReader: OversqliteApplySurvivors.PlannedRows? = null
 }
 
 internal class PushPlanningWorkspaceSnapshot(val db: SafeSQLiteConnection) : AbstractCoroutineContextElement(Key) {

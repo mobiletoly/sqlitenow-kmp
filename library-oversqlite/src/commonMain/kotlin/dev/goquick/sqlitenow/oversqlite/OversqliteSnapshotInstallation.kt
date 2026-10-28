@@ -84,15 +84,20 @@ internal class OversqliteSnapshotInstallation(
         }
         if(count.first!=session.rowCount)throw SnapshotSemanticException(SnapshotSemanticFailure.INVALID_CHUNK)
         survivors.reserveSnapshotWork(unit, snapshotWorkAdd(snapshotWorkScale(count.first, 256), snapshotWorkScale(count.second, 2)))
+        SnapshotReadWorkspace.use(workspace,unit,cache) { read -> verifyRows(state,session,source,cache,unit,read) }
+    }
+
+    private suspend fun verifyRows(state: RuntimeState, session: SnapshotSession, source: String, cache: StatementCache, unit: String, read: SnapshotReadWorkspace?) {
         val generation = state.admittedContract.generation
-        val hash = SnapshotHashWriter(source, generation, session.snapshotId, session.snapshotBundleSeq, session.recovery)
+        val hash = SnapshotHashWriter(source, generation, session.snapshotId, session.snapshotBundleSeq, session.recovery,
+            dev.goquick.sqlitenow.core.SqliteNowDiagnosticContext.current(currentCoroutineContext())?.span)
         for (ordinal in 1..session.rowCount) {
             currentCoroutineContext().ensureActive()
-            val size = db.withPreparedStatement("SELECT charge,length(CAST(schema_name AS BLOB))+length(CAST(table_name AS BLOB))+length(CAST(key_json AS BLOB))+length(CAST(payload AS BLOB)) FROM _sync_snapshot_stage WHERE snapshot_id=? AND row_ordinal=?", cache) { st ->
+            val size = syncDiagnosticSql("snapshot.hash_stage_charge") { db.withPreparedStatement("SELECT charge,length(CAST(schema_name AS BLOB))+length(CAST(table_name AS BLOB))+length(CAST(key_json AS BLOB))+length(CAST(payload AS BLOB)) FROM _sync_snapshot_stage WHERE snapshot_id=? AND row_ordinal=?", cache) { st ->
                 st.bindText(1, session.snapshotId); st.bindLong(2, ordinal); if(!st.step())throw SnapshotSemanticException(SnapshotSemanticFailure.INVALID_CHUNK);if(st.getLong(1)>st.getLong(0))throw SnapshotSemanticException(SnapshotSemanticFailure.INVALID_CHUNK); st.getLong(0)
-            }
-            workspace.check(unit, WorkspaceCharge(16, 4096 + workspace.scale(unit, size, 16)), statementCache = cache)
-            db.withPreparedStatement("SELECT schema_name,table_name,key_json,row_version,payload FROM _sync_snapshot_stage WHERE snapshot_id=? AND row_ordinal=?", cache) { st ->
+            } }
+            workspace.check(unit, WorkspaceCharge(16, 4096 + workspace.scale(unit, size, 16)), statementCache = cache, read = read)
+            syncDiagnosticSql("snapshot.hash_stage_payload") { db.withPreparedStatement("SELECT schema_name,table_name,key_json,row_version,payload FROM _sync_snapshot_stage WHERE snapshot_id=? AND row_ordinal=?", cache) { st ->
                 st.bindText(1, session.snapshotId); st.bindLong(2, ordinal); check(st.step())
                 try {
                     val schema = st.getText(0); val table = st.getText(1); val key = st.getText(2)
@@ -104,7 +109,7 @@ internal class OversqliteSnapshotInstallation(
                 } catch(error:CancellationException){throw error}
                   catch(error:IllegalArgumentException){throw SnapshotSemanticException(SnapshotSemanticFailure.INVALID_ROW)}
                   catch(error:IllegalStateException){throw SnapshotSemanticException(SnapshotSemanticFailure.INVALID_ROW)}
-            }
+            } }
         }
         val actual=try{hash.finish(session.rowCount,session.logicalByteCount)}catch(error:IllegalArgumentException){throw SnapshotSemanticException(SnapshotSemanticFailure.INVALID_CHUNK)}catch(error:IllegalStateException){throw SnapshotSemanticException(SnapshotSemanticFailure.INVALID_CHUNK)}
         if(actual!=session.snapshotHash)throw SnapshotSemanticException(SnapshotSemanticFailure.INVALID_CHUNK)

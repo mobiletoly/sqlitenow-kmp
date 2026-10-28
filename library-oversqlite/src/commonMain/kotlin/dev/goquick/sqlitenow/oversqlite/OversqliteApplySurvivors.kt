@@ -61,6 +61,12 @@ internal const val applyRoleIndexDdl = "CREATE INDEX IF NOT EXISTS _sync_apply_r
 
 internal const val applyPendingIndexDdl =
     "CREATE INDEX IF NOT EXISTS _sync_apply_rows_pending_idx ON _sync_apply_rows(pending,ordinal)"
+internal val applyIndexDdl = mapOf(
+    "_sync_apply_rows_pending_idx" to applyPendingIndexDdl,
+    "_sync_apply_rows_role_ordinal_idx" to applyRoleIndexDdl,
+    "_sync_apply_rows_uninstalled_ordinal_idx" to "CREATE INDEX IF NOT EXISTS _sync_apply_rows_uninstalled_ordinal_idx ON _sync_apply_rows(ordinal) WHERE pending<>3",
+    "_sync_apply_rows_unscheduled_ordinal_idx" to "CREATE INDEX IF NOT EXISTS _sync_apply_rows_unscheduled_ordinal_idx ON _sync_apply_rows(ordinal) WHERE pending<>5",
+)
 
 internal data class ApplySurvivor(
     val table: String, val pk: String, val payload: String?, val wire: Boolean = false,
@@ -69,7 +75,13 @@ internal data class ApplySurvivor(
     val rowId: Long? = null,
 )
 
-private data class ApplyPlan(
+private data class ApplyRowHeader(val bytes: Long, val hasPayload: Boolean, val wire: Boolean,
+    val role: String, val sourceOrdinal: Long?, val rowId: Long?)
+
+private const val applyPlanColumns = "unit,guard,phase,root_cursor,visit_cursor,table_cursor,fk_cursor,row_cursor,entries,bytes,edge_entries,edge_bytes,operation_kind,preserve_schema,preserve_table,preserve_key,atomic_work,preservation_complete,source_snapshot_id"
+private val qualifiedApplyPlanColumns = applyPlanColumns.split(',').joinToString(",") { "p.$it" }
+
+internal data class ApplyPlan(
     var unit: String, var guard: String, var phase: String = "roots",
     var root: Long = 0, var visit: Long = 0, var table: Long = 0, var fk: Long = 0,
     var cursor: String? = null, var entries: Long = 0, var bytes: Long = 0,
@@ -151,10 +163,10 @@ internal class OversqliteApplySurvivors(
         }
     }
 
-    suspend fun prepare(state: RuntimeState, unit: String, roots: Int, operationKind: String = "pull", inputSequence: Long? = null, workspaceStatementCache: StatementCache? = null, replayStatementCache: StatementCache? = null, sourceSnapshotId: String = "", discoverDependents: Boolean = true, seed: suspend (Int) -> ApplySurvivor) {
+    suspend fun prepare(state: RuntimeState, unit: String, roots: Int, operationKind: String = "pull", inputSequence: Long? = null, workspaceStatementCache: StatementCache? = null, replayStatementCache: StatementCache? = null, sourceSnapshotId: String = "", discoverDependents: Boolean = true, readOnlySnapshotSeed: Boolean = false, seed: suspend (Int) -> ApplySurvivor) {
         try {
             require(discoverDependents || operationKind == "settlement") { "only unchanged push acknowledgements may omit dependency discovery" }
-            preparePlan(state, unit, roots, operationKind, inputSequence, workspaceStatementCache, replayStatementCache, sourceSnapshotId, discoverDependents, seed)
+            preparePlan(state, unit, roots, operationKind, inputSequence, workspaceStatementCache, replayStatementCache, sourceSnapshotId, discoverDependents, readOnlySnapshotSeed, seed)
         } catch (limit: SyncWorkLimitException) {
             throw ApplyProgressPending(limit)
         }
@@ -180,7 +192,7 @@ internal class OversqliteApplySurvivors(
         return "$guard:$main:$temporary"
     }
 
-    private suspend fun preparePlan(state: RuntimeState, unit: String, roots: Int, operationKind: String, inputSequence: Long?, workspaceStatementCache: StatementCache?, replayStatementCache: StatementCache?, sourceSnapshotId: String, discoverDependents: Boolean, seed: suspend (Int) -> ApplySurvivor) {
+    private suspend fun preparePlan(state: RuntimeState, unit: String, roots: Int, operationKind: String, inputSequence: Long?, workspaceStatementCache: StatementCache?, replayStatementCache: StatementCache?, sourceSnapshotId: String, discoverDependents: Boolean, readOnlySnapshotSeed: Boolean, seed: suspend (Int) -> ApplySurvivor) {
         val hasUnique = operationKind == "snapshot" || hasUniqueIndexes(state, replayStatementCache)
         replayStatementCache?.uniqueRequired=hasUnique
         val guard = finalStateGuard(state, unit, hasUnique, replayStatementCache)
@@ -191,6 +203,16 @@ internal class OversqliteApplySurvivors(
             plan.kind = operationKind; plan.sourceSnapshotId = sourceSnapshotId
         }
         save(plan, replayStatementCache = replayStatementCache)
+        val planningWorkspace = OversqliteWorkspace(db, config)
+        val accountingCounters = dev.goquick.sqlitenow.core.SqliteNowDiagnosticContext.current(currentCoroutineContext())?.span?.let { SnapshotApplyAccounting.Counters(it) }
+        var accountingEligible: Boolean? = null
+        var accounting: SnapshotApplyAccounting? = null
+        suspend fun startAccounting() {
+            if (operationKind != "snapshot" || accounting != null || workspaceStatementCache == null || workspaceStatementCache !== replayStatementCache) return
+            val eligible = accountingEligible ?: SnapshotApplyAccounting.eligible(planningWorkspace, workspaceStatementCache).also { accountingEligible = it }
+            if (eligible) accounting = SnapshotApplyAccounting.create(planningWorkspace, unit, workspaceStatementCache, plan, accountingCounters) { applyCharge(plan) }
+        }
+        fun endAccounting() { accounting?.close(); accounting = null }
         var indexSnapshot: IndexAccountingSnapshot? = null
         var indexSnapshotAttempted = false
         suspend fun checkIndexSpace(entries: Long, bytes: Long) {
@@ -226,23 +248,32 @@ internal class OversqliteApplySurvivors(
             while (plan.phase != "ready" && plan.phase != "installed") {
                 operations.reserveSyncWork(unit, 16)
                 val phaseBefore = plan.phase
+                if (plan.phase == "walk" || plan.phase == "unique" || plan.phase == "unique_schedule") startAccounting()
                 when (plan.phase) {
                     "clear" -> clearStep(plan, replayStatementCache = replayStatementCache)
                     "roots" -> if (plan.root == roots.toLong()) {
                         plan.phase = if (!discoverDependents) (if(hasUnique) "unique" else "ready") else "index"; plan.fk = -1; if(plan.phase=="unique"){plan.root=0;plan.fk=0}
                     } else {
-                        put(plan, seed(plan.root.toInt()), workspaceStatementCache, replayStatementCache = replayStatementCache); plan.root++
+                        endAccounting()
+                        val row = seed(plan.root.toInt())
+                        // Only the library-owned snapshot provider promises read-only root queries.
+                        // Arbitrary callbacks can change schema/trigger eligibility as well as accounting.
+                        if (!readOnlySnapshotSeed) accountingEligible = null
+                        startAccounting()
+                        put(plan, row, workspaceStatementCache, replayStatementCache = replayStatementCache, accounting = accounting); plan.root++
                     }
                     "index" -> indexStep(state, plan, ::checkIndexSpace, replayStatementCache = replayStatementCache)
-                    "walk" -> walk(state, plan, workspaceStatementCache, replayStatementCache = replayStatementCache)
-                    "unique" -> uniqueStep(state,plan,workspaceStatementCache,replayStatementCache)
+                    "walk" -> walk(state, plan, workspaceStatementCache, replayStatementCache = replayStatementCache, accounting = accounting)
+                    "unique" -> uniqueStep(state,plan,workspaceStatementCache,replayStatementCache,accounting)
                     "unique_schedule" -> uniqueScheduleStep(plan,replayStatementCache)
                     else -> error("invalid survivor plan phase")
                 }
+                if (phaseBefore != plan.phase) endAccounting()
+                if (phaseBefore != plan.phase) syncDiagnosticEvent("snapshot.plan_transition", plan.phase)
                 if (phaseBefore == "index" && plan.phase == "index") checkIndexSpace(0, 0)
                 else {
                     indexSnapshot = null
-                    checkSpace(plan, workspaceStatementCache = workspaceStatementCache)
+                    checkSpace(plan, workspaceStatementCache = workspaceStatementCache, accounting = accounting)
                 }
                 // Root callbacks reload the retained plan. Publish ready state and the
                 // last completed private step before the next work reservation refuses.
@@ -253,19 +284,29 @@ internal class OversqliteApplySurvivors(
                 checkpointWorkStep()
             }
         } finally {
+            endAccounting()
+            accountingCounters?.emit()
             indexSnapshot = null
         }
         if (operationKind == "settlement" || operationKind == "conflict") prepareSettlementIntent(state, plan, workspaceStatementCache, replayStatementCache = replayStatementCache)
         val lifecycle = OversqliteApplyLifecycle(db, config, local, this, json,
             if (operationKind == "snapshot") replayStatementCache else null)
-        operations.reserveSyncWork(unit, lifecycle.atomicWork(state, plan.kind, unit, plan.entries, atomicApplyWork(plan, roots.toLong())), readyAtomic = true)
-        // Preflight simultaneous intended/live copies before business mutation.
-        for (ordinal in 1..plan.entries) {
-            val (row, bytes) = loadRow(state, plan, ordinal, workspaceStatementCache, replayStatementCache = replayStatementCache)
-            capture(state, plan, row.table, row.pk, heldEntries = 6, heldBytes = 6 * bytes, workspaceStatementCache = workspaceStatementCache, replayStatementCache = replayStatementCache)
+        syncDiagnosticWork(if (operationKind == "snapshot") "snapshot.preflight_admission" else "apply.preflight_admission") {
+            operations.reserveSyncWork(unit, lifecycle.atomicWork(state, plan.kind, unit, plan.entries, atomicApplyWork(plan, roots.toLong())), readyAtomic = true)
+            if (operationKind == "snapshot" && hasUnique) reserveUniquePreflight(plan)
         }
-        lifecycle.validateDependencies(state, plan.kind, plan.guard, plan.entries, inputSequence)
-        if(hasUnique)preflightUnique(state,plan,workspaceStatementCache,replayStatementCache)
+        // Preflight simultaneous intended/live copies before business mutation.
+        syncDiagnosticWork(if (operationKind == "snapshot") "snapshot.capture_preflight" else "apply.capture_preflight") {
+        for (ordinal in 1..plan.entries) {
+            withRowLease(state, plan, ordinal, workspaceStatementCache, replayStatementCache) { lease ->
+                capture(state, plan, lease.row.table, lease.row.pk, heldEntries = 6, heldBytes = 6 * lease.charge, workspaceStatementCache = workspaceStatementCache, replayStatementCache = replayStatementCache)
+            }
+        }
+        }
+        syncDiagnosticWork(if (operationKind == "snapshot") "snapshot.dependency_validation" else "apply.dependency_validation") {
+            lifecycle.validateDependencies(state, plan.kind, plan.guard, plan.entries, inputSequence)
+        }
+        if(hasUnique)preflightUnique(state,plan,workspaceStatementCache,replayStatementCache, operationKind == "snapshot")
     }
 
     internal suspend fun reserveSnapshotWork(unit: String, work: Long) = operations.reserveSyncWork(unit, work, readyAtomic = true)
@@ -320,22 +361,96 @@ internal class OversqliteApplySurvivors(
         replayStatementCache: StatementCache? = null): Pair<ApplySurvivor, Long> =
         loadRow(state, checkNotNull(load(replayStatementCache)), ordinal, workspaceStatementCache, replayStatementCache)
 
-    private suspend fun loadRow(state: RuntimeState, plan: ApplyPlan, ordinal: Long, workspaceStatementCache: StatementCache?, replayStatementCache: StatementCache?): Pair<ApplySurvivor, Long> {
+    internal suspend fun <T> withPlannedRow(state: RuntimeState, ordinal: Long, cache: StatementCache?, read: SnapshotReadWorkspace? = null, block: suspend (SnapshotRowLease) -> T): T {
+        snapshotRowWork("row_processing.plan_read")
+        return withRowLease(state, checkNotNull(load(cache)), ordinal, cache, cache, read, block = block)
+    }
+
+    /** A lexical reader retains only the plan; every row and stage payload stays fresh. */
+    internal inner class PlannedRows internal constructor(
+        private val state: RuntimeState,
+        private val cache: StatementCache?,
+        private val read: SnapshotReadWorkspace?,
+        private val slice: OversqliteWorkSlice?,
+        private var plan: ApplyPlan?,
+        var retainedCharge: WorkspaceCharge,
+    ) {
+        val connectionOwner get() = db
+        private var closed = false
+        suspend fun <T> withRow(ordinal: Long, block: suspend (SnapshotRowLease) -> T): T {
+            check(!closed && (slice == null || currentCoroutineContext()[OversqliteWorkSlice] === slice)) { "plan reader belongs to another region" }
+            val held = plan
+            if (held != null) snapshotRowWork("snapshot.plan_metadata_reuse")
+            try {
+                return withRowLease(state, held ?: checkNotNull(load(cache)), ordinal, cache, cache, read, block = block)
+            } catch (capacity: SyncWorkspaceLimitException) {
+                // withRowLease has unwound its row/statement owners before dropping plan retention.
+                if (capacity.suppressedExceptions.isNotEmpty() || held == null) throw capacity
+                retire()
+                snapshotRowWork("snapshot.plan_metadata_fallback")
+                return withRow(ordinal, block)
+            }
+        }
+        private fun retire() {
+            plan = null; retainedCharge = WorkspaceCharge()
+        }
+        fun close() {
+            plan = null; retainedCharge = WorkspaceCharge(); closed = true
+            if (slice?.snapshotPlanReader === this) slice.snapshotPlanReader = null
+        }
+    }
+
+    internal suspend fun <T> withPlannedRows(state: RuntimeState, cache: StatementCache?, read: SnapshotReadWorkspace? = null,
+        block: suspend (PlannedRows) -> T): T {
+        val slice = currentCoroutineContext()[OversqliteWorkSlice]
+        check(slice?.snapshotPlanReader == null) { "plan reader already belongs to the writer" }
+        var held: ApplyPlan? = null
+        var charge = WorkspaceCharge()
+        if (slice != null && cache != null && db.inTransaction()) {
+            cache.requireOpenForReservationBinding()
+            val bytes = checkNotNull(one("SELECT 1024+6*(length(CAST(unit AS BLOB))+length(CAST(guard AS BLOB))+length(CAST(source_snapshot_id AS BLOB))+length(CAST(COALESCE(row_cursor,'') AS BLOB))+length(CAST(preserve_schema AS BLOB))+length(CAST(preserve_table AS BLOB))+length(CAST(preserve_key AS BLOB))) FROM _sync_apply_plan WHERE singleton_key=1", replayStatementCache = cache) { it.getLong(0) })
+            val proposed = WorkspaceCharge(8, bytes)
+            val admitted = try { OversqliteWorkspace(db, config).check(ReplayFixedUnits.apply, proposed, statementCache = cache, read = read); true }
+                catch (capacity: SyncWorkspaceLimitException) { if (capacity.suppressedExceptions.isNotEmpty()) throw capacity; false }
+            if (admitted) { held = checkNotNull(load(cache)); charge = proposed }
+            else snapshotRowWork("snapshot.plan_metadata_fallback")
+        }
+        val reader = PlannedRows(state, cache, read, slice, held, charge)
+        if (slice != null) slice.snapshotPlanReader = reader
+        try { return block(reader) } finally { reader.close() }
+    }
+
+    private suspend fun loadRow(state: RuntimeState, plan: ApplyPlan, ordinal: Long, workspaceStatementCache: StatementCache?, replayStatementCache: StatementCache?): Pair<ApplySurvivor, Long> =
+        withRowLease(state, plan, ordinal, workspaceStatementCache, replayStatementCache) { it.legacyRow() to it.charge }
+
+    private suspend fun <T> withRowLease(state: RuntimeState, plan: ApplyPlan, ordinal: Long, workspaceStatementCache: StatementCache?, replayStatementCache: StatementCache?, read: SnapshotReadWorkspace? = null, accounting: SnapshotApplyAccounting? = null, block: suspend (SnapshotRowLease) -> T): T {
         currentCoroutineContext().ensureActive()
-        val bytes = checkNotNull(one("SELECT bytes FROM _sync_apply_rows WHERE ordinal=?", ordinal, replayStatementCache = replayStatementCache) { it.getLong(0) })
-        checkSpace(plan, 6, 6 * bytes, workspaceStatementCache)
-        val row = checkNotNull(one("SELECT table_name,local_pk,payload,wire,role,source_ordinal,saved_rowid FROM _sync_apply_rows WHERE ordinal=?", ordinal, replayStatementCache = replayStatementCache) {
-            ApplySurvivor(it.getText(0), it.getText(1), it.nullText(2), it.getLong(3) != 0L,
-                it.getText(4), if (it.isNull(5)) null else it.getLong(5), if (it.isNull(6)) null else it.getLong(6))
+        snapshotRowWork("snapshot.row_metadata_read")
+        val header = checkNotNull(one("SELECT bytes,payload IS NOT NULL,wire,role,source_ordinal,saved_rowid FROM _sync_apply_rows WHERE ordinal=?", ordinal, replayStatementCache = replayStatementCache) {
+            ApplyRowHeader(it.getLong(0), it.getLong(1) != 0L, it.getLong(2) != 0L, it.getText(3),
+                if (it.isNull(4)) null else it.getLong(4), if (it.isNull(5)) null else it.getLong(5))
         })
+        val bytes = header.bytes
+        suspend fun admit(size: Long) {
+            if (read != null) OversqliteWorkspace(db, config).check(plan.unit, WorkspaceCharge(6, 6 * size), statementCache = workspaceStatementCache, read = read)
+            else checkSpace(plan, 6, 6 * size, workspaceStatementCache, accounting)
+        }
+        admit(bytes)
+        val row = checkNotNull(one(if (header.role == "snapshot_ref")
+            "SELECT table_name,local_pk,NULL FROM _sync_apply_rows WHERE ordinal=?" else
+            "SELECT table_name,local_pk,payload FROM _sync_apply_rows WHERE ordinal=?", ordinal, replayStatementCache = replayStatementCache) {
+            ApplySurvivor(it.getText(0), it.getText(1), it.nullText(2), header.wire, header.role, header.sourceOrdinal, header.rowId)
+        })
+        check(header.hasPayload == (row.payload != null)) { "retained payload presence changed" }
         if (row.role == "snapshot_ref") {
             check(plan.sourceSnapshotId.isNotEmpty()) { "snapshot source is not bound to the plan" }
-            val (_, staged, charge) = snapshotLifecycle.readSnapshot(state, plan.sourceSnapshotId, checkNotNull(row.stageOrdinal), plan.unit, replayStatementCache)
-            check(staged.table == row.table && staged.pk == row.pk) { "snapshot reference identity differs from stage" }
-            checkSpace(plan, 6, 6 * charge, workspaceStatementCache)
-            return staged.copy(rowId = row.rowId) to charge
+            return snapshotLifecycle.withSnapshotRow(state, plan.sourceSnapshotId, checkNotNull(row.stageOrdinal), plan.unit, replayStatementCache, row.rowId, read, accounting) { lease ->
+                check(lease.row.table == row.table && lease.row.pk == row.pk) { "snapshot reference identity differs from stage" }
+                admit(lease.charge)
+                block(lease)
+            }
         }
-        return row to bytes
+        return SnapshotRowLease.use(db, row, 0, bytes, plan.unit, replayStatementCache, OversqliteWorkspace(db, config), json, null, read = read, block = block)
     }
 
     suspend fun restore(state: RuntimeState, cache: StatementCache, verifyOnly: Boolean = false, workspaceStatementCache: StatementCache? = null, replayStatementCache: StatementCache? = null): Set<String> {
@@ -343,24 +458,18 @@ internal class OversqliteApplySurvivors(
         val changed = linkedSetOf<String>()
         for (ordinal in 1..plan.entries) {
             currentCoroutineContext().ensureActive()
-            val (row, bytes) = loadRow(state, plan, ordinal, workspaceStatementCache, replayStatementCache = replayStatementCache)
-            val live = capture(state, plan, row.table, row.pk, heldEntries = 6, heldBytes = 6 * bytes, workspaceStatementCache = workspaceStatementCache, replayStatementCache = replayStatementCache)
-            val matches = when {
-                row.payload == null -> live.payload == null
-                live.payload == null -> false
-                else -> OversqliteValueCodec.equivalentPayloadTexts(
-                    state.validated.tableInfoByName.getValue(row.table), row.payload, live.payload,
-                    if (row.wire) PayloadSource.AUTHORITATIVE_WIRE else PayloadSource.LOCAL_STATE,
-                    PayloadSource.LOCAL_STATE, json,
-                )
+            withRowLease(state, plan, ordinal, workspaceStatementCache, replayStatementCache) { lease ->
+                val row = lease.row
+                val live = capture(state, plan, row.table, row.pk, heldEntries = 6, heldBytes = 6 * lease.charge, workspaceStatementCache = workspaceStatementCache, replayStatementCache = replayStatementCache)
+                val matches = lease.matches(state.validated.tableInfoByName.getValue(row.table), live.payload)
+                val identityMatches = !lease.hasPayload || row.rowId == null || local.captureRowId(row.table, row.pk, replayStatementCache) == row.rowId
+                if (!matches || !identityMatches) {
+                    check(!verifyOnly) { "survivor final state mismatch in ${row.table}" }
+                    if (!lease.hasPayload) local.deleteLocalRow(state, row.table, row.pk, cache)
+                    else lease.upsert(local, cache)
+                    changed += row.table
+                }
             }
-            val identityMatches = row.payload == null || row.rowId == null || local.captureRowId(row.table, row.pk, replayStatementCache) == row.rowId
-            if (matches && identityMatches) continue
-            check(!verifyOnly) { "survivor final state mismatch in ${row.table}" }
-            if (row.payload == null) local.deleteLocalRow(state, row.table, row.pk, cache)
-            else local.upsertRow(row.table, json.parseToJsonElement(row.payload) as JsonObject,
-                if (row.wire) PayloadSource.AUTHORITATIVE_WIRE else PayloadSource.LOCAL_STATE, cache, preservedRowId = row.rowId)
-            changed += row.table
         }
         return changed
     }
@@ -420,7 +529,7 @@ internal class OversqliteApplySurvivors(
         if (inserted != 0L) { p.edgeEntries++; p.edgeBytes += size }
     }
 
-    private suspend fun walk(state: RuntimeState, p: ApplyPlan, workspaceStatementCache: StatementCache?, replayStatementCache: StatementCache?) {
+    private suspend fun walk(state: RuntimeState, p: ApplyPlan, workspaceStatementCache: StatementCache?, replayStatementCache: StatementCache?, accounting: SnapshotApplyAccounting? = null) {
         if (p.visit == 0L) {
             p.visit = one("SELECT ordinal FROM _sync_apply_rows WHERE pending=1 ORDER BY ordinal LIMIT 1", replayStatementCache = replayStatementCache) { it.getLong(0) }
                 ?: run {
@@ -462,19 +571,19 @@ internal class OversqliteApplySurvivors(
         tail += " ORDER BY child_pk LIMIT 1"
         val size = one("SELECT length(CAST(child_pk AS BLOB))$tail", *args.toTypedArray(), replayStatementCache = replayStatementCache) { it.getLong(0) }
         if (size == null) { p.table++; p.cursor = null; return }
-        checkSpace(p, 3, 18 * size + 128, workspaceStatementCache)
+        checkSpace(p, 3, 18 * size + 128, workspaceStatementCache, accounting)
         val key = checkNotNull(one("SELECT child_pk$tail", *args.toTypedArray(), replayStatementCache = replayStatementCache) { it.getText(0) })
-        if (!contains(table, key, replayStatementCache = replayStatementCache)) put(p, capture(state, p, table, key, workspaceStatementCache = workspaceStatementCache, replayStatementCache = replayStatementCache), workspaceStatementCache, replayStatementCache = replayStatementCache)
+        if (!contains(table, key, replayStatementCache = replayStatementCache)) put(p, capture(state, p, table, key, workspaceStatementCache = workspaceStatementCache, replayStatementCache = replayStatementCache, accounting = accounting), workspaceStatementCache, replayStatementCache = replayStatementCache, accounting = accounting)
         p.cursor = key
     }
 
     private suspend fun capture(
         state: RuntimeState, p: ApplyPlan, table: String, pk: String,
-        heldEntries: Long = 0, heldBytes: Long = 0, workspaceStatementCache: StatementCache? = null, replayStatementCache: StatementCache? = null): ApplySurvivor {
+        heldEntries: Long = 0, heldBytes: Long = 0, workspaceStatementCache: StatementCache? = null, replayStatementCache: StatementCache? = null, accounting: SnapshotApplyAccounting? = null): ApplySurvivor {
         val sql = state.validated.replaySql.table(table).captureSize
         val size = one(sql,
             physicalKey(state, table, pk), replayStatementCache = replayStatementCache) { it.getLong(0) } ?: return ApplySurvivor(table, pk, null)
-        checkSpace(p, heldEntries + 6, heldBytes + 6 * (size + 6 * utf8Size(table) + 6 * utf8Size(pk) + 64), workspaceStatementCache)
+        checkSpace(p, heldEntries + 6, heldBytes + 6 * (size + 6 * utf8Size(table) + 6 * utf8Size(pk) + 64), workspaceStatementCache, accounting)
         val payload=local.serializeExistingRow(table, pk, replayStatementCache)
         operations.a3Stats.serializedBytes+=utf8Size(payload.orEmpty())
         operations.a3Stats.peakPrimaryCopies=maxOf(operations.a3Stats.peakPrimaryCopies,heldEntries+6)
@@ -482,12 +591,12 @@ internal class OversqliteApplySurvivors(
         return ApplySurvivor(table, pk, payload)
     }
 
-    private suspend fun put(p: ApplyPlan, row: ApplySurvivor, workspaceStatementCache: StatementCache?, replayStatementCache: StatementCache?) {
+    private suspend fun put(p: ApplyPlan, row: ApplySurvivor, workspaceStatementCache: StatementCache?, replayStatementCache: StatementCache?, accounting: SnapshotApplyAccounting? = null) {
         val pending = one("SELECT pending FROM _sync_apply_rows WHERE table_name=? AND local_pk=?", row.table, row.pk, replayStatementCache = replayStatementCache) { it.getLong(0) }
         if (pending != null) return
         val retainedPayload = if (row.stageOrdinal == null) row.payload else null
         val size = utf8Size(retainedPayload.orEmpty()) + 6 * utf8Size(row.table) + 6 * utf8Size(row.pk) + 96
-        checkSpace(p, 7, 6 * size, workspaceStatementCache)
+        checkSpace(p, 7, 6 * size, workspaceStatementCache, accounting)
         // Snapshot deltas preserve physical identity; ordinary settlement keeps
         // its established whole-row restoration semantics.
         val rowId = if (p.kind == "snapshot") local.captureRowId(row.table, row.pk, replayStatementCache) else null
@@ -511,8 +620,29 @@ internal class OversqliteApplySurvivors(
         }
     }
 
-    private suspend fun checkSpace(p: ApplyPlan, entries: Long = 0, bytes: Long = 0, workspaceStatementCache: StatementCache? = null) {
-        checkSpaceWithPush(p, pushWorkspace(workspaceStatementCache), entries, bytes)
+    private suspend fun checkSpace(p: ApplyPlan, entries: Long = 0, bytes: Long = 0, workspaceStatementCache: StatementCache? = null, accounting: SnapshotApplyAccounting? = null) {
+        suspend fun external(): Pair<Long, Long> {
+            if (accounting == null) return pushWorkspace(workspaceStatementCache)
+            val used = accounting.usage(OversqliteWorkspace(db, config), workspaceStatementCache, p)
+            val own = applyCharge(p)
+            return used.entries - own.entries to used.bytes - own.bytes
+        }
+        try { checkSpaceWithPush(p, external(), entries, bytes) }
+        catch (capacity: SyncWorkspaceLimitException) {
+            if (capacity.suppressedExceptions.isEmpty() && accounting?.retire() == true) {
+                return checkSpace(p, entries, bytes, workspaceStatementCache, accounting)
+            }
+            if (capacity.suppressedExceptions.isNotEmpty() || currentCoroutineContext()[OversqliteWorkSlice]?.snapshotRowLease?.releaseOptionalTyped(db) != true) throw capacity
+            checkSpaceWithPush(p, external(), entries, bytes)
+        }
+    }
+
+    private fun applyCharge(p: ApplyPlan): WorkspaceCharge {
+        val ws = OversqliteWorkspace(db, config)
+        val identities = ws.add(p.unit, WorkspaceCharge(bytes = utf8Size(p.unit) + utf8Size(p.guard) + utf8Size(p.sourceSnapshotId)),
+            WorkspaceCharge(bytes = utf8Size(p.cursor.orEmpty()) + utf8Size(p.preserveSchema) + utf8Size(p.preserveTable) + utf8Size(p.preserveKey)))
+        return ws.add(p.unit, ws.add(p.unit, WorkspaceCharge(p.entries, p.bytes), WorkspaceCharge(p.edgeEntries, p.edgeBytes)),
+            WorkspaceCharge(1, ws.add(p.unit, WorkspaceCharge(bytes = 512), WorkspaceCharge(bytes = ws.scale(p.unit, identities.bytes, 6))).bytes))
     }
 
     private suspend fun pushWorkspace(workspaceStatementCache: StatementCache? = null): Pair<Long, Long> =
@@ -531,9 +661,12 @@ internal class OversqliteApplySurvivors(
         check("bytes", config.maxSyncWorkspaceBytes, add(add(add(p.bytes,p.edgeBytes,"bytes"),512+6*(utf8Size(p.unit)+utf8Size(p.guard)+utf8Size(p.sourceSnapshotId)+utf8Size(p.cursor.orEmpty())+utf8Size(p.preserveSchema)+utf8Size(p.preserveTable)+utf8Size(p.preserveKey)),"bytes"),push.second,"bytes"), bytes)
     }
 
-    private suspend fun load(replayStatementCache: StatementCache? = null): ApplyPlan? = one("SELECT unit,guard,phase,root_cursor,visit_cursor,table_cursor,fk_cursor,row_cursor,entries,bytes,edge_entries,edge_bytes,operation_kind,preserve_schema,preserve_table,preserve_key,atomic_work,preservation_complete,source_snapshot_id FROM _sync_apply_plan WHERE singleton_key=1", replayStatementCache = replayStatementCache) {
-        ApplyPlan(it.getText(0),it.getText(1),it.getText(2),it.getLong(3),it.getLong(4),it.getLong(5),it.getLong(6),it.nullText(7),it.getLong(8),it.getLong(9),it.getLong(10),it.getLong(11),it.getText(12),it.getText(13),it.getText(14),it.getText(15),it.getLong(16),it.getLong(17)!=0L,it.getText(18))
+    private suspend fun load(replayStatementCache: StatementCache? = null): ApplyPlan? {
+        snapshotRowWork("snapshot.plan_metadata_load")
+        return one("SELECT $applyPlanColumns FROM _sync_apply_plan WHERE singleton_key=1", replayStatementCache = replayStatementCache) { readPlan(it, 0) }
     }
+
+    private fun readPlan(st: SQLiteStatement, offset: Int): ApplyPlan = ApplyPlan(st.getText(offset), st.getText(offset+1), st.getText(offset+2), st.getLong(offset+3), st.getLong(offset+4), st.getLong(offset+5), st.getLong(offset+6), st.nullText(offset+7), st.getLong(offset+8), st.getLong(offset+9), st.getLong(offset+10), st.getLong(offset+11), st.getText(offset+12), st.getText(offset+13), st.getText(offset+14), st.getText(offset+15), st.getLong(offset+16), st.getLong(offset+17)!=0L, st.getText(offset+18))
 
     private suspend fun save(p: ApplyPlan, replayStatementCache: StatementCache?) {
         currentCoroutineContext().ensureActive()
@@ -663,6 +796,7 @@ internal class OversqliteApplySurvivors(
         p: ApplyPlan,
         workspace: StatementCache?,
         cache: StatementCache?,
+        accounting: SnapshotApplyAccounting? = null,
     ) {
         if ((p.kind == "settlement" || p.kind == "conflict") && !p.preservationComplete)
             prepareSettlementIntent(state, p, workspace, cache)
@@ -671,90 +805,94 @@ internal class OversqliteApplySurvivors(
             p.visit = 0
             return
         }
-        val (row, _) = loadRow(state, p, p.root + 1, workspace, cache)
-        if (row.payload == null) {
-            p.root++
-            p.fk = 0
-            p.cursor = null
-            return
-        }
-        val index = nextUniqueIndex(state, p, row, workspace, cache)
-        if (index == null) {
-            p.root++
-            p.fk = 0
-            p.cursor = null
-            return
-        }
-        val values = uniqueValues(state, row, index)
-        if (values != null && p.fk == 0L) {
-            val holder = uniqueHolder(state, row, index, values, cache)
-            if (holder != null) {
-                val ordinal =
-                    one(
-                        "SELECT ordinal FROM _sync_apply_rows WHERE table_name=? AND local_pk=?",
-                        row.table,
-                        holder,
-                        replayStatementCache = cache,
-                    ) {
-                        it.getLong(0)
+        withRowLease(state, p, p.root + 1, workspace, cache, accounting = accounting) { lease ->
+            val row = lease.row
+            if (!lease.hasPayload) {
+                p.root++
+                p.fk = 0
+                p.cursor = null
+                return@withRowLease
+            }
+            val index = nextUniqueIndex(state, p, row, workspace, cache, accounting)
+            if (index == null) {
+                p.root++
+                p.fk = 0
+                p.cursor = null
+                return@withRowLease
+            }
+            val values = uniqueValues(state, lease, index)
+            if (values != null && p.fk == 0L) {
+                val holder = uniqueHolder(state, row, index, values, cache)
+                if (holder != null) {
+                    val ordinal =
+                        one(
+                            "SELECT ordinal FROM _sync_apply_rows WHERE table_name=? AND local_pk=?",
+                            row.table,
+                            holder,
+                            replayStatementCache = cache,
+                        ) {
+                            it.getLong(0)
+                        }
+                            ?: throw uniqueBlocked(
+                                p,
+                                row,
+                                "conflicting_desired_state",
+                                index.name,
+                                other = holder,
+                            )
+                    val equal = withRowLease(state, p, ordinal, workspace, cache, accounting = accounting) { other ->
+                        uniqueEqual(index, values, uniqueValues(state, other, index), cache)
                     }
-                        ?: throw uniqueBlocked(
+                    if (equal)
+                        throw uniqueBlocked(
                             p,
                             row,
                             "conflicting_desired_state",
                             index.name,
                             other = holder,
                         )
-                val (other, _) = loadRow(state, p, ordinal, workspace, cache)
-                if (uniqueEqual(index, values, uniqueValues(state, other, index), cache))
-                    throw uniqueBlocked(
-                        p,
-                        row,
-                        "conflicting_desired_state",
-                        index.name,
-                        other = holder,
-                    )
-                val size = 64 + 12 * utf8Size(row.table) + 6 * (utf8Size(row.pk) + utf8Size(holder))
-                checkSpace(p, 1, size, workspace)
-                val exists =
-                    one(
-                        "SELECT 1 FROM _sync_apply_edges WHERE edge_kind='u' AND parent_table=? AND parent_pk=? AND child_table=? AND child_pk=?",
-                        row.table,
-                        row.pk,
-                        row.table,
-                        holder,
-                        replayStatementCache = cache,
-                    ) {
-                        true
-                    } == true
-                if (!exists) {
-                    exec(
-                        "INSERT INTO _sync_apply_edges(ordinal,parent_table,parent_pk,child_table,child_pk,bytes,edge_kind) VALUES(?,?,?,?,?,?,'u')",
-                        p.edgeEntries + 1,
-                        row.table,
-                        row.pk,
-                        row.table,
-                        holder,
-                        size,
-                        replayStatementCache = cache,
-                    )
-                    p.edgeEntries++
-                    p.edgeBytes += size
+                    val size = 64 + 12 * utf8Size(row.table) + 6 * (utf8Size(row.pk) + utf8Size(holder))
+                    checkSpace(p, 1, size, workspace, accounting)
+                    val exists =
+                        one(
+                            "SELECT 1 FROM _sync_apply_edges WHERE edge_kind='u' AND parent_table=? AND parent_pk=? AND child_table=? AND child_pk=?",
+                            row.table,
+                            row.pk,
+                            row.table,
+                            holder,
+                            replayStatementCache = cache,
+                        ) {
+                            true
+                        } == true
+                    if (!exists) {
+                        exec(
+                            "INSERT INTO _sync_apply_edges(ordinal,parent_table,parent_pk,child_table,child_pk,bytes,edge_kind) VALUES(?,?,?,?,?,?,'u')",
+                            p.edgeEntries + 1,
+                            row.table,
+                            row.pk,
+                            row.table,
+                            holder,
+                            size,
+                            replayStatementCache = cache,
+                        )
+                        p.edgeEntries++
+                        p.edgeBytes += size
+                    }
                 }
             }
+            if (
+                values != null &&
+                    !checkPriorUniqueDesired(state, p, lease, index, values, workspace, cache, accounting)
+            )
+                return@withRowLease
+            p.cursor = index.name
+            p.fk = 0
         }
-        if (
-            values != null &&
-                !checkPriorUniqueDesired(state, p, row, index, values, workspace, cache)
-        )
-            return
-        p.cursor = index.name
-        p.fk = 0
     }
 
     // Retire the acyclic prefix in durable staging before admitting SCC work.
     private suspend fun uniqueScheduleStep(p: ApplyPlan, cache: StatementCache?) {
-        var sql = "SELECT r.ordinal FROM _sync_apply_rows r WHERE pending<>5"
+        var sql = "SELECT r.ordinal FROM _sync_apply_rows r INDEXED BY _sync_apply_rows_unscheduled_ordinal_idx WHERE pending<>5"
         sql +=
                 " AND NOT EXISTS(SELECT 1 FROM _sync_apply_edges e JOIN _sync_apply_rows h ON h.table_name=e.child_table AND h.local_pk=e.child_pk WHERE e.edge_kind='u' AND e.parent_table=r.table_name AND e.parent_pk=r.local_pk AND h.pending<>5)"
         val ordinal =
@@ -763,7 +901,7 @@ internal class OversqliteApplySurvivors(
             p.visit =
                 checkNotNull(
                     one(
-                        "SELECT count(*) FROM _sync_apply_rows WHERE pending<>5",
+                        "SELECT count(*) FROM _sync_apply_rows INDEXED BY _sync_apply_rows_unscheduled_ordinal_idx WHERE pending<>5",
                         replayStatementCache = cache,
                     ) {
                         it.getLong(0)
@@ -785,12 +923,14 @@ internal class OversqliteApplySurvivors(
     private suspend fun checkPriorUniqueDesired(
         state: RuntimeState,
         p: ApplyPlan,
-        row: ApplySurvivor,
+        lease: SnapshotRowLease,
         index: ApplyUniqueIndex,
         values: List<Any?>,
         workspace: StatementCache?,
         cache: StatementCache?,
+        accounting: SnapshotApplyAccounting? = null,
     ): Boolean {
+        val row = lease.row
         val ordinal =
             one(
                 "SELECT ordinal FROM _sync_apply_rows WHERE table_name=? AND ordinal>? AND ordinal<? AND (payload IS NOT NULL OR role='snapshot_ref') ORDER BY ordinal LIMIT 1",
@@ -811,10 +951,11 @@ internal class OversqliteApplySurvivors(
                     it.getLong(0)
                 }
             )
-        checkSpace(p, 16, 12 * (size + utf8Size(row.payload.orEmpty()) + 4096), workspace)
-        val (other, _) = loadRow(state, p, ordinal, workspace, cache)
-        if (uniqueEqual(index, values, uniqueValues(state, other, index), cache))
-            throw uniqueBlocked(p, row, "conflicting_desired_state", index.name, other = other.pk)
+        checkSpace(p, 16, 12 * (size + lease.encodedPayloadSize() + 4096), workspace, accounting)
+        withRowLease(state, p, ordinal, workspace, cache, accounting = accounting) { other ->
+            if (uniqueEqual(index, values, uniqueValues(state, other, index), cache))
+                throw uniqueBlocked(p, row, "conflicting_desired_state", index.name, other = other.row.pk)
+        }
         p.fk = ordinal
         return false
     }
@@ -825,6 +966,7 @@ internal class OversqliteApplySurvivors(
         row: ApplySurvivor,
         workspace: StatementCache?,
         cache: StatementCache?,
+        accounting: SnapshotApplyAccounting? = null,
     ): ApplyUniqueIndex? {
         val entry =
             one(
@@ -835,10 +977,10 @@ internal class OversqliteApplySurvivors(
             ) {
                 it.getText(0) to it.getLong(1)
             } ?: return null
-        checkSpace(p, 16, 4096 + 12 * utf8Size(entry.first), workspace)
+        checkSpace(p, 16, 4096 + 12 * utf8Size(entry.first), workspace, accounting)
         if (entry.second != 0L) throw uniqueBlocked(p, row, "unsupported_uniqueness", entry.first)
         val info = state.validated.tableInfoByName.getValue(row.table)
-        checkSpace(p, 8L * info.columns.size, 1024L * info.columns.size, workspace)
+        checkSpace(p, 8L * info.columns.size, 1024L * info.columns.size, workspace, accounting)
         val columns = mutableListOf<Pair<String, String>>()
         db.withPreparedStatement(
             "SELECT name,coll,cid FROM pragma_index_xinfo(?) WHERE \"key\"=1 ORDER BY seqno",
@@ -854,31 +996,18 @@ internal class OversqliteApplySurvivors(
         return ApplyUniqueIndex(entry.first, columns)
     }
 
-    private fun uniqueValues(
-        state: RuntimeState,
-        row: ApplySurvivor,
-        index: ApplyUniqueIndex,
-    ): List<Any?>? {
-        val text = row.payload ?: return null
-        val payload = json.parseToJsonElement(text) as JsonObject
-        val info = state.validated.tableInfoByName.getValue(row.table)
+    private suspend fun uniqueValues(state: RuntimeState, lease: SnapshotRowLease, index: ApplyUniqueIndex): List<Any?>? {
+        if (!lease.hasPayload) return null
+        val info = state.validated.tableInfoByName.getValue(lease.row.table)
         val result = mutableListOf<Any?>()
         for ((name, _) in index.columns) {
-            val column = info.columns.first { it.name.equals(name, true) }
-            val value =
-                OversqliteValueCodec.decodePayloadValue(
-                    column,
-                    payload.getValue(name.lowercase()),
-                    if (row.wire) PayloadSource.AUTHORITATIVE_WIRE else PayloadSource.LOCAL_STATE,
-                )
-            result +=
-                when (value) {
-                    TypedValue.Null -> return null
-                    is TypedValue.Text -> value.value
-                    is TypedValue.Integer -> value.canonicalText.toLong()
-                    is TypedValue.Real -> value.canonicalText.toDouble()
-                    is TypedValue.Blob -> value.bytes
-                }
+            result += when (val value = lease.value(info, name)) {
+                TypedValue.Null -> return null
+                is TypedValue.Text -> value.value
+                is TypedValue.Integer -> value.canonicalText.toLong()
+                is TypedValue.Real -> value.canonicalText.toDouble()
+                is TypedValue.Blob -> value.bytes
+            }
         }
         return result
     }
@@ -934,6 +1063,7 @@ internal class OversqliteApplySurvivors(
         p: ApplyPlan,
         workspace: StatementCache?,
         cache: StatementCache?,
+        workReserved: Boolean,
     ) {
         val edges =
             one(
@@ -950,6 +1080,11 @@ internal class OversqliteApplySurvivors(
             4096 + OversqliteWorkspace(db, config).scale(p.unit, pairs, 128),
             workspace,
         )
+        if (!workReserved) reserveUniquePreflight(p)
+    }
+
+    private suspend fun reserveUniquePreflight(p: ApplyPlan) {
+        val pairs = p.entries + OversqliteWorkspace(db, config).scale(p.unit, p.visit, p.visit)
         operations.reserveSyncWork(p.unit, 8 * pairs + 256 * p.entries, readyAtomic = true)
     }
 
@@ -973,7 +1108,7 @@ internal class OversqliteApplySurvivors(
         var steps = 0L
         while (
             one(
-                "SELECT EXISTS(SELECT 1 FROM _sync_apply_rows WHERE pending<>3)",
+                "SELECT EXISTS(SELECT 1 FROM _sync_apply_rows INDEXED BY _sync_apply_rows_uninstalled_ordinal_idx WHERE pending<>3)",
                 replayStatementCache = cache,
             ) {
                 it.getLong(0) != 0L
@@ -990,23 +1125,12 @@ internal class OversqliteApplySurvivors(
                         "unique apply planner made no progress"
                     }
             }
-            val (row, bytes) = loadRow(state, p, ordinal, cache, cache)
-            val live = capture(state, p, row.table, row.pk, 6, 6 * bytes, cache, cache)
-            val same =
-                OversqliteValueCodec.equivalentPayloadTexts(
-                    state.validated.tableInfoByName.getValue(row.table),
-                    row.payload,
-                    live.payload,
-                    if (row.wire) PayloadSource.AUTHORITATIVE_WIRE else PayloadSource.LOCAL_STATE,
-                    PayloadSource.LOCAL_STATE,
-                    json,
-                )
-            if (!same) restoreUniqueRow(state, row, cache)
-            exec(
-                "UPDATE _sync_apply_rows SET pending=3 WHERE ordinal=?",
-                ordinal,
-                replayStatementCache = cache,
-            )
+            withRowLease(state, p, ordinal, cache, cache) { lease ->
+                val row = lease.row
+                val live = capture(state, p, row.table, row.pk, 6, 6 * lease.charge, cache, cache)
+                if (!lease.matches(state.validated.tableInfoByName.getValue(row.table), live.payload)) restoreUniqueLeasedRow(state, lease, cache)
+                exec("UPDATE _sync_apply_rows SET pending=3 WHERE ordinal=?", ordinal, replayStatementCache = cache)
+            }
         }
         restore(
             state,
@@ -1023,7 +1147,7 @@ internal class OversqliteApplySurvivors(
     }
 
     private suspend fun nextUniqueReady(snapshot: Boolean, cache: StatementCache): Long? {
-        var sql = "SELECT r.ordinal FROM _sync_apply_rows r WHERE pending<>3"
+        var sql = "SELECT r.ordinal FROM _sync_apply_rows r INDEXED BY _sync_apply_rows_uninstalled_ordinal_idx WHERE pending<>3"
         if (!snapshot)
             sql +=
                 " AND NOT EXISTS(SELECT 1 FROM _sync_apply_edges e JOIN _sync_apply_rows h ON h.table_name=e.child_table AND h.local_pk=e.child_pk WHERE e.edge_kind='u' AND e.parent_table=r.table_name AND e.parent_pk=r.local_pk AND h.pending<>3)"
@@ -1061,8 +1185,9 @@ internal class OversqliteApplySurvivors(
                 } != true
             )
                 continue
-            val (row, _) = loadRow(state, p, ordinal, cache, cache)
-            validateUniqueVacate(state, p, row, cache)
+            withRowLease(state, p, ordinal, cache, cache) { lease ->
+                validateUniqueVacate(state, p, if (p.kind == "snapshot") lease.row else lease.legacyRow(), cache)
+            }
         }
         for (ordinal in 1..p.entries) {
             if (
@@ -1075,8 +1200,9 @@ internal class OversqliteApplySurvivors(
                 } != true
             )
                 continue
-            val (row, _) = loadRow(state, p, ordinal, cache, cache)
-            local.deleteLocalRow(state, row.table, row.pk, cache)
+            withRowLease(state, p, ordinal, cache, cache) { lease ->
+                local.deleteLocalRow(state, lease.row.table, lease.row.pk, cache)
+            }
         }
         exec(
             "DELETE FROM _sync_apply_edges WHERE edge_kind='u' AND EXISTS(SELECT 1 FROM _sync_apply_rows r WHERE r.pending=4 AND r.table_name=child_table AND r.local_pk=child_pk)",
@@ -1149,6 +1275,12 @@ internal class OversqliteApplySurvivors(
             throw uniqueBlocked(p, row, "unsafe_trigger_or_dependency", trigger = trigger)
     }
 
+    private suspend fun restoreUniqueLeasedRow(state: RuntimeState, lease: SnapshotRowLease, cache: StatementCache?) {
+        val row = lease.row
+        if (!lease.hasPayload) local.deleteLocalRow(state, row.table, row.pk, cache, skipUniqueReplay = true)
+        else lease.upsert(local, cache, skipUniqueReplay = true)
+    }
+
     private suspend fun restoreUniqueRow(
         state: RuntimeState,
         row: ApplySurvivor,
@@ -1173,30 +1305,15 @@ internal class OversqliteApplySurvivors(
         cache: StatementCache?,
     ): Boolean {
         if (cache?.uniqueInstalled != true) return false
-        val ordinal =
-            one(
-                "SELECT r.ordinal FROM _sync_apply_rows r JOIN _sync_apply_plan p ON p.singleton_key=1 AND p.phase='installed' WHERE r.table_name=? AND r.local_pk=?",
-                table,
-                pk,
-                replayStatementCache = cache,
-            ) {
-                it.getLong(0)
-            } ?: return false
+        snapshotRowWork("row_processing.plan_read")
+        val selected = one("SELECT r.ordinal,$qualifiedApplyPlanColumns FROM _sync_apply_rows r JOIN _sync_apply_plan p ON p.singleton_key=1 AND p.phase='installed' WHERE r.table_name=? AND r.local_pk=?",
+            table, pk, replayStatementCache = cache) { it.getLong(0) to readPlan(it, 1) } ?: return false
         val state = checkNotNull(uniqueState)
-        val p = checkNotNull(load(cache))
-        val (row, bytes) = loadRow(state, p, ordinal, cache, cache)
-        val live = capture(state, p, table, pk, 6, 6 * bytes, cache, cache)
-        if (
-            !OversqliteValueCodec.equivalentPayloadTexts(
-                state.validated.tableInfoByName.getValue(table),
-                row.payload,
-                live.payload,
-                if (row.wire) PayloadSource.AUTHORITATIVE_WIRE else PayloadSource.LOCAL_STATE,
-                PayloadSource.LOCAL_STATE,
-                json,
-            )
-        )
-            restoreUniqueRow(state, row, cache)
+        val (ordinal, p) = selected
+        withRowLease(state, p, ordinal, cache, cache) { lease ->
+            val live = capture(state, p, table, pk, 6, 6 * lease.charge, cache, cache)
+            if (!lease.matches(state.validated.tableInfoByName.getValue(table), live.payload)) restoreUniqueLeasedRow(state, lease, cache)
+        }
         return true
     }
 

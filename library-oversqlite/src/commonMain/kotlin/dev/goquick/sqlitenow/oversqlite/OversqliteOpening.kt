@@ -350,8 +350,13 @@ private class DefaultOversqliteOpening<D : SqliteNowDatabase>(
     }
 
     override suspend fun advance(): OversqliteOpeningStatus {
+        val diagnostics = config.diagnostics ?: return advanceWithDiagnostics()
+        return diagnostics.operation("sync.opening") { advanceWithDiagnostics() }
+    }
+
+    private suspend fun advanceWithDiagnostics(): OversqliteOpeningStatus {
         if (currentCoroutineContext()[SqliteNowCoordinatedMigrationCloseContext] == null) {
-            return withContext(SqliteNowCoordinatedMigrationCloseContext()) { advance() }
+            return withContext(SqliteNowCoordinatedMigrationCloseContext()) { advanceWithDiagnostics() }
         }
         ensureOpen()
         readyOrNull()?.let { return cachedStatus }
@@ -360,7 +365,7 @@ private class DefaultOversqliteOpening<D : SqliteNowDatabase>(
             try {
                 if (!providerPrepared) {
                     try {
-                        session.prepare()
+                        syncDiagnosticWork("sync.provider_preparation") { session.prepare() }
                         val targetVersion = checkNotNull(session.migrationTargetVersion)
                         inspection = inspectOpening(session, config, plan, targetVersion, freshLifetimeAcquisition = true, reclaimReservations = true)
                         cachedStatus = inspection.status
@@ -377,10 +382,10 @@ private class DefaultOversqliteOpening<D : SqliteNowDatabase>(
                     }
                 }
                 if (inspection.status.mode == OversqliteOpeningMode.GENERATION_CHANGE) {
-                    cachedStatus = generationWorkflow.advance()
+                    cachedStatus = syncDiagnosticWork("sync.generation_opening") { generationWorkflow.advance() }
                     return cachedStatus
                 }
-                val localReady = localWorkflow.advance()
+                val localReady = syncDiagnosticWork("sync.local_opening") { localWorkflow.advance() }
                 publishReady(localReady.client)
                 cachedStatus = localReady.status
                 return cachedStatus

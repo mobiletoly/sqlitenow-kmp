@@ -1,3 +1,5 @@
+@file:OptIn(dev.goquick.sqlitenow.core.SqliteNowInternalApi::class)
+
 /*
  * Copyright 2025 Toly Pochkin
  *
@@ -90,8 +92,10 @@ internal class StatementCache(
         return db.withExclusiveAccess {
             check(!closed) { "statement cache is already closed" }
 
-            statements[sql]
-                ?: operations.prepare(db, sql).also { statements[sql] = it }
+            val existing = statements[sql]
+            val statement = existing ?: operations.prepare(db, sql).also { statements[sql] = it }
+            db.recordDiagnosticCacheAccess(sql, statement, existing != null)
+            statement
         }
     }
 

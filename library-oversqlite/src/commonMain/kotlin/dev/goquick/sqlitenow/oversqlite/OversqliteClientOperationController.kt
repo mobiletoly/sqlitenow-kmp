@@ -95,6 +95,10 @@ internal class OversqliteClientOperationController(
     private suspend fun nextWorkSlice() {
         currentCoroutineContext().ensureActive()
         workSliceDiagnostics.workSlices++
+        dev.goquick.sqlitenow.core.SqliteNowDiagnosticContext.current(currentCoroutineContext())?.span?.setWorkSlice(workSliceDiagnostics.workSlices + 1)
+        syncDiagnosticEvent("sync.work_slice", "continued", {
+            mapOf("slice" to workSliceDiagnostics.workSlices, "work_units" to syncWorkUsed)
+        })
         workSliceDiagnostics.peakSliceWork = maxOf(workSliceDiagnostics.peakSliceWork, syncWorkUsed)
         syncWorkUsed = 0
         readyAtomicUnitDispatched = false
@@ -215,9 +219,11 @@ internal class OversqliteClientOperationController(
         return try {
             resources.ensureOpen()
             if (!operationGate.tryLock()) {
+                syncDiagnosticEvent("sync.admission", "rejected")
                 throw SyncOperationInProgressException()
             }
             try {
+                syncDiagnosticEvent("sync.admission", "admitted")
                 syncWorkUsed = 0
                 recoveryExchanges = 0
                 recoveryReplans=0
@@ -226,6 +232,7 @@ internal class OversqliteClientOperationController(
                 readyAtomicUnitDispatched = false
                 a3Stats=A3AccountingStats()
                 workSliceDiagnostics = WorkSliceDiagnostics()
+                dev.goquick.sqlitenow.core.SqliteNowDiagnosticContext.current(currentCoroutineContext())?.span?.setWorkSlice(1)
                 confirmedBundles.clear()
                 try {
                     Result.success(resources.trackOwnedOperation(block))
@@ -242,6 +249,14 @@ internal class OversqliteClientOperationController(
                     Result.failure(error)
                 }
             } finally {
+                syncDiagnosticEvent("sync.resources", counts = {
+                    mapOf("work_units_current_slice" to syncWorkUsed,
+                        "work_slices" to workSliceDiagnostics.workSlices,
+                        "entry_limit" to config.maxSyncWorkspaceEntries,
+                        "byte_limit" to config.maxSyncWorkspaceBytes,
+                        "soft_work_target" to config.maxSyncWorkUnitsPerInvocation,
+                        "confirmed_bundles" to confirmedBundleCount())
+                })
                 operationGate.unlock()
             }
         } catch (error: CancellationException) {
@@ -271,16 +286,21 @@ internal class OversqliteClientOperationController(
         operation: String,
         block: suspend () -> T,
     ): Result<T> = runExclusiveOperation {
-        withSnapshotDiagnosticsScope {
-            withTransientRetry(operation, block)
+        val diagnostics = config.diagnostics
+        if (dev.goquick.sqlitenow.core.SqliteNowDiagnosticContext.current(currentCoroutineContext()) != null || diagnostics == null) {
+            withSnapshotDiagnosticsScope { withTransientRetry(operation, block) }
+        } else diagnostics.operation(operation) {
+            withSnapshotDiagnosticsScope { withTransientRetry(operation, block) }
         }
     }
 
     suspend fun <T> withSnapshotDiagnosticsScope(block: suspend () -> T): T {
-        val scope = snapshotDiagnosticsState.begin()
+        val scope = snapshotDiagnosticsState.begin(dev.goquick.sqlitenow.core.SqliteNowDiagnosticContext.current(currentCoroutineContext())?.span)
         var outcome = "success"
         return try {
-            withContext(SyncDiagnosticsContext(scope.recorder.phases)) { block() }
+            // Preserve the pre-existing operation scope; diagnostics add no further Jobs.
+            val inherited = dev.goquick.sqlitenow.core.SqliteNowDiagnosticContext.current(currentCoroutineContext())
+            withContext(inherited ?: kotlin.coroutines.EmptyCoroutineContext) { block() }
         } catch (error: Throwable) {
             outcome = if (error is CancellationException) "cancelled" else "failure"
             throw error
@@ -309,12 +329,17 @@ internal class OversqliteClientOperationController(
         val maxAttempts = config.transientRetryPolicy.maxAttempts.coerceAtLeast(1)
         repeat(maxAttempts) { attemptIndex ->
             try {
-                return block()
+                dev.goquick.sqlitenow.core.SqliteNowDiagnosticContext.current(currentCoroutineContext())?.span?.setAttempt(attemptIndex.toLong() + 1)
+                syncDiagnosticEvent("sync.attempt", counts = { mapOf("attempt" to attemptIndex.toLong() + 1, "max_attempts" to maxAttempts.toLong()) })
+                return syncDiagnosticWork("sync.attempt", block)
             } catch (error: Throwable) {
                 if (error is CancellationException) {
                     throw error
                 }
                 val retryable = shouldRetryTransportFailure(error)
+                syncDiagnosticEvent("sync.retry_decision", if (retryable) "retryable" else "terminal", {
+                    mapOf("attempt" to attemptIndex.toLong() + 1)
+                })
                 log {
                     "oversqlite operation failure op=$operation attempt=${attemptIndex + 1}/$maxAttempts " +
                         "retryable=$retryable error=${error::class.simpleName ?: "Throwable"}"

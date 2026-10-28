@@ -104,6 +104,7 @@ class DefaultOversqliteClient private constructor(
     )
     private val remoteApi = OversqliteRemoteApi(
         beforeRecoveryExchange = operationController::chargeRecoveryExchange,
+        diagnostics = config.diagnostics,
         http = resourceOwner.http,
         json = json,
         requestGzipEngine = requestGzipEngine,
@@ -275,12 +276,12 @@ class DefaultOversqliteClient private constructor(
         ).run()
     }
 
-    override suspend fun open(): Result<Unit> = lifecycleCoordinator.open()
-    override suspend fun sourceInfo(): Result<SourceInfo> = lifecycleCoordinator.sourceInfo()
-    override suspend fun attach(userId: String): Result<AttachResult> = lifecycleCoordinator.attach(userId)
-    override suspend fun syncStatus(): Result<SyncStatus> = syncCoordinator.syncStatus()
-    override suspend fun detach(): Result<DetachOutcome> = lifecycleCoordinator.detach()
-    override suspend fun pushPending(): Result<PushReport> = syncCoordinator.pushPending()
+    override suspend fun open(): Result<Unit> = diagnosticSyncResult(config, "sync.open", db) { lifecycleCoordinator.open() }
+    override suspend fun sourceInfo(): Result<SourceInfo> = diagnosticSyncResult(config, "sync.sourceInfo", db) { lifecycleCoordinator.sourceInfo() }
+    override suspend fun attach(userId: String): Result<AttachResult> = diagnosticSyncResult(config, "sync.attach", db) { lifecycleCoordinator.attach(userId) }
+    override suspend fun syncStatus(): Result<SyncStatus> = diagnosticSyncResult(config, "sync.syncStatus", db) { syncCoordinator.syncStatus() }
+    override suspend fun detach(): Result<DetachOutcome> = diagnosticSyncResult(config, "sync.detach", db) { lifecycleCoordinator.detach() }
+    override suspend fun pushPending(): Result<PushReport> = diagnosticSyncResult(config, "sync.pushPending", db) { syncCoordinator.pushPending() }
     // Discharge only the already frozen operation before mutable U0 admission.
     internal suspend fun finishExistingUploadForOpening(): Result<Unit> =
         operationController.runSyncOperation("finish existing upload") {
@@ -315,17 +316,17 @@ class DefaultOversqliteClient private constructor(
             stageStore.releasePushDependencyDiagnostic(diagnosticId)
         }
 
-    override suspend fun pendingConflict(): Result<PendingConflict?> = syncCoordinator.pendingConflict()
-    override suspend fun retryConflict(selected: PendingConflict): Result<Unit> = syncCoordinator.retryConflict(selected)
+    override suspend fun pendingConflict(): Result<PendingConflict?> = diagnosticSyncResult(config, "sync.pendingConflict", db) { syncCoordinator.pendingConflict() }
+    override suspend fun retryConflict(selected: PendingConflict): Result<Unit> = diagnosticSyncResult(config, "sync.retryConflict", db) { syncCoordinator.retryConflict(selected) }
     override suspend fun resolveConflict(selected: PendingConflict, result: MergeResult): Result<Unit> =
-        syncCoordinator.resolveConflict(selected, result)
-    override suspend fun pullToStable(): Result<RemoteSyncReport> = syncCoordinator.pullToStable()
-    override suspend fun recoveryStatus(): Result<RecoveryStatus> = operationController.runRecoveryControl { automaticRecovery.status() }
-    override suspend fun setRecoveryMode(mode: RecoveryMode): Result<Unit> = operationController.runRecoveryControl { automaticRecovery.setMode(mode) }
-    override suspend fun retryRecovery(): Result<Unit> = operationController.runRecoveryControl { automaticRecovery.retry() }
-    override suspend fun sync(): Result<SyncReport> = syncCoordinator.sync()
-    override suspend fun syncThenDetach(): Result<SyncThenDetachResult> = syncCoordinator.syncThenDetach()
-    override suspend fun rebuild(): Result<RemoteSyncReport> = syncCoordinator.rebuild()
+        diagnosticSyncResult(config, "sync.resolveConflict", db) { syncCoordinator.resolveConflict(selected, result) }
+    override suspend fun pullToStable(): Result<RemoteSyncReport> = diagnosticSyncResult(config, "sync.pullToStable", db) { syncCoordinator.pullToStable() }
+    override suspend fun recoveryStatus(): Result<RecoveryStatus> = diagnosticSyncResult(config, "sync.recoveryStatus", db) { operationController.runRecoveryControl { automaticRecovery.status() } }
+    override suspend fun setRecoveryMode(mode: RecoveryMode): Result<Unit> = diagnosticSyncResult(config, "sync.setRecoveryMode", db) { operationController.runRecoveryControl { automaticRecovery.setMode(mode) } }
+    override suspend fun retryRecovery(): Result<Unit> = diagnosticSyncResult(config, "sync.retryRecovery", db) { operationController.runRecoveryControl { automaticRecovery.retry() } }
+    override suspend fun sync(): Result<SyncReport> = diagnosticSyncResult(config, "sync.sync", db) { syncCoordinator.sync() }
+    override suspend fun syncThenDetach(): Result<SyncThenDetachResult> = diagnosticSyncResult(config, "sync.syncThenDetach", db) { syncCoordinator.syncThenDetach() }
+    override suspend fun rebuild(): Result<RemoteSyncReport> = diagnosticSyncResult(config, "sync.rebuild", db) { syncCoordinator.rebuild() }
 
     internal suspend fun rebuildForOpening(finalizer: suspend (String) -> Unit): Result<RemoteSyncReport> =
         syncCoordinator.rebuildForOpening(finalizer)

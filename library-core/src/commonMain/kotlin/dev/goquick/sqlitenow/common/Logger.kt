@@ -95,7 +95,8 @@ internal val originalSqliteNowLogger: SqliteNowLogger = KermitSqliteNowLogger(mi
 /** Synchronous best-effort sink. A failed sink stays disabled until explicitly replaced. */
 private class FailureIsolatedLogger(private val sink: SqliteNowLogger) : SqliteNowLogger {
     @kotlin.concurrent.Volatile
-    private var failed = false
+    internal var failed = false
+        private set
     private inline fun deliver(block: () -> Unit) {
         if (failed) return
         try { block() } catch (_: Throwable) { failed = true }
@@ -108,3 +109,10 @@ private class FailureIsolatedLogger(private val sink: SqliteNowLogger) : SqliteN
 
 var sqliteNowLogger: SqliteNowLogger = FailureIsolatedLogger(originalSqliteNowLogger)
     set(value) { field = if (value is FailureIsolatedLogger) value else FailureIsolatedLogger(value) }
+
+/** Lets diagnostic captures stop after the ordinary failure-isolating adapter trips. */
+internal fun deliverSqliteNowDiagnostic(message: String): Boolean {
+    val logger = sqliteNowLogger
+    logger.i { message }
+    return (logger as? FailureIsolatedLogger)?.failed != true
+}

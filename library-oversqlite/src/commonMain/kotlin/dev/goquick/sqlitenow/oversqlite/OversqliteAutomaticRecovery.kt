@@ -156,6 +156,7 @@ internal class OversqliteAutomaticRecovery(
         val pin=currentCoroutineContext()[AutomaticRecoveryContext]?.pin ?: return
         operations.nextWorkSliceIfNeeded()
         db.transaction(TransactionMode.IMMEDIATE) { validate(pin); val current=read();write(current.copy(status=current.status.copy(phase=phase))) }
+        syncDiagnosticEvent("recovery.transition", phase)
     }
     suspend fun ready() {
         val pin=currentCoroutineContext()[AutomaticRecoveryContext]?.pin ?: return

@@ -153,8 +153,9 @@ internal fun hashPushOutcome(outcome: TerminalPushOutcome, generation: SyncGener
 }
 
 /** Streams sealed frames; network chunk boundaries do not enter the hash. */
-internal class SnapshotHashWriter(source: String, private val generation: SyncGeneration, snapshot: String, boundary: Long, recovery: SnapshotRecovery?) {
-    private val digest = Sha256Accumulator()
+internal class SnapshotHashWriter(source: String, private val generation: SyncGeneration, snapshot: String, boundary: Long, recovery: SnapshotRecovery?,
+    private val diagnosticSpan: dev.goquick.sqlitenow.core.SqliteNowDiagnosticSpan? = null) {
+    private val digest = newSnapshotDigest()
     private var finished = false
     private var rows = 0L
     private var logicalBytes = 0L
@@ -175,11 +176,29 @@ internal class SnapshotHashWriter(source: String, private val generation: SyncGe
         val table = generation.tables[tableIndex]
         require(key.size == table.syncKeyColumns.size)
         val wireKey = table.syncKeyColumns.zip(key).associate { (name,value) -> name to value.jsonPrimitive.let { require(it.isString); it.content } }
-        validateOutcomeWireRow(table,wireKey,payload)
-        val logical = canonicalizeJsonElement(JsonArray(listOf(JsonPrimitive("i"), JsonPrimitive(tableIndex), key, JsonPrimitive(version), payload))).encodeToByteArray().size.toLong()
+        measured("snapshot.hash.wire_validation") { validateOutcomeWireRow(table,wireKey,payload) }
+        val canonicalPayload = measured("snapshot.hash.payload_canonicalization") { canonicalizeJsonElement(payload) }
+        val payloadBytes = measured("snapshot.hash.byte_encoding") { canonicalPayload.encodeToByteArray() }
+        val canonicalKey = canonicalizeJsonElement(key)
+        fun prefix(index: JsonPrimitive, versionValue: JsonPrimitive): ByteArray =
+            ("[\"i\"," + canonicalizeJsonElement(index) + "," + canonicalKey + "," + canonicalizeJsonElement(versionValue) + ",").encodeToByteArray()
+        val numericPrefix = prefix(JsonPrimitive(tableIndex), JsonPrimitive(version))
+        val wirePrefix = prefix(JsonPrimitive(tableIndex.toString()), JsonPrimitive(version.toString()))
+        val logical = numericPrefix.size.toLong() + payloadBytes.size + 1
         require(rows < Long.MAX_VALUE && logicalBytes <= Long.MAX_VALUE - logical)
-        frame(JsonArray(listOf(JsonPrimitive("i"), JsonPrimitive(tableIndex.toString()), key, JsonPrimitive(version.toString()), payload)))
+        check(!finished)
+        measured("snapshot.hash.digest_update") {
+            val size = wirePrefix.size.toLong() + payloadBytes.size + 1
+            digest.append(ByteArray(8) { index -> (size ushr ((7-index)*8)).toByte() })
+            digest.append(wirePrefix); digest.append(payloadBytes); digest.appendAscii(']')
+        }
         rows++; logicalBytes += logical
+    }
+    private inline fun <T> measured(name: String, block: () -> T): T {
+        val span = diagnosticSpan ?: return block()
+        val began = span.nowNanos(); var failed = false
+        try { return block() } catch (failure: Throwable) { failed = true; throw failure }
+        finally { span.aggregateWork(name, span.nowNanos() - began, failed) }
     }
     fun finish(rowCount: Long, logicalByteCount: Long): String {
         require(rowCount == rows && logicalByteCount == logicalBytes && rowCount >= 0 && logicalByteCount >= 0)
@@ -224,13 +243,12 @@ private fun validateOutcomeWireRow(table: GenerationTable,key: SyncKey,payload: 
     }
     if(payload==null||payload==JsonNull)return
     val objectPayload=payload.jsonObject
-    require(objectPayload.keys==table.columns.map { it.name }.toSet())
+    require(objectPayload.size==table.columns.size && table.columns.all { it.name in objectPayload })
     for(column in table.columns)validateOutcomeWireValue(column,objectPayload.getValue(column.name),false)
     require(table.syncKeyColumns.all { objectPayload[it]==JsonPrimitive(key.getValue(it)) })
 }
 private fun validateOutcomeWireValue(column: GenerationColumn,value: JsonElement,key: Boolean) {
     // The existing value codec owns canonical wire parsing. Physical storage is not
     // chosen here; TEXT selects its storage-independent canonical wire checks.
-    val descriptor=ColumnInfo(column.name,"TEXT",key,!column.nullable,null,wireType=column.wireType)
-    OversqliteValueCodec.decodePayloadValue(descriptor,value,PayloadSource.AUTHORITATIVE_WIRE)
+    OversqliteValueCodec.decodeGenerationWireValue(column,value,key)
 }

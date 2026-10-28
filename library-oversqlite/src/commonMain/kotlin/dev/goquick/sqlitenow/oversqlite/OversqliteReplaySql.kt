@@ -55,13 +55,16 @@ internal class ReplayTableSql(
             WHERE live_row.${quoteIdent(checkNotNull(primaryKey))} = ?
         """.trimIndent()
     }
-    val authoritativeSelect: String by lazy {
-        val values = info.columns.joinToString(",") { column ->
+    private val authoritativeParameters: String by lazy {
+        info.columns.joinToString(",") { column ->
             val parameter = if (column.kind in setOf(ColumnKind.INTEGER, ColumnKind.NUMERIC, ColumnKind.REAL))
                 "CAST(? AS ${sqliteAffinity(column.declaredType)})" else "?"
             "$parameter AS ${quoteIdent(column.name)}"
         }
-        "SELECT ${buildJsonObjectExprHexAware(info, "observed")} FROM (SELECT $values) AS observed"
+    }
+    val authoritativeTypedSelect: String by lazy { "SELECT $authoritativeParameters" }
+    val authoritativeSelect: String by lazy {
+        "SELECT ${buildJsonObjectExprHexAware(info, "observed")} FROM ($authoritativeTypedSelect) AS observed"
     }
     val upsert: String by lazy { buildReplayUpsertSql(tableName, info, checkNotNull(primaryKey)) }
 

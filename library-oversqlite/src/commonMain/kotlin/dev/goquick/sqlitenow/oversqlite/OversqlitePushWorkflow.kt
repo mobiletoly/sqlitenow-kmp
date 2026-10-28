@@ -51,7 +51,7 @@ internal class OversqlitePushWorkflow(
 
     private val uploadJournal = OversqliteUploadJournal(db,config)
 
-    suspend fun acknowledgePending(state: RuntimeState) = uploadJournal.acknowledge(state,remoteApi)
+    suspend fun acknowledgePending(state: RuntimeState) = syncDiagnosticWork("push.acknowledge") { uploadJournal.acknowledge(state,remoteApi) }
     suspend fun frozenMayResume(state: RuntimeState)=uploadJournal.frozenMayResume(state)
 
     private val replayExecutor = OversqlitePushReplayExecutor(
@@ -113,7 +113,7 @@ internal class OversqlitePushWorkflow(
             WorkspaceCharge(64,256*1024)) else null
         var primaryFailure: Throwable? = null
         try {
-        val snapshot = ensurePushOutboundSnapshot(state,token)
+        val snapshot = syncDiagnosticWork("push.freeze") { ensurePushOutboundSnapshot(state,token) }
         if (snapshot.rows.isEmpty()) {
             log { "oversqlite pushPending no-op: no rows ready for upload" }
             return PushWorkflowResult(
@@ -127,7 +127,7 @@ internal class OversqlitePushWorkflow(
                 "rows=${snapshot.rows.size}"
         }
         val result = try {
-            commitPushOutboundSnapshot(state, snapshot,token)
+            syncDiagnosticWork("push.exchange") { commitPushOutboundSnapshot(state, snapshot,token) }
         } catch (_: CancelledUploadOutcomeException) {
             db.transaction(TransactionMode.IMMEDIATE) {
                 val journal=checkNotNull(loadUploadJournal(db));uploadJournal.guard(state,journal)
@@ -137,7 +137,7 @@ internal class OversqlitePushWorkflow(
             acknowledgePending(state)
             return PushWorkflowResult(PushOutcome.NO_CHANGE,emptySet())
         } catch (e: PushConflictException) {
-            val updatedTables = resolvePushConflict(state, snapshot, e, checkNotNull(token))
+            val updatedTables = syncDiagnosticWork("push.conflict_resolution") { resolvePushConflict(state, snapshot, e, checkNotNull(token)) }
             db.reportExternalTableChanges(updatedTables)
             val remainingDirtyCount = syncStateStore.countDirtyRows()
             if (remainingDirtyCount == 0L) {

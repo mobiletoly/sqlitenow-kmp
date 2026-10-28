@@ -181,7 +181,7 @@ internal class OversqliteDownloadWorkflow(
         if (session != null) {
             val retained = session
             val matches = operations.completeWorkPhase("retained snapshot admission") { db.transaction(TransactionMode.DEFERRED) {
-                snapshotGate.validateFinal(guard)
+                syncDiagnosticWork("snapshot.final_guard") { snapshotGate.validateFinal(guard) }
                 if (lifecycle.snapshotStageGuard(state, retained) != operation.snapshotStageGuard ||
                     (!remoteReplace && retained.snapshotBundleSeq < installation.floor())) false
                 else { validateOperationSnapshotCursor(operation); true }
@@ -209,7 +209,7 @@ internal class OversqliteDownloadWorkflow(
                 downloadSnapshotSession(state.copy(sourceId = source), current,
                     limits,
                     initialTotals = SnapshotTransferTotals(operation.snapshotStagedRowCount, operation.snapshotStagedByteCount)) { totals ->
-                    snapshotGate.validateFinal(guard)
+                    syncDiagnosticWork("snapshot.final_guard") { snapshotGate.validateFinal(guard) }
                     check(lifecycle.snapshotStageGuard(state, current) == operation.snapshotStageGuard) { "snapshot staging context changed" }
                     val complete = totals.rows == current.rowCount && totals.bytes == current.logicalByteCount
                     if (complete) verifyGenerationSnapshot(state, current, source, "verification_last_chunk")
@@ -235,7 +235,7 @@ internal class OversqliteDownloadWorkflow(
         }
         // Complete verified local staging owns its lifetime independently of server TTL.
         operations.completeWorkPhase("snapshot seal verification") { db.transaction(TransactionMode.DEFERRED) {
-            snapshotGate.validateFinal(guard)
+            syncDiagnosticWork("snapshot.final_guard") { snapshotGate.validateFinal(guard) }
             check(lifecycle.snapshotStageGuard(state, current) == operation.snapshotStageGuard) { "snapshot staging context changed" }
             verifyGenerationSnapshot(state, current, source, "verification_seal")
         } }
@@ -247,7 +247,7 @@ internal class OversqliteDownloadWorkflow(
         val lifecycle = OversqliteApplyLifecycle(db, config, localStore, bundleApplier.survivors, json)
         try {
             val operation = operations.completeWorkPhase("snapshot publication") { db.transaction(TransactionMode.IMMEDIATE) {
-                snapshotGate.validateFinal(guard)
+                syncDiagnosticWork("snapshot.final_guard") { snapshotGate.validateFinal(guard) }
                 stageStore.clearAllSnapshotStages()
                 val next = guard.lifecycle.operation.copy(stagedSnapshotId = session.snapshotId,
                     snapshotBundleSeq = session.snapshotBundleSeq, snapshotRowCount = session.rowCount,
@@ -342,14 +342,14 @@ internal class OversqliteDownloadWorkflow(
         val unit = "snapshot-create"
         val authority = operations.completeWorkPhase("snapshot create admission") { db.transaction(TransactionMode.DEFERRED) {
             requireCleanSnapshotWork(db)
-            snapshotGate.validateFinal(guard)
+            syncDiagnosticWork("snapshot.final_guard") { snapshotGate.validateFinal(guard) }
             installation.context(state, unit)
         } }
         return remoteApi.createSnapshotSession(source, request) {
             bundleApplier.survivors.beginSnapshotVerification()
             db.transaction(TransactionMode.DEFERRED) {
                 requireCleanSnapshotWork(db)
-                snapshotGate.validateFinal(guard)
+                syncDiagnosticWork("snapshot.final_guard") { snapshotGate.validateFinal(guard) }
                 check(installation.context(state, unit) == authority) { "snapshot dispatch context changed" }
             }
         }
@@ -497,7 +497,7 @@ internal class OversqliteDownloadWorkflow(
         }
         val guard = pinnedGuard ?: snapshotGate.pin(outboxMode)
         val result = applyExecutor.inApplyModeTransaction(state) { statementCache ->
-            snapshotGate.validateFinal(guard)
+            syncDiagnosticWork("snapshot.final_guard") { snapshotGate.validateFinal(guard) }
             val lifecycle = OversqliteApplyLifecycle(db, config, localStore, bundleApplier.survivors, json, statementCache)
             if (guard.lifecycle.operation.snapshotStageGuard.isNotEmpty())
                 check(lifecycle.snapshotStageGuard(state, session) == guard.lifecycle.operation.snapshotStageGuard) { "snapshot final context changed" }
@@ -507,11 +507,11 @@ internal class OversqliteDownloadWorkflow(
                 syncPhase("verification_final_apply", session.rowCount, session.logicalByteCount) {
                     installation.verify(state, session, rotatedSourceId ?: state.sourceId, statementCache)
                 }
-                bundleApplier.survivors.validateSnapshotPreservation(state, statementCache)
+                syncDiagnosticWork("snapshot.preservation") { bundleApplier.survivors.validateSnapshotPreservation(state, statementCache) }
             }
-            automaticRecovery.ready()
+            syncDiagnosticWork("snapshot.recovery_ready") { automaticRecovery.ready() }
             val targetContext = OversqliteProvenanceContextStore(db).target(state, rotatedSourceId ?: state.sourceId)
-            bundleApplier.survivors.installUniqueFinalState(state, statementCache)
+            syncDiagnosticWork("snapshot.unique_state_installation") { bundleApplier.survivors.installUniqueFinalState(state, statementCache) }
             var stagedRowCount = 0L
             var afterRowOrdinal = 0L
             syncPhase("row_installation", session.rowCount, session.logicalByteCount) {

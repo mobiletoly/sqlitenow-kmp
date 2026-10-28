@@ -1,19 +1,14 @@
 package dev.goquick.sqlitenow.oversqlite
 
-import dev.goquick.sqlitenow.common.sqliteNowLogger
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.currentCoroutineContext
-import kotlin.coroutines.AbstractCoroutineContextElement
-import kotlin.coroutines.CoroutineContext
 import kotlin.random.Random
-import kotlin.time.TimeSource
 
 /** Only counters and live nesting are retained; no per-row events or SQL are collected. */
 internal class SyncPhaseDiagnostics(
-    private val sink: (String) -> Unit = { sqliteNowLogger.i { it } },
-    private val clock: () -> Long = monotonicMillis(),
+    private val sink: ((String) -> Unit)? = null,
+    private val clock: () -> Long = { 0L },
 ) {
-    private val operation = Random.nextLong().toULong().toString(16)
+    private val operation = if (sink != null) Random.nextLong().toULong().toString(16) else ""
     private var active = false
     private var failed = false
     private var started = 0L
@@ -21,7 +16,7 @@ internal class SyncPhaseDiagnostics(
     private var lastProgress = Long.MIN_VALUE
 
     fun start() {
-        if (active) return
+        if (active || sink == null) return
         active = true
         started = clock()
         emit("restore", "start", 0, 0, 0, "none")
@@ -60,23 +55,11 @@ internal class SyncPhaseDiagnostics(
     private fun emit(phase: String, outcome: String, rows: Long, bytes: Long, elapsed: Long, countBasis: String) {
         if (failed) return
         try {
-            sink("oversqlite restore operation=$operation phase=$phase depth=$depth inclusive=true " +
+            sink?.invoke("oversqlite restore operation=$operation phase=$phase depth=$depth inclusive=true " +
                 "rows=$rows bytes=$bytes counts=$countBasis elapsed_ms=$elapsed outcome=$outcome")
         } catch (_: Throwable) { failed = true }
     }
 }
 
-private fun monotonicMillis(): () -> Long {
-    val started = TimeSource.Monotonic.markNow()
-    return { started.elapsedNow().inWholeMilliseconds }
-}
-
-internal class SyncDiagnosticsContext(val diagnostics: SyncPhaseDiagnostics) :
-    AbstractCoroutineContextElement(Key) {
-    companion object Key : CoroutineContext.Key<SyncDiagnosticsContext>
-}
-
-internal suspend fun <T> syncPhase(name: String, rows: Long = 0, bytes: Long = 0, block: suspend () -> T): T {
-    val diagnostics = currentCoroutineContext()[SyncDiagnosticsContext]?.diagnostics ?: return block()
-    return diagnostics.phase(name, rows, bytes, block)
-}
+internal suspend fun <T> syncPhase(name: String, rows: Long = 0, bytes: Long = 0, block: suspend () -> T): T =
+    dev.goquick.sqlitenow.core.sqliteNowDiagnosticPhase(name, { mapOf("rows" to rows, "bytes" to bytes) }, block)

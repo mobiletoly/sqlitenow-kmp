@@ -28,11 +28,13 @@ internal actual fun trackSQLiteStatement(
     cleanupFailureObserver: (Throwable) -> Unit,
     beforeCloseObserver: () -> Unit,
     closeSuccessObserver: () -> Unit,
+    diagnostics: dev.goquick.sqlitenow.core.SqliteNowStatementDiagnostics?,
 ): SQLiteStatement = TrackedSQLiteStatement(
     delegate = statement,
     cleanupFailureObserver = cleanupFailureObserver,
     beforeCloseObserver = beforeCloseObserver,
     closeSuccessObserver = closeSuccessObserver,
+    diagnostics = diagnostics,
 )
 
 internal actual fun clearTrackedSQLiteStatementObservers(statement: SQLiteStatement) {
@@ -44,7 +46,8 @@ private class TrackedSQLiteStatement(
     private var cleanupFailureObserver: ((Throwable) -> Unit)?,
     private var beforeCloseObserver: (() -> Unit)?,
     private var closeSuccessObserver: (() -> Unit)?,
-) : SQLiteStatement, OwnedStatementClose {
+    private var diagnostics: dev.goquick.sqlitenow.core.SqliteNowStatementDiagnostics?,
+) : SQLiteStatement, OwnedStatementClose, dev.goquick.sqlitenow.core.DiagnosticStatementBinding {
     override val closeProgress = StatementCloseProgress()
     override fun bindBlob(index: Int, value: ByteArray) =
         wrapSqliteCall { delegate.bindBlob(index, value) }
@@ -89,14 +92,14 @@ private class TrackedSQLiteStatement(
         wrapSqliteCall { delegate.getColumnType(index) }
 
     override fun step(): Boolean =
-        wrapSqliteCall { delegate.step() }
+        observe("step") { wrapSqliteCall { delegate.step() } }
 
     override fun reset() = observeCleanup {
-        wrapSqliteCall { delegate.reset() }
+        observe("reset") { wrapSqliteCall { delegate.reset() } }
     }
 
     override fun clearBindings() = observeCleanup {
-        wrapSqliteCall { delegate.clearBindings() }
+        observe("clear_bindings") { wrapSqliteCall { delegate.clearBindings() } }
     }
 
     override fun close() = closeProgress.close(::closeDelegate)
@@ -106,7 +109,7 @@ private class TrackedSQLiteStatement(
     private fun closeDelegate() {
         beforeCloseObserver?.invoke()
         try {
-            wrapAndroidxSqliteCall { delegate.close() }
+            observe("close") { wrapAndroidxSqliteCall { delegate.close() } }
         } catch (t: Throwable) {
             cleanupFailureObserver?.invoke(t)
             throw t
@@ -115,7 +118,28 @@ private class TrackedSQLiteStatement(
         clearObservers()
     }
 
+    private inline fun <T> observe(action: String, block: () -> T): T {
+        val observer = diagnostics ?: return block()
+        val span = observer.span(action)
+        if (span == null) {
+            try { return block().also { observer.disabledBoundary(action, action == "step" && it == true) } }
+            catch (failure: Throwable) { observer.finish(); throw failure }
+        }
+        val began = span.nowNanos()
+        var failed = false
+        var row = false
+        try { return block().also { row = action == "step" && it == true } }
+        catch (failure: Throwable) { failed = true; throw failure }
+        finally { observer.complete(span, action, began, row, failed) }
+    }
+
+    override fun bindDiagnosticScope(span: dev.goquick.sqlitenow.core.SqliteNowDiagnosticSpan?, familyLabel: String?, hit: Boolean) {
+        diagnostics?.bindCacheScope(span, familyLabel, hit)
+    }
+
     fun clearObservers() {
+        diagnostics?.finish()
+        diagnostics = null
         cleanupFailureObserver = null
         beforeCloseObserver = null
         closeSuccessObserver = null

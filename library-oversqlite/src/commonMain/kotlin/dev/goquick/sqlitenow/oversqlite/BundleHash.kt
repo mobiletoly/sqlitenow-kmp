@@ -195,7 +195,13 @@ internal class Sha256Accumulator {
     }
 
     fun append(bytes: ByteArray) {
-        bytes.forEach(::appendByte)
+        var offset = 0
+        while (offset < bytes.size) {
+            val count = minOf(block.size - used, bytes.size - offset)
+            bytes.copyInto(block, used, offset, offset + count)
+            used += count; offset += count; byteCount += count
+            if (used == block.size) { compress(); used = 0 }
+        }
     }
 
     private fun appendByte(value: Byte) {

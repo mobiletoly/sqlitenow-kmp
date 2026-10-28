@@ -85,7 +85,7 @@ internal class SnapshotVerificationStatementReuseTest : SurvivorTestSupport() {
                     assertHotCounts(resumedObservation, 1, 4)
                     val workspace = resumedObservation.counts.filterKeys { it.startsWith("SELECT o.reserved_entries,o.reserved_bytes,") }.values.single()
                     assertEquals(1L, workspace.prepares)
-                    assertEquals(4L, workspace.steps)
+                    assertEquals(1L, workspace.steps, "one durable accounting base per read-only verification owner; all four row reads remain")
                     assertEquals(workspace.steps, workspace.resets)
                     assertEquals(workspace.resets, workspace.clears)
                     assertEquals(1L, workspace.closes)

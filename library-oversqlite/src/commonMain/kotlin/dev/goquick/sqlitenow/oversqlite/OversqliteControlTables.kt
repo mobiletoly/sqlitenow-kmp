@@ -31,8 +31,7 @@ internal suspend fun initializeOversqliteControlTables(db: SafeSQLiteConnection)
     db.execSQL(applyPlanDdl)
     db.execSQL(applyRowsDdl)
     db.execSQL(applyEdgesDdl)
-    db.execSQL(applyPendingIndexDdl)
-    db.execSQL(applyRoleIndexDdl)
+    applyIndexDdl.values.forEach { db.execSQL(it) }
     db.execSQL(createOversqliteOpeningTableSql)
     db.execSQL(
         oversqliteRetainedTableDdl.getValue("_sync_apply_state")

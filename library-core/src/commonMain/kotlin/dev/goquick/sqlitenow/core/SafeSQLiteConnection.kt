@@ -63,10 +63,59 @@ class SafeSQLiteConnection internal constructor(
     private val executionContextHook: SqliteNowContextHook? = null,
     private val executionContext: SqliteConnectionExecutionContext,
     sqlTrace: SqlTracePolicy? = null,
+    private val diagnostics: SqliteNowDiagnostics? = null,
     private val ordinaryCloseCleanupTimeoutMillis: Long =
         DEFAULT_ORDINARY_CLOSE_CLEANUP_TIMEOUT_MILLIS,
 ) {
     private val sqlTraceSession = sqlTrace?.let(::SqlTraceSession)
+    internal var diagnosticOperationActive = false
+        private set
+    internal var activeDiagnosticSpan: SqliteNowDiagnosticSpan? = null
+        private set
+    internal var activeDiagnosticFamilyLabel: String? = null
+        private set
+    @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+    private val diagnosticConnectionId = kotlin.concurrent.atomics.AtomicReference<String?>(null)
+    private var diagnosticObservedStatementPeak = 0L
+
+    internal fun recordDiagnosticStatementResources(span: SqliteNowDiagnosticSpan, closing: Boolean) {
+        val before = liveStatements.count { !(it.statement as OwnedStatementClose).closeProgress.physicallyComplete }.toLong()
+        diagnosticObservedStatementPeak = maxOf(diagnosticObservedStatementPeak, before)
+        span.event("db.statement_resources", counts = {
+            mapOf("active_statements" to (before - if (closing) 1 else 0).coerceAtLeast(0),
+                "connection_observed_peak_statements" to diagnosticObservedStatementPeak)
+        }, countBasis = "observed_connection_lifetime")
+    }
+
+    internal fun beginStatementDiagnostics(): SqliteNowDiagnosticSpan? =
+        diagnostics?.beginOperation("db.statement_execution", diagnosticIdentity())
+
+    /** Integration hook: associate a cache checkout with its current execution, never its prepare. */
+    @SqliteNowInternalApi
+    suspend fun recordDiagnosticCacheAccess(sql: String, statement: SQLiteStatement, hit: Boolean) {
+        val context = SqliteNowDiagnosticContext.current(coroutineContext)
+        val span = context?.span
+        val tracked = statement as? DiagnosticStatementBinding
+        if (tracked != null) tracked.bindDiagnosticScope(span, context?.sqlFamilyLabel, hit)
+        else span?.sql(sql, if (hit) "cache_hit" else "cache_miss", 0, familyLabel = context?.sqlFamilyLabel)
+    }
+
+    @SqliteNowInternalApi
+    fun diagnosticConnectionIdentity(): String? = diagnosticIdentity()
+
+    @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+    private fun diagnosticIdentity(): String? {
+        diagnosticConnectionId.load()?.let { return it }
+        if (diagnostics?.isEnabled != true) return null
+        val fresh = kotlin.random.Random.nextLong().toULong().toString(16)
+        diagnosticConnectionId.compareAndSet(null, fresh)
+        return diagnosticConnectionId.load()
+    }
+    private suspend fun <T> diagnosticOperation(name: String, block: suspend () -> T): T {
+        val controller = diagnostics ?: return block()
+        return controller.operation(name, diagnosticIdentity(), block)
+    }
+
     val dispatcher: CoroutineDispatcher = executionContext.dispatcher
     private var activeTransactionDepth: Int = 0
     private var activeTransactionToken: Any? = null
@@ -129,6 +178,41 @@ class SafeSQLiteConnection internal constructor(
         activeTransactionDepth > 0 || wrapAndroidxSqliteCall { ref.inTransaction() }
 
     internal suspend fun <T> withDispatcherContext(block: suspend () -> T): T {
+        val inherited = SqliteNowDiagnosticContext.current(coroutineContext)
+        if (inherited?.span == null && (inherited != null || diagnostics?.isEnabled != true)) {
+            return withDispatcherContextImpl(block)
+        }
+        inherited?.span?.bindConnection(diagnosticIdentity())
+        val alreadyOwned = coroutineContext[ConnectionOwnerContext]?.connection === this
+        val root = if (inherited == null && !alreadyOwned) {
+            diagnostics?.beginOperation("db.access", diagnosticIdentity())
+        } else null
+        val span = if (inherited != null) inherited.span else if (alreadyOwned) activeDiagnosticSpan else root
+        var outcome = "success"
+        try {
+            val run: suspend () -> T = {
+                withDispatcherContextImpl {
+                    val previous = activeDiagnosticSpan
+                    val previousLabel = activeDiagnosticFamilyLabel
+                    val wasActive = diagnosticOperationActive
+                    activeDiagnosticSpan = span
+                    activeDiagnosticFamilyLabel = inherited?.sqlFamilyLabel
+                    diagnosticOperationActive = true
+                    try { block() } finally {
+                        activeDiagnosticSpan = previous
+                        activeDiagnosticFamilyLabel = previousLabel
+                        diagnosticOperationActive = wasActive
+                    }
+                }
+            }
+            return if (root != null) withSqliteNowDiagnosticContext(root) { run() } else run()
+        } catch (failure: Throwable) {
+            outcome = sqliteNowDiagnosticOutcome(failure)
+            throw failure
+        } finally { root?.finish(outcome) }
+    }
+
+    private suspend fun <T> withDispatcherContextImpl(block: suspend () -> T): T {
         val currentOwner = coroutineContext[ConnectionOwnerContext]
         val alreadyOwnsConnection = currentOwner?.connection === this
         requireApplicationAccess(currentOwner)
@@ -154,7 +238,11 @@ class SafeSQLiteConnection internal constructor(
             }
         }
 
+        val diagnosticSpan = SqliteNowDiagnosticContext.current(coroutineContext)?.span
+        val waitStarted = diagnosticSpan?.nowNanos()
         connectionMutex.lock()
+        val acquiredAt = diagnosticSpan?.nowNanos()
+        if (waitStarted != null && acquiredAt != null) diagnosticSpan.aggregateWork("db.mutex_wait", acquiredAt - waitStarted)
         try {
             requireApplicationAccess(currentOwner)
             if (state != ConnectionState.OPEN) {
@@ -173,6 +261,7 @@ class SafeSQLiteConnection internal constructor(
                 throw closedConnectionFailure()
             }
             return withContext(dispatcher + ConnectionOwnerContext(this, ownerToken)) {
+                if (acquiredAt != null) diagnosticSpan?.aggregateWork("db.dispatcher_wait", diagnosticSpan.nowNanos() - acquiredAt)
                 runOwnedBlock(hook, captured, block)
             }
         } finally {
@@ -186,12 +275,15 @@ class SafeSQLiteConnection internal constructor(
         block: suspend () -> T,
     ): T {
         var primaryFailure: Throwable? = null
+        val previousDiagnosticActive = diagnosticOperationActive
+        diagnosticOperationActive = true
         try {
             return if (hook != null) hook.withCaptured(captured, block) else block()
         } catch (t: Throwable) {
             primaryFailure = t
             throw t
         } finally {
+            diagnosticOperationActive = previousDiagnosticActive
             if (state == ConnectionState.FATAL) {
                 val disposalFailure = withContext(NonCancellable) {
                     disposeFatalConnection(primaryFailure)
@@ -279,7 +371,12 @@ class SafeSQLiteConnection internal constructor(
         migrationSqlValidator?.invoke(sql)
         withDispatcherContext {
             sqlTraceSession?.record("execute", sql)
-            wrapAndroidxSqliteAsyncCall { executeSqliteNowSql(ref, sql) }
+            val span = activeDiagnosticSpan
+            val began = span?.nowNanos()
+            var failed = false
+            try { wrapAndroidxSqliteAsyncCall { executeSqliteNowSql(ref, sql) } }
+            catch (failure: Throwable) { failed = true; throw failure }
+            finally { if (began != null) span.sql(sql, "execute", span.nowNanos() - began, failed = failed) }
             notifyOperationComplete()
         }
     }
@@ -288,11 +385,20 @@ class SafeSQLiteConnection internal constructor(
         migrationSqlValidator?.invoke(sql)
         return withDispatcherContext {
             sqlTraceSession?.record("prepare", sql)
-            registerStatement(wrapAndroidxSqliteAsyncCall { ref.prepare(sql) })
+            val span = activeDiagnosticSpan
+            val descriptor = if (diagnostics != null || span != null) DiagnosticSqlDescriptor(sql) else null
+            val began = span?.nowNanos()
+            var failed = false
+            try {
+                registerStatement(wrapAndroidxSqliteAsyncCall { ref.prepare(sql) }, descriptor)
+            } catch (failure: Throwable) { failed = true; throw failure }
+            finally { if (began != null) span.recordSql(checkNotNull(descriptor), "prepare", span.nowNanos() - began, failed = failed, familyLabel = SqliteNowDiagnosticContext.current(coroutineContext)?.sqlFamilyLabel) }
         }
     }
 
-    suspend fun close() {
+    suspend fun close() = diagnosticOperation("db.close") { closeWithDiagnostics() }
+
+    private suspend fun closeWithDiagnostics() {
         beginApplicationClose()
 
         val callerContext = coroutineContext
@@ -747,6 +853,9 @@ class SafeSQLiteConnection internal constructor(
             val alreadyInTransaction =
                 activeTransactionDepth > 0 || wrapAndroidxSqliteCall { ref.inTransaction() }
             val transactionToken = activeTransactionToken ?: Any()
+            activeDiagnosticSpan?.event("db.transaction_admission", if (alreadyInTransaction) "nested" else "new", {
+                mapOf("mode" to mode.ordinal.toLong(), "depth" to activeTransactionDepth.toLong())
+            })
             if (!alreadyInTransaction) {
                 when (mode) {
                     TransactionMode.DEFERRED -> wrapAndroidxSqliteAsyncCall { ref.executeSQL("BEGIN") }
@@ -760,7 +869,7 @@ class SafeSQLiteConnection internal constructor(
             activeTransactionDepth++
             var transactionEnded = alreadyInTransaction
             try {
-                val result = block()
+                val result = sqliteNowDiagnosticPhase("db.transaction_body", block = block)
                 if (!alreadyInTransaction) {
                     coroutineContext.ensureActive()
                     val statementFailure = withContext(NonCancellable) {
@@ -769,7 +878,10 @@ class SafeSQLiteConnection internal constructor(
                     if (statementFailure != null) throw statementFailure
                     coroutineContext.ensureActive()
                     beforeTransactionCommitForTest?.invoke()
-                    wrapAndroidxSqliteAsyncCall { ref.executeSQL("COMMIT") }
+                    sqliteNowDiagnosticPhase("db.commit") {
+                        wrapAndroidxSqliteAsyncCall { ref.executeSQL("COMMIT") }
+                    }
+                    activeDiagnosticSpan?.event("db.transaction_committed", "confirmed")
                     transactionEnded = true
                     notifyTransactionCommitted()
                 }
@@ -788,7 +900,10 @@ class SafeSQLiteConnection internal constructor(
                         if (rollbackNeeded) {
                             try {
                                 beforeTransactionRollbackForTest?.invoke()
-                                wrapAndroidxSqliteAsyncCall { ref.executeSQL("ROLLBACK") }
+                                sqliteNowDiagnosticPhase("db.rollback") {
+                                    wrapAndroidxSqliteAsyncCall { ref.executeSQL("ROLLBACK") }
+                                }
+                                activeDiagnosticSpan?.event("db.transaction_rolled_back", "confirmed")
                                 transactionEnded = true
                             } catch (rollbackFailure: Throwable) {
                                 appendFailure(e, rollbackFailure)
@@ -812,7 +927,9 @@ class SafeSQLiteConnection internal constructor(
 
     private suspend fun notifyOperationComplete() {
         try {
-            persistenceController.onOperationComplete(ref, isInTransaction())
+            sqliteNowDiagnosticPhase("db.persistence_operation") {
+                persistenceController.onOperationComplete(ref, isInTransaction())
+            }
         } catch (cancellation: CancellationException) {
             throw cancellation
         } catch (_: Throwable) {
@@ -822,7 +939,7 @@ class SafeSQLiteConnection internal constructor(
 
     private suspend fun notifyTransactionCommitted() {
         try {
-            persistenceController.onTransactionCommitted(ref)
+            sqliteNowDiagnosticPhase("db.persistence_commit") { persistenceController.onTransactionCommitted(ref) }
         } catch (cancellation: CancellationException) {
             throw cancellation
         } catch (_: Throwable) {
@@ -830,7 +947,7 @@ class SafeSQLiteConnection internal constructor(
         }
     }
 
-    private fun registerStatement(statement: SQLiteStatement): SQLiteStatement {
+    private fun registerStatement(statement: SQLiteStatement, descriptor: DiagnosticSqlDescriptor?): SQLiteStatement {
         liveStatements.removeAll { (it.statement as OwnedStatementClose).closeProgress.physicallyComplete }
         val trackedStatement = trackSQLiteStatement(
             statement = statement,
@@ -839,12 +956,14 @@ class SafeSQLiteConnection internal constructor(
             },
             beforeCloseObserver = {},
             closeSuccessObserver = {},
+            diagnostics = descriptor?.let { SqliteNowStatementDiagnostics(this, it) },
         )
         val record = LiveStatement(
             statement = trackedStatement,
             transactionToken = activeTransactionToken,
         )
         liveStatements += record
+        activeDiagnosticSpan?.let { recordDiagnosticStatementResources(it, false) }
         return trackedStatement
     }
 
@@ -987,7 +1106,7 @@ class SafeSQLiteConnection internal constructor(
             if (activeTransactionDepth > 0 || wrapAndroidxSqliteCall { ref.inTransaction() }) {
                 throw IllegalStateException("Cannot flush persistence while a transaction is active")
             }
-            persistenceController.flush(ref)
+            sqliteNowDiagnosticPhase("db.persistence_flush") { persistenceController.flush(ref) }
         }
     }
 
@@ -1142,3 +1261,9 @@ private const val DEFAULT_ORDINARY_CLOSE_CLEANUP_TIMEOUT_MILLIS = 5_000L
  * - EXCLUSIVE: acquires an EXCLUSIVE lock; prevents other readers and writers.
  */
 enum class TransactionMode { DEFERRED, IMMEDIATE, EXCLUSIVE }
+
+/** Reuses the existing connection-owner marker, avoiding a new off-path context allocation. */
+internal fun kotlin.coroutines.CoroutineContext.hasDisabledOwnedConnectionDiagnostics(): Boolean {
+    val owner = this[ConnectionOwnerContext] ?: return false
+    return owner.connection.diagnosticOperationActive && owner.connection.activeDiagnosticSpan == null
+}

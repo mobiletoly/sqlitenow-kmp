@@ -172910,7 +172910,7 @@
         "linux_x64",
         "linux_arm64"
       ],
-      "historical_selector_correction": "Use current testActivityDT01\u2013DT07; historical testDayTempoDT01\u2013DT07 selectors are stale. Current source declarations, not old expected counts, govern."
+      "historical_selector_correction": "Use current testActivityDT01\u2013DT07; earlier selector names are historical and stale. Current source declarations, not old expected counts, govern."
     },
     "node_worker_selection": {
       "applicable": [

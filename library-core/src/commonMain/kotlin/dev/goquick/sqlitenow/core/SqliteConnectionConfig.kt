@@ -34,6 +34,8 @@ data class SqliteConnectionConfig(
     val executionContextHook: SqliteNowContextHook? = null,
     /** SQL tracing is independent of application/debug logging and disabled by default. */
     val sqlTrace: SqlTracePolicy? = null,
+    /** Shared runtime controller; diagnostics are disabled unless explicitly enabled. */
+    val diagnostics: SqliteNowDiagnostics? = null,
 )
 
 /**

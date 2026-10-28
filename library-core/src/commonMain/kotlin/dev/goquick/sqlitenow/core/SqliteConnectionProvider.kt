@@ -148,6 +148,7 @@ object BundledSqliteConnectionProvider : SqliteConnectionProvider {
                 activeClientIdentity = sqliteNowActiveClientIdentity(dbName, connection),
                 persistenceController = persistenceController,
                 executionContextHook = config.executionContextHook,
+                diagnostics = config.diagnostics,
                 sqlTrace = config.sqlTrace,
                 executionContext = executionContext,
             )

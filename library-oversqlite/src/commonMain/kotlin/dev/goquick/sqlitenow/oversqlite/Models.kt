@@ -230,6 +230,7 @@ data class OversqliteConfig(
     val transientRetryPolicy: OversqliteTransientRetryPolicy = OversqliteTransientRetryPolicy(),
     val snapshotCapacityRetryPolicy: OversqliteSnapshotCapacityRetryPolicy =
         OversqliteSnapshotCapacityRetryPolicy(),
+    val diagnostics: dev.goquick.sqlitenow.core.SqliteNowDiagnostics? = null,
 ) {
     init {
         require(maxSyncWorkspaceEntries > 0 && maxSyncWorkspaceBytes > 0 && maxSyncWorkUnitsPerInvocation > 0) {

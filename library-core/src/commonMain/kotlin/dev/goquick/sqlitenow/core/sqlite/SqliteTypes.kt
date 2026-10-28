@@ -67,6 +67,7 @@ internal expect fun trackSQLiteStatement(
     cleanupFailureObserver: (Throwable) -> Unit,
     beforeCloseObserver: () -> Unit,
     closeSuccessObserver: () -> Unit,
+    diagnostics: dev.goquick.sqlitenow.core.SqliteNowStatementDiagnostics? = null,
 ): SQLiteStatement
 
 internal expect fun clearTrackedSQLiteStatementObservers(statement: SQLiteStatement)

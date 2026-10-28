@@ -167,6 +167,12 @@ open class SqliteNowDatabase(
      *  or migration.
      */
     suspend fun open(preInit: suspend (conn: SafeSQLiteConnection) -> Unit = {}) {
+        val diagnostics = connectionConfig.diagnostics
+        if (diagnostics == null) openWithDiagnostics(preInit)
+        else diagnostics.operation("db.open") { openWithDiagnostics(preInit) }
+    }
+
+    private suspend fun openWithDiagnostics(preInit: suspend (conn: SafeSQLiteConnection) -> Unit) {
         openCloseMutex.withLock {
             if (unpublishedSession != null) {
                 throw IllegalStateException("Database is reserved by a coordinated opening session")
@@ -191,7 +197,9 @@ open class SqliteNowDatabase(
 
                 c.transaction {
                     val currentVersion = c.readUserVersion()
-                    val newVersion = migration.applyMigration(c, currentVersion)
+                    val newVersion = sqliteNowDiagnosticPhase("db.migration") {
+                        migration.applyMigration(c, currentVersion)
+                    }
                     if (newVersion != currentVersion) {
                         c.execSQL("PRAGMA user_version = $newVersion;")
                     }

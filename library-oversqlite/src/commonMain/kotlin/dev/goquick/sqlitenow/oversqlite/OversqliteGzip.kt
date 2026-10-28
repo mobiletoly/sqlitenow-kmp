@@ -43,7 +43,7 @@ internal suspend fun encodeOversqliteRequestBody(
     }
     val cap = minOf(decoded.size.toLong() - 1L, encodedHardLimit).toInt()
     val gzip = try {
-        engine.compress(decoded, cap)
+        syncDiagnosticWork("http.gzip_encode") { engine.compress(decoded, cap) }
     } catch (error: CancellationException) {
         throw error
     } catch (error: OversqliteRequestCompressionUnavailableException) {
