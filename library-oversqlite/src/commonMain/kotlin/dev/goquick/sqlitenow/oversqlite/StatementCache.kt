@@ -88,6 +88,10 @@ internal class StatementCache(
         check(!closed) { "reservation binding writer is already closed" }
     }
 
+    internal suspend fun requireConnectionOwner(connection: SafeSQLiteConnection) = db.withExclusiveAccess {
+        check(!closed && db === connection) { "statement cache belongs to a different or expired connection" }
+    }
+
     suspend fun get(sql: String): SQLiteStatement {
         return db.withExclusiveAccess {
             check(!closed) { "statement cache is already closed" }

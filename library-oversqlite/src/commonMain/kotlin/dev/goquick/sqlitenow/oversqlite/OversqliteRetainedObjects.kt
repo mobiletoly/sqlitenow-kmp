@@ -24,18 +24,24 @@ internal val oversqliteManagedIndexes = baselineIndexDdl.keys + pushIndexDdl.key
 internal val oversqliteStaticTriggers = setOf(
     "_sync_conflict_revision_insert", "_sync_conflict_revision_update", "_sync_conflict_revision_delete",
  "_sync_baseline_revision_insert", "_sync_baseline_revision_update", "_sync_baseline_revision_delete",
-) + snapshotStageAccountingDdl.keys + "_sync_provenance_context_immutable"
+) + snapshotStageAccountingDdl.keys + "_sync_provenance_context_immutable" + bootstrapBaselineGuardDdl.keys
 
 private enum class RetainedRuntimeCensus { FRESH, CURRENT }
 
-internal suspend fun rejectPartialRetainedRuntimeBeforeConfiguration(db: SafeSQLiteConnection) {
-    inspectRetainedRuntime(db)
+internal suspend fun rejectPartialRetainedRuntimeBeforeConfiguration(db: SafeSQLiteConnection, config: OversqliteConfig? = null) {
+    inspectRetainedRuntime(db, config)
 }
 
-internal suspend fun inspectRetainedRuntime(db: SafeSQLiteConnection): String {
+internal suspend fun inspectRetainedRuntime(db: SafeSQLiteConnection, config: OversqliteConfig? = null, abandonedReservations: Boolean = false): String {
+    val familyObjects = bootstrapFamilyObjectCount(db)
+    val reserved = (oversqliteRetainedTables + oversqliteOpeningTable + oversqliteManagedIndexes + oversqliteStaticTriggers)
+        .joinToString(",", transform = ::snapshotSqlText)
+    require(db.scalarLong("SELECT EXISTS(SELECT 1 FROM sqlite_temp_schema WHERE lower(name) IN ($reserved) OR lower(tbl_name) IN ($reserved))") == 0L) {
+        "temporary objects shadow reserved oversqlite owners"
+    }
     val objects = db.queryList(
         "SELECT type, lower(type), name, lower(name), tbl_name, lower(tbl_name), rootpage, " +
-            "COALESCE(sql, '') FROM sqlite_schema ORDER BY type, name",
+            "COALESCE(sql, '') FROM sqlite_schema WHERE NOT ($bootstrapFamilyPredicate) ORDER BY type, name",
     ) {
         RetainedObject(
             rawType = it.getText(0), type = it.getText(1), rawName = it.getText(2),
@@ -52,6 +58,7 @@ internal suspend fun inspectRetainedRuntime(db: SafeSQLiteConnection): String {
             (objectRow.type == "trigger" && triggerReferencesSyncTable(objectRow.sql))
     }
     if (!identityExists) {
+        require(familyObjects == 0L) { "incompatible partial bootstrap runtime; recreate this development database explicitly" }
         if (openingExists && firstOwned?.type == "table" && firstOwned.name == oversqliteOpeningTable) {
             val otherOwned = objects.any { objectRow ->
                 objectRow.name in oversqliteRetainedTables ||
@@ -82,12 +89,15 @@ internal suspend fun inspectRetainedRuntime(db: SafeSQLiteConnection): String {
         }
     }
     for (table in listOf("_sync_contract_identity", "_sync_apply_state", "_sync_conflict_state",
-        "_sync_attachment_state", "_sync_operation_state", "_sync_outbox_bundle")) {
+        "_sync_attachment_state", "_sync_operation_state", "_sync_outbox_bundle", "_sync_bootstrap_state")) {
         val keys = db.queryList("SELECT singleton_key FROM $table") { it.getLong(0) }
         require(keys == listOf(1L)) { "malformed or missing retained singleton row in $table" }
     }
     require(db.scalarLong("SELECT count(*) FROM _sync_apply_state WHERE typeof(apply_mode)='integer' AND apply_mode IN (0,1)") == 1L) {
         "malformed retained apply state"
+    }
+    require(db.scalarLong("SELECT count(*) FROM _sync_apply_state WHERE baseline_mode='row' AND bootstrap_operation='' AND bootstrap_target_context=0 AND bootstrap_revision_low=0 AND bootstrap_revision_high=0") == 1L) {
+        "retained bootstrap baseline mode must be idle"
     }
     require(objects.none { it.name=="idx_sync_dirty_rows_dirty_ordinal" }) { "superseded dirty index must be absent" }
     for ((name, ddl) in baselineIndexDdl + pushIndexDdl + applyIndexDdl) {
@@ -96,6 +106,11 @@ internal suspend fun inspectRetainedRuntime(db: SafeSQLiteConnection): String {
     for ((name,ddl) in snapshotStageAccountingDdl) {
         require(retainedSqlSignature(objects.single { it.name==name }.sql)==retainedSqlSignature(ddl)) { "malformed retained stage trigger $name" }
     }
+    for ((name, ddl) in bootstrapBaselineGuardDdl) {
+        require(retainedSqlSignature(objects.single { it.name == name }.sql) == retainedSqlSignature(ddl)) {
+            "malformed retained bootstrap guard $name"
+        }
+    }
     for (operation in listOf("insert","update","delete")) {
         for ((name,ddl) in listOf("_sync_conflict_revision_$operation" to expectedConflictRevisionTriggerSql(operation), "_sync_baseline_revision_$operation" to expectedBaselineRevisionTriggerSql(operation))) {
             require(retainedSqlSignature(objects.single { it.name==name }.sql)==retainedSqlSignature(ddl)) { "malformed retained trigger $name" }
@@ -103,7 +118,8 @@ internal suspend fun inspectRetainedRuntime(db: SafeSQLiteConnection): String {
     }
     require(retainedSqlSignature(objects.single { it.name=="_sync_provenance_context_immutable" }.sql)==retainedSqlSignature(provenanceImmutableTriggerDdl)) { "malformed immutable context trigger" }
     OversqliteProvenanceContextStore(db).validateRetained()
-    validateRetainedCaptureTriggers(db)
+    val captureProof = validateRetainedCaptureTriggers(db, captureSignatures = familyObjects > 0)
+    validateBootstrapRetainedLayout(db, config, captureProof, abandonedReservations)
     inspectOversqliteOpeningExtension(db, openingExists)
     return RetainedRuntimeCensus.CURRENT.name
 }
@@ -143,7 +159,7 @@ private fun requireExactReservedObjects(objects: List<RetainedObject>) {
  name.startsWith("_sync_push_nodes_") -> "_sync_push_nodes"
  name.startsWith("_sync_push_edges_") -> "_sync_push_edges"
  name=="_sync_relationships_parent_idx" -> "_sync_relationships"
- name=="_sync_row_state_unknown_idx" || name.startsWith("_sync_baseline_revision_") -> "_sync_row_state"
+ name=="_sync_row_state_unknown_idx" || name.startsWith("_sync_baseline_revision_") || name.startsWith("_sync_bootstrap_baseline_") -> "_sync_row_state"
  else -> "_sync_dirty_rows"
  }
         }

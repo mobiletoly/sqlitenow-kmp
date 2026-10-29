@@ -153,11 +153,14 @@ internal class OversqliteProvenanceContextStore(private val db: SafeSQLiteConnec
         val active = activeId()
         val memo = currentCoroutineContext()[ProvenanceReadScope]?.takeIf { it.db === db }
         if (memo?.contains(context, active, requireSource) == true) return
+        // A same-shape local-only upgrade keeps captured contexts immutable. Its
+        // earlier representation version remains eligible under the exact current
+        // generation/shape/account proof; a future version is never historical.
         val valid = db.withPreparedStatement("""SELECT c.database_id=i.database_id AND c.service_id=i.service_id
             AND c.account_binding=a.binding_state AND c.account_id=a.attached_user_id
             AND c.generation_id=i.generation_id AND c.generation_fingerprint=i.fingerprint
             AND c.admission=CASE WHEN i.fingerprint='' THEN 'unadmitted' ELSE 'admitted' END
-            AND c.local_version=i.local_version AND c.physical_shape=i.physical_shape,
+            AND c.local_version<=i.local_version AND c.physical_shape=i.physical_shape,
             length(c.origin_source_id)>0
             FROM _sync_provenance_contexts c CROSS JOIN _sync_contract_identity i CROSS JOIN _sync_attachment_state a
             WHERE c.context_id=? AND i.singleton_key=1 AND a.singleton_key=1""") { st ->
@@ -168,8 +171,8 @@ internal class OversqliteProvenanceContextStore(private val db: SafeSQLiteConnec
     }
 
     suspend fun validateRetained() {
-        check(db.scalarLong("SELECT count(*) FROM _sync_provenance_state WHERE singleton_key=1 AND format_identity='complete-context-v1' AND active_context_id IS NOT NULL") == 1L) { "incompatible provenance format; recreate this development database explicitly" }
-        check(db.scalarLong("""SELECT count(*) FROM _sync_provenance_state p
+        require(db.scalarLong("SELECT count(*) FROM _sync_provenance_state WHERE singleton_key=1 AND format_identity='complete-context-v1' AND active_context_id IS NOT NULL") == 1L) { "incompatible provenance format; recreate this development database explicitly" }
+        require(db.scalarLong("""SELECT count(*) FROM _sync_provenance_state p
             JOIN _sync_provenance_contexts c ON c.context_id=p.active_context_id
             CROSS JOIN _sync_contract_identity i CROSS JOIN _sync_attachment_state a
             WHERE p.singleton_key=1 AND i.singleton_key=1 AND a.singleton_key=1
@@ -180,7 +183,7 @@ internal class OversqliteProvenanceContextStore(private val db: SafeSQLiteConnec
             AND c.origin_source_id=a.current_source_id
             AND c.admission=CASE WHEN i.fingerprint='' THEN 'unadmitted' ELSE 'admitted' END""") == 1L) { "active provenance context differs from retained authority" }
         for ((table, reference) in listOf("_sync_row_state" to "server_context_id", "_sync_dirty_rows" to "base_context_id", "_sync_outbox_rows" to "base_context_id", "_sync_provenance_state" to "active_context_id")) {
-            check(db.scalarLong("SELECT EXISTS(SELECT 1 FROM $table r LEFT JOIN _sync_provenance_contexts c ON c.context_id=r.$reference WHERE c.context_id IS NULL)") == 0L) { "dangling retained provenance context" }
+            require(db.scalarLong("SELECT EXISTS(SELECT 1 FROM $table r LEFT JOIN _sync_provenance_contexts c ON c.context_id=r.$reference WHERE c.context_id IS NULL)") == 0L) { "dangling retained provenance context" }
         }
     }
 

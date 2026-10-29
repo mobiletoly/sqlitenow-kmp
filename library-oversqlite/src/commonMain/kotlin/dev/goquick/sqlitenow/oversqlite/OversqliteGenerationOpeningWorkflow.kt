@@ -437,7 +437,7 @@ internal class OversqliteGenerationOpeningWorkflow(
         expectedOperation: OversqliteOperationState,
     ) {
         requireInstalledIdentityUnchanged(connection, installed)
-        inspectRetainedRuntime(connection)
+        inspectRetainedRuntime(connection, config)
 
         val contractStore = OversqliteContractStore(connection)
         val oldGeneration = contractStore.readGeneration(installed.generationId)
@@ -474,12 +474,13 @@ internal class OversqliteGenerationOpeningWorkflow(
         requireSchemaEvolutionCompatibility(oldGeneration, target)
         requireExactTargetSelection(target)
         requireNoAddedSynchronizedTableNamespaceCollisions(connection, oldGeneration, target)
-        requireExactPreservedTableDeclaration(
-            connection,
-            plan!!.preservedLocalTables,
-            oldGeneration.tables.map { it.table }.toSet(),
-            target.tables.map { it.table }.toSet(),
-        )
+        // evaluateOpeningAdmission has verified exact retained ownership in this writer.
+        withBootstrapMigrationObjectNames(connection, config) { owned ->
+            requireExactPreservedTableDeclaration(
+                connection, plan!!.preservedLocalTables,
+                oldGeneration.tables.map { it.table }.toSet(), target.tables.map { it.table }.toSet(), owned,
+            )
+        }
     }
 
     private fun requireExactTargetSelection(target: SyncGeneration) {
@@ -716,14 +717,16 @@ internal class OversqliteGenerationOpeningWorkflow(
         }
         var committed: OversqliteOpeningRecord? = null
         var retainedCapture = emptyList<Pair<String, String>>()
+        var previousBootstrap: SnapshotDescriptor? = null
         try {
             failureAdmissionEdge = expected
             openingAdmissionReservationForTest?.invoke(
                 "generation_u4",
                 session.withConnection { it },
             )
+            withBootstrapMigrationObjectNames(session.withConnection { it }, config) { bootstrapNames ->
             session.migrateAndValidate(
-                migrationSqlPolicy = generationMigrationSqlPolicy(session.withConnection { it }),
+                migrationSqlPolicy = generationMigrationSqlPolicy(session.withConnection { it }, bootstrapNames),
                 preInit = { connection ->
                     connection.execSQL("PRAGMA foreign_keys = ON")
                     require(connection.scalarLong("PRAGMA foreign_keys") == 1L) {
@@ -738,6 +741,10 @@ internal class OversqliteGenerationOpeningWorkflow(
                         session.migrationTargetVersion!!,
                         expected,
                     )
+                    connection.withStatementCache(cleanupTimeoutMillis = 5_000) { cache ->
+                        previousBootstrap = bootstrapDescriptorBeforeGenerationChange(connection, config,
+                            OversqliteContractStore(connection).readGeneration(expected.fromGenerationId), cache)
+                    }
                     val managedNames = connection.queryList("SELECT table_name FROM _sync_managed_tables") { it.getText(0) }
                     val captureNames = managedNames.flatMap { name ->
                         listOf("trg_${name}_ai", "trg_${name}_au", "trg_${name}_ad")
@@ -811,7 +818,15 @@ internal class OversqliteGenerationOpeningWorkflow(
                         connection, OversqliteManagedTableStore(connection),
                     )
                     openingDurableCommitForTest?.invoke("after_u4_capture", connection)
-                    inspectRetainedRuntime(connection)
+                    if (previousBootstrap != null) {
+                        val version = connection.scalarLong("PRAGMA main.schema_version")
+                        val metadata = SyncRuntimeInitializer(config, TableInfoCache()).validateConfig(connection).withGeneration(target)
+                        connection.withStatementCache(cleanupTimeoutMillis = 5_000) { cache ->
+                            prepareBootstrapDescriptorForAdmission(connection, config, metadata, version, cache, previousBootstrap)
+                        }
+                    }
+                    previousBootstrap = null
+                    inspectRetainedRuntime(connection, config)
                     val client = DefaultOversqliteClient.forOpening(
                         connection, config, httpClient, resolver, clientLeaseGroup,
                     )
@@ -833,10 +848,11 @@ internal class OversqliteGenerationOpeningWorkflow(
                     )
                     openingDurableCommitForTest?.invoke("before_u4", connection)
                     openingStore.update(next, current)
-                    inspectRetainedRuntime(connection)
+                    inspectRetainedRuntime(connection, config)
                     committed = next
                 },
             )
+            }
             openingDurableCommitForTest?.invoke("after_u4", session.withConnection { it })
         } catch (failure: Throwable) {
             try {
@@ -1034,7 +1050,7 @@ internal class OversqliteGenerationOpeningWorkflow(
             )
             openingDurableCommitForTest?.invoke("before_u8", connection)
             openingStore.update(next, current)
-            inspectRetainedRuntime(connection)
+            inspectRetainedRuntime(connection, config)
             readyRecord = next
         }
         openingDurableCommitForTest?.invoke("after_u8", connection)
@@ -1076,8 +1092,9 @@ internal class OversqliteGenerationOpeningWorkflow(
     ): OversqliteOpeningStatus {
         val connection = session.withConnection { it }
         openingAdmissionReservationForTest?.invoke("completed_generation_replay", connection)
+        withBootstrapMigrationObjectNames(connection, config) { bootstrapNames ->
         session.migrateAndValidate(
-            migrationSqlPolicy = generationMigrationSqlPolicy(connection),
+            migrationSqlPolicy = generationMigrationSqlPolicy(connection, bootstrapNames),
             transactionSetup = { current ->
                 evaluateOpeningAdmission(
                     current,
@@ -1094,10 +1111,11 @@ internal class OversqliteGenerationOpeningWorkflow(
                 require(readInstalledOpeningIdentity(current).let {
                     it.generationId == record.toGenerationId && it.fingerprint == record.targetFingerprint
                 }) { "completed generation edge has a different installed identity" }
-            inspectRetainedRuntime(current)
+            inspectRetainedRuntime(current, config)
             requirePreservation(current, record)
             },
         )
+        }
         val client = prepareTargetGenerationClient(connection, record.attachedUserId)
         publishReadyClient(client)
         targetClient = null
@@ -1112,7 +1130,7 @@ internal class OversqliteGenerationOpeningWorkflow(
     ) = requireOpeningPreservation(connection, record, config, plan, includePreservedLocalTables)
 
     private suspend fun generationMigrationSqlPolicy(
-        connection: SafeSQLiteConnection,
+        connection: SafeSQLiteConnection, bootstrapNames: Set<String>,
     ): SqliteNowCoordinatedMigrationSqlPolicy {
         val installed = checkNotNull(inspection.installed)
         val contractStore = OversqliteContractStore(connection)
@@ -1120,7 +1138,7 @@ internal class OversqliteGenerationOpeningWorkflow(
             addAll(contractStore.readGeneration(installed.generationId).tables.map { it.table })
             addAll(contractStore.readGeneration(config.generationId).tables.map { it.table })
         }
-        return coordinatedMigrationSqlPolicy(managedTables, plan!!.preservedLocalTables)
+        return coordinatedMigrationSqlPolicy(managedTables, plan!!.preservedLocalTables, bootstrapNames)
     }
 
 

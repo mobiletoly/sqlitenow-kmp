@@ -67,10 +67,12 @@ internal class OversqliteLocalOpeningWorkflow(
                 "local_migration",
                 session.withConnection { it },
             )
+            withBootstrapMigrationObjectNames(session.withConnection { it }, config) { bootstrapNames ->
             session.migrateAndValidate(
                 fresh = inspection.status.mode == OversqliteOpeningMode.FRESH,
                 migrationSqlPolicy = coordinatedMigrationSqlPolicy(
                     managedTables = config.syncTables.mapTo(linkedSetOf()) { it.tableName },
+                    bootstrapObjectNames = bootstrapNames,
                 ),
                 preInit = { connection ->
                     connection.execSQL("PRAGMA foreign_keys = ON")
@@ -85,6 +87,7 @@ internal class OversqliteLocalOpeningWorkflow(
                     validateAndBindLocalMode(connection, client)
                 },
             )
+            }
             if (localCommitMode != null) {
                 openingDurableCommitForTest?.invoke(
                     "after_${localCommitMode}_ready",
@@ -106,7 +109,15 @@ internal class OversqliteLocalOpeningWorkflow(
         client: DefaultOversqliteClient,
     ) {
         val targetVersion = session.migrationTargetVersion!!
+        var protectedState: String? = null
         if (inspection.status.mode == OversqliteOpeningMode.LOCAL_ONLY) {
+            val witness = requireNotNull(OversqliteOpeningStore(connection).readOrNull()) {
+                "local-only preservation witness is missing"
+            }
+            // Application migration effects must satisfy the full original witness
+            // before the owner advances contract/active-context metadata.
+            requireOpeningPreservation(connection, witness, config, plan)
+            protectedState = protectedLocalStateDigest(connection)
             val installed = checkNotNull(inspection.installed)
             val physical = SyncRuntimeInitializer(config, TableInfoCache()).validateConfig(connection)
             val targetIdentity = physical.contractIdentity(config, connection)
@@ -131,6 +142,7 @@ internal class OversqliteLocalOpeningWorkflow(
             require(connection.scalarLong("SELECT changes()") == 1L) {
                 "installed contract identity changed during local migration"
             }
+            bindLocalBaselineContext(connection)
         }
         client.open().getOrThrow()
         val physical = SyncRuntimeInitializer(config, TableInfoCache()).validateConfig(connection)
@@ -144,13 +156,18 @@ internal class OversqliteLocalOpeningWorkflow(
         val existing = store.readOrNull()
         if (inspection.status.mode == OversqliteOpeningMode.LOCAL_ONLY) {
             requireNotNull(existing) { "local-only preservation witness is missing" }
-            requireOpeningPreservation(connection, existing, config, plan)
+            require(protectedState == protectedLocalStateDigest(connection)) {
+                "protected synchronized state changed during owned local metadata transition"
+            }
         }
         val record = readyRecord(
             identity,
             retained?.fingerprint.orEmpty(),
             (existing?.revision ?: 0L) + 1L,
-            preservationDigest = existing?.preservationDigest.orEmpty(),
+            preservationDigest = if (inspection.status.mode == OversqliteOpeningMode.LOCAL_ONLY)
+                localOnlyOpeningDigest(connection, config.syncTables.map { it.tableName }.toSet(),
+                    checkNotNull(plan).preservedLocalTables)
+                else existing?.preservationDigest.orEmpty(),
         )
         if (inspection.status.mode in setOf(OversqliteOpeningMode.FRESH, OversqliteOpeningMode.LOCAL_ONLY)) {
             openingDurableCommitForTest?.invoke(
@@ -183,8 +200,12 @@ internal class OversqliteLocalOpeningWorkflow(
         } else {
             error("completed coordinated opening journal does not match the requested opening")
         }
-        inspectRetainedRuntime(connection)
+        inspectRetainedRuntime(connection, config)
     }
+
+    private suspend fun protectedLocalStateDigest(connection: SafeSQLiteConnection): String =
+        preservedStateDigest(connection, config.syncTables.map { it.tableName }.toSet() +
+            (oversqliteRetainedTables - setOf("_sync_contract_identity", "_sync_provenance_contexts", "_sync_provenance_state")))
 
     private suspend fun ensureLocalMigrationJournal() {
         if (inspection.status.mode !in setOf(OversqliteOpeningMode.FRESH, OversqliteOpeningMode.LOCAL_ONLY)) return
@@ -220,14 +241,13 @@ internal class OversqliteLocalOpeningWorkflow(
                         OversqliteContractStore(connection).readGeneration(installed.generationId)
                             .tables.map { it.table }.toSet()
                     }
-                    requireExactPreservedTableDeclaration(
-                        connection,
-                        plan!!.preservedLocalTables,
-                        managed,
-                        managed,
-                    )
+                    // The configured census above verified these exact retained objects.
+                    withBootstrapMigrationObjectNames(connection, config) { owned ->
+                        requireExactPreservedTableDeclaration(connection, plan!!.preservedLocalTables,
+                            managed, managed, owned)
+                    }
                     installOversqliteOpeningGuards(connection, managed)
-                    localOnlyOpeningDigest(connection, managed, plan.preservedLocalTables)
+                    localOnlyOpeningDigest(connection, managed, checkNotNull(plan).preservedLocalTables)
                 } else {
                     ""
                 }

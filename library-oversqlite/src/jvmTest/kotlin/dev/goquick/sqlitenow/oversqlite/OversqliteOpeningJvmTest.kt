@@ -23,6 +23,8 @@ import java.nio.file.Files
 import kotlin.io.path.createTempDirectory
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFails
+import kotlin.test.assertIs
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
@@ -80,6 +82,112 @@ class OversqliteOpeningJvmTest {
         RECORD_CONFLICT("record_conflict", rejection = false, requiresPendingState = false),
         CLEAR_CONFLICT("clear_conflict", rejection = false, requiresPendingState = true),
     }
+
+    @Test
+    fun coordinatedGenerationRebindsEmptyBootstrapDescriptorWithoutReplacingTables() = runTest {
+        val path = createTempDirectory("bootstrap-generation-rebind").resolve("database.sqlite3").toString()
+        val initialHttp = generationHttp(generation(1), includeConnect = true)
+        var initial: OversqliteOpening<SqliteNowDatabase>? = null
+        var target: OversqliteOpening<SqliteNowDatabase>? = null
+        val targetHttp = generationHttp(generation(2))
+        try {
+            val initialDb = database(path, 2)
+            initial = initialDb.openForSync(config(), initialHttp)
+            assertEquals(OversqliteOpeningOutcome.READY, initial.advance().outcome)
+            checkNotNull(initial.readyOrNull()).client.attach("user-a").getOrThrow()
+            initialDb.connection().execSQL("CREATE TABLE local_settings(id TEXT PRIMARY KEY,value TEXT NOT NULL)")
+            initialDb.connection().execSQL("INSERT INTO local_settings VALUES('sentinel','preserved')")
+            val old = bindOpeningBootstrapDescriptor(initialDb.connection(), config(), generation(1))
+            assertTrue(old.second.isNotEmpty())
+            initial.close(); initial = null
+            val targetDb = database(path, 2)
+            target = targetDb.openForSync(config().copy(generationId = 2), targetHttp,
+                upgradePlan = OversqliteUpgradePlan("bootstrap-generation-rebind", 1, 2, 2, 2, setOf("local_settings")))
+            assertEquals(OversqliteOpeningOutcome.READY, target.advance().outcome)
+            val db = targetDb.connection()
+            assertEquals("preserved", db.withPreparedStatement("SELECT value FROM local_settings WHERE id='sentinel'") { require(it.step()); it.getText(0) })
+            assertEquals(old.second, bootstrapFamilyDefinitions(db), "same physical family must not be replaced")
+            val signature = db.withPreparedStatement("SELECT descriptor_signature FROM _sync_bootstrap_state") { require(it.step()); it.getText(0) }
+            assertTrue(signature != old.first)
+            assertEquals("2", db.withPreparedStatement("SELECT json_extract(descriptor_json,'$[1]') FROM _sync_bootstrap_state") { require(it.step()); it.getText(0) })
+            assertEquals(0L, db.scalarLong("SELECT count(*) FROM _sync_bootstrap_wire"))
+            assertEquals(0L, db.scalarLong("SELECT count(*) FROM _sync_bootstrap_pages"))
+            assertEquals(0L, db.scalarLong("SELECT count(*) FROM _sync_bootstrap_values_t0"))
+            assertEquals(0L, db.scalarLong("SELECT snapshot_stage_entries+snapshot_stage_bytes+reserved_entries+reserved_bytes FROM _sync_operation_state"))
+            assertEquals("CURRENT", inspectRetainedRuntime(db, config().copy(generationId = 2)))
+            checkNotNull(target.readyOrNull()).client.attach("user-a").getOrThrow()
+            assertEquals(old.second, bootstrapFamilyDefinitions(db))
+            assertEquals("CURRENT", inspectRetainedRuntime(db, config().copy(generationId = 2)))
+        } finally {
+            target?.close(); initial?.close(); targetHttp.close(); initialHttp.close()
+            deleteTempSqliteNowTestDbArtifacts(path)
+        }
+    }
+
+    @OptIn(dev.goquick.sqlitenow.core.SqliteNowInternalApi::class)
+    @Test
+    fun coordinatedMigrationProtectsBootstrapFamilyAndRefusesPhysicalRebuild() = runTest {
+        for (physicalChange in listOf(false, true)) {
+            val path = createTempDirectory("bootstrap-family-preservation").resolve("database.sqlite3").toString()
+            val initialHttp = generationHttp(generation(1), includeConnect = true)
+            var initial: OversqliteOpening<SqliteNowDatabase>? = null
+            var target: OversqliteOpening<SqliteNowDatabase>? = null
+            val nextGeneration = if (!physicalChange) generation(1) else generation(2).let { original ->
+                original.copy(tables = original.tables.map { it.copy(columns = it.columns + GenerationColumn("body", "text", true)) })
+                    .withComputedFingerprint()
+            }
+            val targetHttp = generationHttp(nextGeneration)
+            try {
+                val initialDb = database(path, 2)
+                initial = initialDb.openForSync(config(), initialHttp)
+                assertEquals(OversqliteOpeningOutcome.READY, initial.advance().outcome)
+                checkNotNull(initial.readyOrNull()).client.attach("user-a").getOrThrow()
+                initialDb.connection().execSQL("CREATE TABLE local_settings(id TEXT PRIMARY KEY,value TEXT NOT NULL)")
+                initialDb.connection().execSQL("INSERT INTO local_settings VALUES('sentinel','preserved')")
+                val old = bindOpeningBootstrapDescriptor(initialDb.connection(), config(), generation(1))
+                initial.close(); initial = null
+                val sql = if (physicalChange) "ALTER TABLE notes ADD COLUMN body TEXT" else "DROP TABLE _sync_bootstrap_values_t0"
+                val targetDb = database(path, 3, generationMigrationSql = listOf(sql))
+                target = targetDb.openForSync(config().copy(generationId = if (physicalChange) 2 else 1), targetHttp,
+                    upgradePlan = OversqliteUpgradePlan("bootstrap-family-preservation", 1, if (physicalChange) 2 else 1, 2, 3, setOf("local_settings")))
+                val failure = assertFails { target.advance() }
+                val causes = generateSequence(failure) { it.cause }.toList()
+                if (physicalChange) assertTrue(causes.any { it.message.orEmpty().contains("recreate this development database explicitly") }, failure.toString())
+                else assertTrue(causes.any { it is dev.goquick.sqlitenow.core.SqliteNowCoordinatedMigrationException &&
+                    it.diagnosticCode == "coordinated_migration_protected_object_forbidden" }, failure.toString())
+                assertEquals(2L, externalScalarLong(path, "PRAGMA user_version"))
+                assertEquals(1L, externalScalarLong(path, "SELECT generation_id FROM _sync_contract_identity"))
+                assertEquals(0L, externalScalarLong(path, "SELECT count(*) FROM pragma_table_info('notes') WHERE name='body'"))
+                assertEquals(old.first, externalText(path, "SELECT descriptor_signature FROM _sync_bootstrap_state"))
+                assertEquals(old.second, externalBootstrapFamilyDefinitions(path))
+                assertEquals(0L, externalScalarLong(path, "SELECT count(*) FROM notes"))
+                assertEquals("preserved", externalText(path, "SELECT value FROM local_settings WHERE id='sentinel'"))
+            } finally {
+                target?.close(); initial?.close(); targetHttp.close(); initialHttp.close()
+                deleteTempSqliteNowTestDbArtifacts(path)
+            }
+        }
+    }
+
+    private suspend fun bindOpeningBootstrapDescriptor(db: SafeSQLiteConnection, configuration: OversqliteConfig,
+        generation: SyncGeneration): Pair<String, List<String>> = db.transaction(dev.goquick.sqlitenow.core.TransactionMode.IMMEDIATE) {
+        val version = db.scalarLong("PRAGMA main.schema_version")
+        val metadata = SyncRuntimeInitializer(configuration, TableInfoCache()).validateConfig(db).withGeneration(generation)
+        val signature = db.withStatementCache(cleanupTimeoutMillis = 5_000) { cache ->
+            assertIs<BootstrapSchemaAdmission.Eligible>(prepareBootstrapDescriptorForAdmission(db, configuration, metadata, version, cache)).descriptor.signature
+        }
+        signature to bootstrapFamilyDefinitions(db)
+    }
+
+    private suspend fun bootstrapFamilyDefinitions(db: SafeSQLiteConnection): List<String> =
+        db.queryList("SELECT name||':'||type||':'||COALESCE(sql,'') FROM sqlite_schema WHERE $bootstrapFamilyPredicate ORDER BY name") { it.getText(0) }
+
+    private fun externalBootstrapFamilyDefinitions(path: String): List<String> =
+        BundledSQLiteDriver().open(path, SQLITE_OPEN_READWRITE).use { connection ->
+            connection.prepare("SELECT name||':'||type||':'||COALESCE(sql,'') FROM sqlite_schema WHERE $bootstrapFamilyPredicate ORDER BY name").use { statement ->
+                buildList { while (statement.step()) add(statement.getText(0)) }
+            }
+        }
 
     @Test
     fun openingSchemaMatchesSharedKmpFixture() {
@@ -656,6 +764,69 @@ class OversqliteOpeningJvmTest {
             opening.close()
             http.close()
         }
+    }
+
+    @Test
+    fun localOnlyUpgradeKeepsFrozenHistoricalContextAndWireRequest() = runTest {
+        val path = createTempSqliteNowTestDbPath("local-opening-frozen-context")
+        val fixture = LocalOpeningHistoryFixture(generation(1))
+        val http = fixture.http
+        var first: OversqliteOpening<SqliteNowDatabase>? = null
+        var next: OversqliteOpening<SqliteNowDatabase>? = null
+        try {
+            val initial = database(path, 2)
+            first = initial.openForSync(config(), http)
+            assertEquals(OversqliteOpeningOutcome.READY, first.advance().outcome)
+            val ready = checkNotNull(first.readyOrNull())
+            ready.client.attach("user").getOrThrow()
+            val db = initial.connection()
+            db.execSQL("CREATE TABLE drafts(label TEXT NOT NULL,payload BLOB NOT NULL)")
+            db.execSQL("INSERT INTO drafts VALUES('kept',x'000102ff')")
+            db.execSQL("INSERT INTO notes(id,title) VALUES('00000000-0000-4000-8000-000000000001','pending')")
+            fixture.freezePushResponse()
+            assertFailsWith<CancellationException> { ready.client.pushPending().getOrThrow() }
+            fixture.allowPushResponse()
+            val context = db.scalarLong("SELECT base_context_id FROM _sync_outbox_rows")
+            val oldVersion = db.scalarLong("SELECT local_version FROM _sync_provenance_contexts WHERE context_id=$context")
+            val request = externalText(path, "SELECT hex(request_body) FROM _sync_upload_journal")
+            val hash = externalText(path, "SELECT canonical_request_hash FROM _sync_outbox_bundle")
+            val payload = externalText(path, "SELECT base_payload FROM _sync_outbox_rows")
+            val pushes = fixture.pushes
+            first.close(); first = null
+            val upgraded = database(path, 3, localOnlyDraftMigration = true)
+            next = upgraded.openForSync(config(), http, upgradePlan = OversqliteUpgradePlan(
+                "local-frozen-context", 1, 1, 2, 3, setOf("drafts")))
+            assertEquals(OversqliteOpeningOutcome.READY, next.advance().outcome)
+            val current = upgraded.connection()
+            assertEquals(context, current.scalarLong("SELECT base_context_id FROM _sync_outbox_rows"))
+            assertEquals(oldVersion, current.scalarLong("SELECT local_version FROM _sync_provenance_contexts WHERE context_id=$context"))
+            assertEquals(request, externalText(path, "SELECT hex(request_body) FROM _sync_upload_journal"))
+            assertEquals(hash, externalText(path, "SELECT canonical_request_hash FROM _sync_outbox_bundle"))
+            assertEquals(payload, externalText(path, "SELECT base_payload FROM _sync_outbox_rows"))
+            assertEquals(3L, current.scalarLong("SELECT c.local_version FROM _sync_provenance_contexts c JOIN _sync_provenance_state s ON s.active_context_id=c.context_id"))
+            assertEquals(pushes, fixture.pushes)
+            val resumed = checkNotNull(next.readyOrNull()).client
+            resumed.attach("user").getOrThrow()
+            assertEquals(hash, externalText(path, "SELECT canonical_request_hash FROM _sync_outbox_bundle"))
+            assertEquals(request, externalText(path, "SELECT hex(request_body) FROM _sync_upload_journal"))
+            resumed.pushPending().getOrThrow()
+            assertEquals(pushes, fixture.pushes, "frozen F resolves without another push")
+            assertEquals(0L, current.scalarLong("SELECT count(*) FROM _sync_outbox_rows"))
+            assertEquals(1L, current.scalarLong("SELECT count(*) FROM notes WHERE title='pending'"))
+            assertEquals(1L, current.scalarLong("SELECT count(*) FROM drafts WHERE label='kept' AND hex(payload)='000102FF'"))
+            assertEquals("CURRENT", inspectRetainedRuntime(current))
+        } finally {
+            next?.close(); first?.close(); http.close(); deleteTempSqliteNowTestDbArtifacts(path)
+            assertFalse(File(path).exists())
+        }
+    }
+
+    private class LocalOpeningHistoryFixture(generation: SyncGeneration) : CrossTargetSyncTestSupport() {
+        private val server = MockSyncServer().also { it.generationOverride = generation }
+        val http = server.newHttpClient()
+        val pushes get() = server.pushRequestCount
+        fun freezePushResponse() { server.beforePushResponse = { throw CancellationException("lost push response") } }
+        fun allowPushResponse() { server.beforePushResponse = null }
     }
 
     @Test

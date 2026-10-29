@@ -200,12 +200,37 @@ internal class SnapshotHashWriter(source: String, private val generation: SyncGe
         try { return block() } catch (failure: Throwable) { failed = true; throw failure }
         finally { span.aggregateWork(name, span.nowNanos() - began, failed) }
     }
+    /** Receipt already validated the row; fresh verification streams its complete frame. */
+    fun addPersistedFrame(frame: ByteArray, logicalByteCount: Long) {
+        check(!finished)
+        try {
+            requireSnapshotFrameLength(frame)
+            require(logicalByteCount >= 0 && rows < Long.MAX_VALUE &&
+                logicalBytes <= Long.MAX_VALUE - logicalByteCount)
+            measured("snapshot.hash.digest_update") { digest.append(frame) }
+            rows++
+            logicalBytes += logicalByteCount
+        } catch (failure: Throwable) {
+            finished = true
+            throw failure
+        }
+    }
     fun finish(rowCount: Long, logicalByteCount: Long): String {
         require(rowCount == rows && logicalByteCount == logicalBytes && rowCount >= 0 && logicalByteCount >= 0)
         frame(JsonArray(listOf(JsonPrimitive("end"), JsonPrimitive(rowCount.toString()), JsonPrimitive(logicalByteCount.toString()))))
         finished = true
         return digest.finishHex()
     }
+}
+
+/** Validate before digest mutation; no JSON parse or frame-sized copy. */
+internal fun requireSnapshotFrameLength(frame: ByteArray) {
+    require(frame.size >= 8)
+    // Array lengths are signed Int. Larger/high-bit prefixes cannot match this BLOB.
+    require((0..3).all { frame[it] == 0.toByte() }) { "snapshot frame length is invalid" }
+    var length = 0L
+    for (index in 4..7) length = (length shl 8) or (frame[index].toLong() and 255)
+    require(length == frame.size.toLong() - 8) { "snapshot frame length differs from BLOB" }
 }
 
 internal fun decodeRecoverySnapshotMetadata(raw: String, requested: SnapshotRecovery?): SnapshotSession {

@@ -65,6 +65,7 @@ internal class OversqliteSnapshotInstallation(
     }
 
     fun retained(operation: OversqliteOperationState, source: String): SnapshotSession? {
+        require(operation.snapshotEngine == generalSnapshotEngine) { "typed snapshot requires its pinned bootstrap lifecycle" }
         if (operation.stagedSnapshotId.isEmpty()) return null
         val seal = try {json.decodeFromString(RetainedSnapshotSeal.serializer(), operation.snapshotTransfer)} catch(failure: IllegalArgumentException){throw SnapshotSemanticException(SnapshotSemanticFailure.INVALID_SESSION)}
         validateSnapshotSession(seal.session)

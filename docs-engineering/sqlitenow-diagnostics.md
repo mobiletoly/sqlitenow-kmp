@@ -89,3 +89,28 @@ the existing text path when optional workspace admission is unavailable. Both ar
 operation work aggregates. `row_processing.expected_projection_text` exposes text
 projection calls across all owners; it must be absent from an admitted final
 authoritative-verification phase. Stored authoritative decoding remains required.
+
+### Typed empty-state snapshot prototype
+
+Snapshot restores automatically select `typed_bootstrap` for provably empty, compatible managed state and retain the general installer for nonempty or unsupported state. The selector reports one fixed `snapshot.engine` decision and preserves the pinned engine when resuming a transfer. There is no enable flag. The new retained format requires explicit database recreation; it supplies no migration or automatic reset.
+
+Schema capability fallback also emits one ordinary Warn through `sqliteNowLogger`, independently of diagnostics and `verboseLogs`. The warning identifies the reason and says the general snapshot installer will be used. For `missing_child_index`, it names the first child table/column and required comparison collation, including an existing index with incompatible collation. Declare a matching leading index in the application schema; the library does not create business indexes automatically. Normal nonempty-state and pinned-general routing do not warn. Logger filtering/no-op sinks still apply, and a failed sink cannot change restore results. Warnings contain schema identifiers, never row values, keys or account identifiers; the structured `snapshot.engine` reason remains fixed.
+
+Bootstrap phases use `snapshot.bootstrap.admission`, `.staging`, `.projection_verification`, `.foreign_keys`, `.business_installation`, `.baseline_installation`, `.relationship_installation`, `.final_verification`, `.publication` and `.cleanup`. Business/baseline/relationship children belong to `row_installation`; observed-state checks belong to `final_validation`. General publication and cleanup expose `snapshot.publication` and `snapshot.cleanup`. All durations are inclusive. The three ordinary `verification_last_chunk`, `verification_seal` and `verification_final_apply` boundaries remain fresh.
+
+The `snapshot.bootstrap.*` work families aggregate received rows/canonicalizations, verified wire/projection rows, admitted stage/install pages, installation/cleanup rows and table/FK checks. `row_processing.typed_scalar_decode` counts actual codec calls; persisted projection reads use native SQLite scalar getters. Sum each work or SQL family on the operation root once: child metrics are already included in root totals. Use actual `workspace.usage` SQL-family step calls for quota-read ceilings, including helpers; the explicit bootstrap quota work metric is attribution only.
+
+`snapshot.bootstrap.workspace` reports admitted logical total and durable peaks against entry/byte limits. These are conservative admission charges, not SQLite file size or process RSS. Descriptor/SQL, transport and receipt owners remain charged for their complete lifetimes; read-only scalar bases expire before mutation or callbacks.
+
+The separate `SnapshotBootstrapPerformanceTest.richSchemaGeneralVersusBootstrap` uses the unchanged neutral rich fixture and alternating fresh owned databases, with three diagnostics-off samples per route and one on capture per route. Its internal attach adapter uses the actual general and checked bootstrap owners with common policies and opening. Opening/preparation and descriptor construction are reported separately and included in the complete total. The local window includes publication; cleanup/commit and mock-engine time are separate. Diagnostic phase breakdowns describe on captures. Keep all samples and report the single on-versus-off-median overhead estimate separately. The unchanged public attach off/on/off witness remains an adjacent control. Fixture results do not establish installed-application performance, independent acceptance, new-format qualification or delivery.
+
+For Android, the same shared measurement body has four bounded pair selectors:
+`richSchemaFirstDiagnosticsOffPair`, `richSchemaSecondDiagnosticsOffPair`,
+`richSchemaThirdDiagnosticsOffPair` and `richSchemaDiagnosticsPair`. Run them in
+that order, one instrumentation selector at a time against one frozen owned APK,
+with no competing build/test workload. Each pair retains its 180-second body
+deadline and every fixture, request, state, reopen and cleanup assertion. Combine
+all eight successful samples for the route medians and retain process boundaries
+with the evidence. This isolates an aggregate timeout without extending the
+unchanged public control's deadline. The full eight-sample selector remains the
+JVM witness.

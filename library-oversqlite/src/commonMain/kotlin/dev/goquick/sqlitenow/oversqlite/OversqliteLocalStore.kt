@@ -37,6 +37,8 @@ internal class OversqliteLocalStore(
     private val validatedConfig: () -> ValidatedConfig,
 ) {
     internal var uniqueReplay: (suspend (String,String,StatementCache?) -> Boolean)? = null
+    private var parentComparisonOwner: ValidatedConfig? = null
+    private val parentComparisons = mutableMapOf<String, String?>()
 
     suspend fun validateHistoricalBase(table: String, version: Long, base: HistoricalBase) {
         when(base.kind) {
@@ -155,12 +157,68 @@ internal class OversqliteLocalStore(
             bind(st)
             buildList { while (st.step()) add(read(st)) }
         } }).toMap()
-        check(actual==expected) { "relationship projection differs from $view owner" }
+        check(actual == expected || view == "server" && canonicalAuthoritativeParentKeys(info, expected, actual, statementCache)) {
+            "relationship projection differs from $view owner"
+        }
         return retained
         } catch (failure: Throwable) {
             retained?.close()
             throw failure
         }
+    }
+
+    /**
+     * A complete snapshot names the joined principal's canonical key. A child FK
+     * may spell that same TEXT key differently under NOCASE/RTRIM. Accept the
+     * alias only with an exact live authoritative principal and its declared
+     * comparison; business rows never supply this evidence.
+     */
+    private suspend fun canonicalAuthoritativeParentKeys(
+        info: TableInfo, expected: Map<String, List<String>>, actual: Map<String, List<String>>,
+        cache: StatementCache?,
+    ): Boolean {
+        if (expected.keys != actual.keys) return false
+        for ((column, wanted) in expected) {
+            val observed = actual.getValue(column)
+            if (wanted == observed) continue
+            if (observed.size != 3 || wanted.size != 3 || observed.take(2) != wanted.take(2)) return false
+            val foreign = info.foreignKeys.singleOrNull { it.fromCol.lowercase() == column } ?: return false
+            val parent = configuredTableInfo(foreign.refTable)
+            val key = parent.primaryKey ?: return false
+            if (parent.columns.count { it.isPrimaryKey } != 1 || !key.name.equals(foreign.toCol, true) ||
+                sqliteAffinity(key.declaredType) != "TEXT") return false
+            val owner = validatedConfig()
+            if (parentComparisonOwner !== owner) { parentComparisons.clear(); parentComparisonOwner = owner }
+            if (!parentComparisons.containsKey(parent.table)) {
+                // Fixed, bounded metadata result, once per admitted schema owner.
+                parentComparisons[parent.table] = db.withPreparedStatement("""SELECT upper(x.coll)
+                    FROM pragma_index_list(?,'main') l JOIN pragma_index_xinfo(l.name,'main') x
+                    WHERE l.origin='pk' AND x.key=1 AND x.seqno=0 AND lower(x.name)=?
+                    AND upper(x.coll) IN ('NOCASE','RTRIM')""", cache) {
+                    it.bindText(1, parent.table); it.bindText(2, key.name.lowercase())
+                    if (it.step()) it.getText(0).also { _ -> check(!it.step()) } else null
+                }
+            }
+            val comparison = parentComparisons[parent.table] ?: return false
+            check(comparison == "NOCASE" || comparison == "RTRIM")
+            val sql = """WITH k(actual,expected,name,schema_name,table_name) AS (VALUES(?,?,?,?,?))
+                SELECT CASE WHEN json_valid(actual) AND json_valid(expected) THEN
+                    json_type(actual)='object' AND (SELECT count(*) FROM json_each(actual))=1
+                    AND json_type(actual,'$."'||name||'"')='text'
+                    AND actual=json_object(name,json_extract(actual,'$."'||name||'"')) COLLATE BINARY
+                    AND json_extract(actual,'$."'||name||'"') COLLATE $comparison =
+                        json_extract(expected,'$."'||name||'"') COLLATE $comparison
+                    AND EXISTS(SELECT 1 FROM _sync_row_state p JOIN _sync_provenance_contexts c
+                        ON c.context_id=p.server_context_id WHERE p.schema_name=k.schema_name
+                        AND p.table_name=k.table_name AND p.key_json=k.actual COLLATE BINARY
+                        AND p.server_kind='live' AND p.relationships_known=1)
+                ELSE 0 END FROM k"""
+            if (!db.withPreparedStatement(sql, cache) {
+                it.bindText(1, observed[2]); it.bindText(2, wanted[2]); it.bindText(3, key.name.lowercase())
+                it.bindText(4, wanted[0]); it.bindText(5, wanted[1]); check(it.step()); it.getLong(0) == 1L
+            }) return false
+        }
+        return true
     }
 
     suspend fun decodeDirtyKeyForPush(

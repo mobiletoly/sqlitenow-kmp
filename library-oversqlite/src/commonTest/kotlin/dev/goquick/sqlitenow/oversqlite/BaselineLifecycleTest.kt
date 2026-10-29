@@ -200,10 +200,11 @@ internal class BaselineLifecycleTest : CrossTargetSyncTestSupport() {
             }
             assertEquals("live", scalarText(db, "SELECT server_kind FROM _sync_row_state WHERE table_name='posts'"))
             db.execSQL("UPDATE users SET name='pending' WHERE id='Q'")
-            db.execSQL("UPDATE _sync_dirty_rows SET base_provenance='{}'")
-            val result = client.pushPending()
-            assertTrue(result.isFailure)
-            assertTrue(result.exceptionOrNull()?.message.orEmpty().contains("resolution_base_unavailable"))
+            val before = baselineIntentState(db)
+            // A missing reference is now unrepresentable: the generated FK column is NOT NULL.
+            val failure = kotlin.test.assertFails { db.execSQL("UPDATE _sync_dirty_rows SET base_provenance='{}'") }
+            assertTrue(failure.message.orEmpty().contains("NOT NULL") || failure.message.orEmpty().contains("CHECK"))
+            assertEquals(before, baselineIntentState(db))
             assertEquals(1L, db.scalarLong("SELECT count(*) FROM _sync_dirty_rows"))
         }
     }
@@ -258,6 +259,8 @@ internal class BaselineLifecycleTest : CrossTargetSyncTestSupport() {
 
     @Test fun invalidProvenanceBlocksFreezeAndReplay() = runOwnedWebDatabaseTest {
         val accepted = mutableListOf<String>()
+        var storageRejections = 0
+        var readerRejections = 0
         for (owner in listOf("_sync_dirty_rows", "_sync_outbox_rows")) {
             for (mutation in listOf("'$.generation_id',NULL","'$.account_scope.account_id','other-account'","'$.generation_id','1'","'$.generation_id',-1","'$.generation_id',2","'$.database_id','other-db'","'$.service_id','other-service'","'$.generation_fingerprint','other-generation'","'$.admission','unknown'","'$.local_version','0'","'$.local_version',-1","'$.physical_shape',NULL","'$.account_scope.binding','anonymous'","'$.account_scope.account_id',1","'$.origin',NULL","'$.origin','unknown'","'$.origin','snapshot','$.bundle_sequence',NULL","'$.origin','never_published'","'$.origin_source_id',NULL","'$.origin_source_id',1","'$.origin_source_id',''","'$.bundle_sequence','1'","'$.bundle_sequence',-1","'$.bundle_sequence',1.5","'$.authoritative_version','1'","'$.authoritative_version',NULL")) {
                 fixture { db, server, _, client ->
@@ -266,24 +269,68 @@ internal class BaselineLifecycleTest : CrossTargetSyncTestSupport() {
                         server.beforePushResponse = { throw CancellationException("lost response") }
                         try { client.pushPending() } catch (_: CancellationException) { }
                     }
-                    db.execSQL("UPDATE $owner SET base_provenance=json_set(base_provenance,$mutation)")
                     val before = baselineIntentState(db)
                     val requests = server.pushRequestCount
                     val sequence = db.scalarLong("SELECT next_source_bundle_id FROM _sync_source_state")
-                    val result = client.pushPending()
-                    if (result.exceptionOrNull() !is ResolutionBaseUnavailableException) {
-                        accepted += "$owner $mutation: ${result.exceptionOrNull()}"
+                    val storageFailure = runCatching {
+                        db.execSQL("UPDATE $owner SET base_provenance=json_set(base_provenance,$mutation)")
+                    }.exceptionOrNull()
+                    if (storageFailure != null) {
+                        assertTrue(storageFailure.message.orEmpty().contains("CHECK") || storageFailure.message.orEmpty().contains("NOT NULL"))
+                        assertEquals(before, baselineIntentState(db))
+                        storageRejections++
                     } else {
-                        assertEquals(before,baselineIntentState(db))
-                        assertEquals(requests,server.pushRequestCount)
-                        assertEquals(1L,db.scalarLong("SELECT count(*) FROM $owner"))
-                        assertEquals(sequence,db.scalarLong("SELECT next_source_bundle_id FROM _sync_source_state"))
-                        if (owner == "_sync_dirty_rows") assertEquals(0L,db.scalarLong("SELECT count(*) FROM _sync_outbox_rows"))
+                        val corrupted = baselineIntentState(db)
+                        val result = client.pushPending()
+                        if (result.exceptionOrNull() !is ResolutionBaseUnavailableException)
+                            accepted += "$owner $mutation: ${result.exceptionOrNull()}"
+                        else { assertEquals(corrupted, baselineIntentState(db)); readerRejections++ }
                     }
+                    assertEquals(requests,server.pushRequestCount)
+                    assertEquals(1L,db.scalarLong("SELECT count(*) FROM $owner"))
+                    assertEquals(sequence,db.scalarLong("SELECT next_source_bundle_id FROM _sync_source_state"))
+                    if (owner == "_sync_dirty_rows") assertEquals(0L,db.scalarLong("SELECT count(*) FROM _sync_outbox_rows"))
                 }
             }
         }
         assertEquals(emptyList(), accepted)
+        assertTrue(storageRejections > 0 && readerRejections > 0)
+        assertEquals(52, storageRejections + readerRejections)
+        println("compact-provenance-rejections: storage=$storageRejections reader=$readerRejections")
+    }
+
+    @Test fun mismatchedCompleteContextsBlockFreezeAndReplay() = runOwnedWebDatabaseTest {
+        val cases = listOf(
+            mapOf("database_id" to "other-db"), mapOf("service_id" to "other-service"),
+            mapOf("account_id" to "other-account"), mapOf("generation_id" to 2L),
+            mapOf("generation_fingerprint" to "f".repeat(64)), mapOf("local_version" to 1L),
+            mapOf("physical_shape" to "other-shape"), mapOf("origin_source_id" to ""),
+            mapOf("admission" to "unadmitted", "generation_fingerprint" to ""),
+            mapOf("account_binding" to "anonymous", "account_id" to ""),
+        )
+        var readers = 0
+        for (owner in listOf("_sync_dirty_rows", "_sync_outbox_rows")) for (case in cases) {
+            fixture { db, server, _, client ->
+                db.execSQL("UPDATE posts SET title='pending' WHERE id='C'")
+                if (owner == "_sync_outbox_rows") {
+                    server.beforePushResponse = { throw CancellationException("lost response") }
+                    try { client.pushPending() } catch (_: CancellationException) { }
+                }
+                replaceHistoricalContextForTest(db, owner, case)
+                val before = baselineIntentState(db)
+                val requests = server.pushRequestCount
+                val sequence = db.scalarLong("SELECT next_source_bundle_id FROM _sync_source_state")
+                val failure = client.pushPending().exceptionOrNull()
+                assertTrue(failure is ResolutionBaseUnavailableException, "$owner $case: $failure")
+                assertEquals(before, baselineIntentState(db))
+                assertEquals(requests, server.pushRequestCount)
+                assertEquals(sequence, db.scalarLong("SELECT next_source_bundle_id FROM _sync_source_state"))
+                assertEquals(1L, db.scalarLong("SELECT count(*) FROM $owner"))
+                readers++
+            }
+        }
+        assertEquals(20, readers)
+        println("complete-context-reader-rejections: $readers")
     }
 
     @Test fun incompleteOwnerRollsBackPull() = runOwnedWebDatabaseTest {
@@ -312,8 +359,9 @@ internal class BaselineLifecycleTest : CrossTargetSyncTestSupport() {
     @Test fun historicalSourceSurvivesFreezeAndReplay() = runOwnedWebDatabaseTest {
         for (unpublished in listOf(false,true)) fixture { db,server,http,client ->
             if (unpublished) insertUser(db,"N","new") else db.execSQL("UPDATE posts SET title='pending' WHERE id='C'")
-            val source = if (unpublished) "" else "retired-source"
-            db.execSQL("UPDATE _sync_dirty_rows SET base_provenance=json_set(base_provenance,'$.origin_source_id','$source')")
+            val source = if (unpublished) "" else "123e4567-e89b-42d3-a456-426614174000"
+            val context = replaceHistoricalContextForTest(db, "_sync_dirty_rows", mapOf("origin_source_id" to source))
+            assertEquals(source, scalarText(db, "SELECT origin_source_id FROM _sync_provenance_contexts WHERE context_id=$context"))
             val provenance = scalarText(db,"SELECT base_provenance FROM _sync_dirty_rows")
             server.beforePushResponse = { throw CancellationException("lost response") }
             try { client.pushPending() } catch (_: CancellationException) { }

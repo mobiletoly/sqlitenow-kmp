@@ -34,11 +34,24 @@ internal data class OversqliteOperationState(
     val snapshotStagedByteCount: Long = 0,
     val snapshotStageGuard: String = "",
     val snapshotTransfer: String = "",
+    val snapshotEngine: String = generalSnapshotEngine,
+    val bootstrapReference: String = "",
+    val bootstrapPageCount: Long = 0,
+    val bootstrapCleanupOrdinal: Long = 0,
+    val bootstrapCleanupChain: String = "",
     val reason: String = "",
     val replacementSourceId: String = "",
 )
 
 internal fun OversqliteOperationState.validateSnapshotStageMetadata() {
+    require(snapshotEngine in setOf(generalSnapshotEngine, typedSnapshotEngine)) { "invalid snapshot engine" }
+    require(if (snapshotEngine == generalSnapshotEngine) bootstrapReference.isEmpty() && bootstrapPageCount == 0L &&
+            bootstrapCleanupOrdinal == 0L && bootstrapCleanupChain.isEmpty()
+        else isCanonicalSha256(bootstrapReference) && bootstrapPageCount in 0..snapshotStagedRowCount &&
+            (snapshotStagedRowCount == 0L || bootstrapPageCount > 0)) { "invalid bootstrap reference or page count" }
+    require(bootstrapCleanupOrdinal >= 0 && (bootstrapCleanupChain.isEmpty() || isCanonicalSha256(bootstrapCleanupChain)))
+    require(bootstrapCleanupChain.isNotEmpty() || bootstrapCleanupOrdinal == 0L)
+    require(bootstrapCleanupChain.isEmpty() || !snapshotStageComplete) { "retiring bootstrap cannot be complete" }
     require(snapshotBundleSeq >= 0 && snapshotRowCount >= 0 && snapshotByteCount >= 0 &&
         snapshotStagedRowCount in 0..snapshotRowCount && snapshotStagedByteCount in 0..snapshotByteCount) {
         "invalid retained snapshot progress totals"
@@ -46,7 +59,8 @@ internal fun OversqliteOperationState.validateSnapshotStageMetadata() {
     if (stagedSnapshotId.isBlank()) {
         require(stagedSnapshotId.isEmpty() && snapshotBundleSeq == 0L && snapshotRowCount == 0L &&
             snapshotByteCount == 0L && snapshotStagedRowCount == 0L && snapshotStagedByteCount == 0L &&
-            !snapshotStageComplete && snapshotStageGuard.isEmpty() && snapshotTransfer.isEmpty()) { "unowned retained snapshot progress" }
+            !snapshotStageComplete && snapshotStageGuard.isEmpty() && snapshotTransfer.isEmpty() &&
+            snapshotEngine == generalSnapshotEngine && bootstrapReference.isEmpty()) { "unowned retained snapshot progress" }
     } else {
         require(isCanonicalSha256(snapshotStageGuard)) { "invalid retained snapshot context guard" }
         if (snapshotStageComplete) require(snapshotStagedRowCount == snapshotRowCount &&
@@ -90,7 +104,9 @@ internal class OversqliteOperationStateStore(
             sql = """
                 SELECT kind, target_user_id, staged_snapshot_id, snapshot_bundle_seq, snapshot_row_count,
                        snapshot_byte_count, snapshot_stage_complete, reason, replacement_source_id,
-                       snapshot_staged_row_count, snapshot_staged_byte_count, snapshot_stage_guard, snapshot_transfer
+                       snapshot_staged_row_count, snapshot_staged_byte_count, snapshot_stage_guard, snapshot_transfer,
+                       snapshot_engine, bootstrap_reference, bootstrap_page_count,
+                       CASE WHEN snapshot_engine='typed_bootstrap' THEN snapshot_cleanup_ordinal ELSE 0 END, bootstrap_cleanup_chain
                 FROM _sync_operation_state
                 WHERE singleton_key = 1
             """.trimIndent(),
@@ -108,6 +124,11 @@ internal class OversqliteOperationStateStore(
                 snapshotStagedByteCount = st.getLong(10),
                 snapshotStageGuard = st.getText(11),
                 snapshotTransfer = st.getText(12),
+                snapshotEngine = st.getText(13),
+                bootstrapReference = st.getText(14),
+                bootstrapPageCount = st.getLong(15),
+                bootstrapCleanupOrdinal = st.getLong(16),
+                bootstrapCleanupChain = st.getText(17),
                 reason = st.getText(7),
                 replacementSourceId = st.getText(8).let { sourceId ->
                     if (st.getText(0) == operationKindSourceRecovery) {
@@ -145,7 +166,13 @@ internal class OversqliteOperationStateStore(
                     snapshot_staged_row_count = ?,
                     snapshot_staged_byte_count = ?,
                     snapshot_stage_guard = ?,
-                    snapshot_transfer = ?
+                    snapshot_transfer = ?,
+                    snapshot_engine = ?,
+                    bootstrap_reference = ?,
+                    bootstrap_page_count = ?,
+                    snapshot_cleanup_ordinal = CASE WHEN ?14='typed_bootstrap' THEN ?17
+                        WHEN snapshot_engine='typed_bootstrap' THEN 0 ELSE snapshot_cleanup_ordinal END,
+                    bootstrap_cleanup_chain = ?18
                 WHERE singleton_key = 1
             """.trimIndent(),
             statementCache = statementCache,
@@ -163,6 +190,11 @@ internal class OversqliteOperationStateStore(
             st.bindLong(11, state.snapshotStagedByteCount)
             st.bindText(12, state.snapshotStageGuard)
             st.bindText(13, state.snapshotTransfer)
+            st.bindText(14, state.snapshotEngine)
+            st.bindText(15, state.bootstrapReference)
+            st.bindLong(16, state.bootstrapPageCount)
+            st.bindLong(17, state.bootstrapCleanupOrdinal)
+            st.bindText(18, state.bootstrapCleanupChain)
             st.step()
         }
     }

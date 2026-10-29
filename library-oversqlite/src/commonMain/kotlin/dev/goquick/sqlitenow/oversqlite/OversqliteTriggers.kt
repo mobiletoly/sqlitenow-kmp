@@ -34,12 +34,37 @@ internal fun oversqliteManagedTriggerNames(tableNames: Set<String>): Set<String>
 internal fun coordinatedMigrationSqlPolicy(
     managedTables: Set<String>,
     preservedTables: Set<String> = emptySet(),
+    bootstrapObjectNames: Set<String> = emptySet(),
 ): dev.goquick.sqlitenow.core.SqliteNowCoordinatedMigrationSqlPolicy =
     dev.goquick.sqlitenow.core.SqliteNowCoordinatedMigrationSqlPolicy(
         oversqliteRetainedTables + oversqliteOpeningTable + oversqliteManagedIndexes +
             oversqliteStaticTriggers + oversqliteManagedTriggerNames(managedTables) +
-            preservedLocalTableGuardNames(preservedTables),
+            preservedLocalTableGuardNames(preservedTables) + bootstrapObjectNames,
     )
+
+/** Exact already-censused names, with their copies owned across application migration. */
+internal suspend fun <T> withBootstrapMigrationObjectNames(
+    db: SafeSQLiteConnection, config: OversqliteConfig, block: suspend (Set<String>) -> T,
+): T {
+    val measured = db.withPreparedStatement("SELECT count(*),COALESCE(sum(length(CAST(name AS BLOB))),0) FROM sqlite_schema WHERE $bootstrapFamilyPredicate") {
+        require(it.step()); it.getLong(0) to it.getLong(1)
+    }
+    if (measured.first == 0L) return block(emptySet())
+    val workspace = OversqliteWorkspace(db, config)
+    val charge = WorkspaceCharge(bootstrapCheckedAdd(32, workspace.scale("bootstrap-migration-policy", measured.first, 8)),
+        bootstrapCheckedAdd(8192, bootstrapCheckedAdd(workspace.scale("bootstrap-migration-policy", measured.second, 16),
+            workspace.scale("bootstrap-migration-policy", measured.first, 128))))
+    workspace.check("bootstrap-migration-policy", charge)
+    val scope = bootstrapReceiptScope(db, workspace, "bootstrap-migration-policy", charge)
+    try { return kotlinx.coroutines.withContext(scope) {
+        val names = linkedSetOf<String>()
+        db.withPreparedStatement("SELECT name FROM sqlite_schema WHERE $bootstrapFamilyPredicate ORDER BY name") {
+            while (it.step()) names += it.getText(0)
+        }
+        require(names.size.toLong() == measured.first) { "bootstrap policy inventory changed" }
+        block(names)
+    } } finally { scope.close() }
+}
 
 internal suspend fun installOversqliteTriggers(
     db: SafeSQLiteConnection,
@@ -123,7 +148,15 @@ internal fun expectedCaptureTriggers(schemaName: String,table: ValidatedSyncTabl
     )
 }
 
-internal suspend fun validateRetainedCaptureTriggers(db: SafeSQLiteConnection) {
+internal data class RetainedCaptureProof(
+    val connection: SafeSQLiteConnection,
+    val schemaVersion: Long,
+    val metadata: TableInfoCache,
+    val signatures: Map<String, String>,
+)
+
+internal suspend fun validateRetainedCaptureTriggers(db: SafeSQLiteConnection, captureSignatures: Boolean = false): RetainedCaptureProof {
+    val schemaVersion = if (captureSignatures) db.scalarLong("PRAGMA main.schema_version") else -1L
     val tables = db.queryList("SELECT schema_name,table_name FROM _sync_managed_tables") { it.getText(0) to it.getText(1) }
     val cache=TableInfoCache()
     val expected=linkedMapOf<String,String>()
@@ -132,13 +165,26 @@ internal suspend fun validateRetainedCaptureTriggers(db: SafeSQLiteConnection) {
         val key=info.columns.single { it.isPrimaryKey }.name
         expected.putAll(expectedCaptureTriggers(schema,ValidatedSyncTable(name,key),info))
     }
-    val existing=db.queryList("SELECT name,tbl_name,sql FROM sqlite_schema WHERE type='trigger'") { Triple(it.getText(0),it.getText(1),it.getText(2)) }
+    val existing=db.queryList("SELECT name,tbl_name,sql FROM sqlite_schema WHERE type='trigger' AND NOT ($bootstrapFamilyPredicate)") { Triple(it.getText(0),it.getText(1),it.getText(2)) }
     for((name,sql) in expected) {
         require(existing.singleOrNull { it.first==name }?.third?.let(::retainedSqlSignature)==retainedSqlSignature(sql)) { "incompatible retained capture trigger $name" }
     }
     for((name,table,sql) in existing) {
         require(name in expected || name in oversqliteStaticTriggers || (!triggerReferencesSyncTable(sql) && table !in oversqliteRetainedTables)) { "unexpected retained trigger $name" }
     }
+    val signatures = if (captureSignatures) tables.associate { (_, table) ->
+        val names = oversqliteManagedTriggerNames(setOf(table))
+        val digest = newSnapshotDigest()
+        for ((name, _, sql) in existing.filter { it.first in names }.sortedBy { it.first }) {
+            val frame = canonicalizeJsonElement(kotlinx.serialization.json.JsonArray(listOf(
+                kotlinx.serialization.json.JsonPrimitive(name), kotlinx.serialization.json.JsonPrimitive(sql),
+            ))).encodeToByteArray()
+            digest.append(bootstrapBigEndian(frame.size.toLong(), 8)); digest.append(frame)
+        }
+        table to digest.finishHex()
+    } else emptyMap()
+    require(!captureSignatures || db.scalarLong("PRAGMA main.schema_version") == schemaVersion) { "retained capture metadata changed" }
+    return RetainedCaptureProof(db, schemaVersion, cache, signatures)
 }
 
 private suspend fun loadExistingTriggerSqlByName(

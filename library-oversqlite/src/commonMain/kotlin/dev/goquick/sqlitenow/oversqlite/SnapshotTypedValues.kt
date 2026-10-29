@@ -50,8 +50,9 @@ internal class SnapshotTypedValues(
         fun charge(workspace: OversqliteWorkspace, unit: String, info: TableInfo, bytes: Long) =
             WorkspaceCharge(8+2L*info.columns.size,workspace.add(unit,WorkspaceCharge(bytes=workspace.scale(unit,bytes,6)),WorkspaceCharge(bytes=128L*info.columns.size)).bytes)
         /** Reads SQLite's parameter projection, never a business row or reconstructed JSON. */
-        fun readProjection(info: TableInfo, statement: SQLiteStatement): List<TypedValue> =
-            info.columns.mapIndexed { index, column ->
+        fun readProjection(info: TableInfo, statement: SQLiteStatement, offset: Int = 0, canonicalizeReals: Boolean = true): List<TypedValue> =
+            info.columns.mapIndexed { columnIndex, column ->
+                val index = columnIndex + offset
                 val type = statement.getColumnType(index)
                 val storage = when (type) {
                     SQLITE_DATA_NULL -> "NULL"
@@ -71,7 +72,7 @@ internal class SnapshotTypedValues(
                         SQLITE_DATA_FLOAT -> {
                             val value = statement.getDouble(index)
                             require(value.isFinite()) { "finite projection value required" }
-                            TypedValue.Real(canonicalizeFiniteJsonNumber(value.toString()))
+                            TypedValue.Real(if (canonicalizeReals) canonicalizeFiniteJsonNumber(value.toString()) else value.toString())
                         }
                         SQLITE_DATA_TEXT -> TypedValue.Text(statement.getText(index))
                         SQLITE_DATA_BLOB -> TypedValue.Blob(statement.getBlob(index))

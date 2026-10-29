@@ -50,7 +50,7 @@ internal suspend fun inspectOpening(
     reclaimReservations: Boolean = false,
 ): OpeningInspection = session.withConnection { connection ->
     if (freshLifetimeAcquisition && reclaimReservations) connection.transaction(TransactionMode.IMMEDIATE) {
-        if (inspectRetainedRuntime(connection) != "FRESH") {
+        if (inspectRetainedRuntime(connection, config, abandonedReservations = true) != "FRESH") {
             OversqliteWorkspace(connection, config).reclaimAfterLifetimeAcquisition()
         }
         evaluateOpeningAdmission(connection, config, plan, targetVersion)
@@ -65,7 +65,7 @@ internal suspend fun evaluateOpeningAdmission(
     expectedDurableEdge: OversqliteOpeningRecord? = null,
     abandonedReservations: Boolean = false,
 ): OpeningInspection {
-    val census = inspectRetainedRuntime(connection)
+    val census = inspectRetainedRuntime(connection, config, abandonedReservations)
     if (census != "FRESH") checkRetainedApplyWorkspace(connection, config, abandonedReservations)
     val journal = OversqliteOpeningStore(connection).readOrNull()
     if (expectedDurableEdge != null) {

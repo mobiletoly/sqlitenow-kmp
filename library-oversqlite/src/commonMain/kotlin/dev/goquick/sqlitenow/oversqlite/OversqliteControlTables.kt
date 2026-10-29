@@ -50,6 +50,7 @@ internal suspend fun initializeOversqliteControlTables(db: SafeSQLiteConnection)
         oversqliteRetainedTableDdl.getValue("_sync_dirty_rows")
     )
     db.execSQL(relationshipProjectionDdl)
+    initializeBootstrapRetainedOwners(db)
 
     db.execSQL(
         oversqliteRetainedTableDdl.getValue("_sync_conflict_state")
@@ -64,6 +65,7 @@ internal suspend fun initializeOversqliteControlTables(db: SafeSQLiteConnection)
     for (operation in listOf("insert", "update", "delete")) {
         db.execSQL(expectedConflictRevisionTriggerSql(operation))
         db.execSQL(expectedBaselineRevisionTriggerSql(operation))
+        db.execSQL(expectedBootstrapBaselineGuardSql(operation))
     }
     db.execSQL(
         oversqliteRetainedTableDdl.getValue("_sync_snapshot_stage")

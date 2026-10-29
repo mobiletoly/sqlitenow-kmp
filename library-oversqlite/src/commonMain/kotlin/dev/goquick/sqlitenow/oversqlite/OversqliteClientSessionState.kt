@@ -60,7 +60,7 @@ internal class OversqliteClientSessionState(
     internal suspend fun openLocalRuntime(): ValidatedConfig {
         admittedContract = null
         // Census incomplete retained state before changing any SQLite connection setting.
-        rejectPartialRetainedRuntimeBeforeConfiguration(db)
+        rejectPartialRetainedRuntimeBeforeConfiguration(db, config)
         val originalForeignKeys = db.scalarLong("PRAGMA foreign_keys")
         try {
             db.execSQL("PRAGMA foreign_keys = ON")
@@ -71,7 +71,7 @@ internal class OversqliteClientSessionState(
             var attachmentState: OversqliteAttachmentState? = null
             db.transaction(TransactionMode.IMMEDIATE) {
                 // Recheck under the writer lock to close the preflight-to-initialization race.
-                if (inspectRetainedRuntime(db) != "FRESH") checkRetainedApplyWorkspace(db, config)
+                if (inspectRetainedRuntime(db, config) != "FRESH") checkRetainedApplyWorkspace(db, config)
                 validated = runtimeInitializer.prepareLocalRuntime(db, managedTableStore)
                 applyStateStore.resetOnStartup()
                 val operation = operationStateStore.loadState()

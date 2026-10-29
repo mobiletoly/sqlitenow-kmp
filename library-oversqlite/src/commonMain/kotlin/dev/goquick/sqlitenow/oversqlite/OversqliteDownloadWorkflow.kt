@@ -16,9 +16,11 @@
 package dev.goquick.sqlitenow.oversqlite
 
 import androidx.sqlite.async.step
+import dev.goquick.sqlitenow.common.sqliteNowLogger
 import dev.goquick.sqlitenow.core.SafeSQLiteConnection
 import dev.goquick.sqlitenow.core.TransactionMode
 import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 
@@ -82,6 +84,7 @@ internal class OversqliteDownloadWorkflow(
         check(session.snapshotBundleSeq >= installation.floor()) { "snapshot boundary precedes installed observation floor" }
         val lifecycle = OversqliteApplyLifecycle(db, config, localStore, bundleApplier.survivors, json)
         val current = operationStateStore.loadState()
+        require(current.snapshotEngine == generalSnapshotEngine) { "generation staging cannot reinterpret typed bootstrap" }
         operationStateStore.persistState(current.copy(stagedSnapshotId = session.snapshotId,
             snapshotBundleSeq = session.snapshotBundleSeq, snapshotRowCount = session.rowCount,
             snapshotByteCount = session.logicalByteCount, snapshotStageComplete = false,
@@ -141,14 +144,14 @@ internal class OversqliteDownloadWorkflow(
         finalizer: suspend () -> Unit = {},
     ): DownloadWorkflowResult {
         requireCleanSnapshotEntry()
+        if (rotatedSourceId == null && outboxMode == SnapshotRebuildOutboxMode.CLEAN) markCheckpointRecoveryRequired("explicit_rebuild")
+        tryBootstrapSnapshot(state, outboxMode, rotatedSourceId, sourceReplacementReason,
+            onPhaseChanged = onPhaseChanged, finalizer = finalizer)?.let { return it }
         bundleApplier.survivors.inspectSnapshotCapabilities(state)
         val diagnostics = requireNotNull(snapshotDiagnostics()) {
             "snapshot diagnostics scope is missing for rebuild"
         }
         diagnostics.markRestoreAttempt()
-        if (rotatedSourceId == null && outboxMode == SnapshotRebuildOutboxMode.CLEAN) {
-            markCheckpointRecoveryRequired("explicit_rebuild")
-        }
         requireSnapshotRebuildState(outboxMode)
         onPhaseChanged(OversqlitePhase.STAGING_REMOTE_STATE)
         val (session, guard) = ensureOperationSnapshotStaged(state, outboxMode,
@@ -157,6 +160,304 @@ internal class OversqliteDownloadWorkflow(
         automaticRecovery.phase("prepare_transition")
         onPhaseChanged(OversqlitePhase.APPLYING_REMOTE_STATE)
         return applyStagedSnapshot(state, session, rotatedSourceId, outboxMode, guard, finalizer)
+    }
+
+    /** Automatic candidate entry: capability/state refusal is possible only before typed effects. */
+    internal suspend fun tryBootstrapSnapshot(
+        state: RuntimeState, mode: SnapshotRebuildOutboxMode, rotatedSourceId: String? = null,
+        replacementReason: String? = null, remoteReplace: Boolean = false,
+        onPhaseChanged: suspend (OversqlitePhase) -> Unit = {}, finalizer: suspend () -> Unit = {},
+    ): DownloadWorkflowResult? {
+        requireCleanSnapshotEntry()
+        val limits = negotiateSnapshotLimits(state.admittedContract, config)
+        val workspace = OversqliteWorkspace(db, config)
+        val prepared = syncPhase("snapshot.bootstrap.admission") { operations.completeWorkPhase("bootstrap route admission") {
+            db.transaction(TransactionMode.IMMEDIATE) {
+                db.withStatementCache(cleanupTimeoutMillis = 5_000) { cache ->
+                    val old = readBootstrapOperation(db, workspace, cache).first
+                    if (old.snapshotEngine == generalSnapshotEngine && old.stagedSnapshotId.isNotEmpty()) {
+                        syncDiagnosticEvent("snapshot.engine", "general.pinned")
+                        return@withStatementCache null
+                    }
+                    if (old.snapshotEngine == generalSnapshotEngine && !bootstrapManagedStateEmpty(db, state.validated, cache)) {
+                        syncDiagnosticEvent("snapshot.engine", "general.managed_nonempty")
+                        return@withStatementCache null
+                    }
+                    val version = db.scalarLong("PRAGMA main.schema_version")
+                    val metadata = SyncRuntimeInitializer(config, TableInfoCache()).validateConfig(db)
+                        .withGeneration(state.admittedContract.generation)
+                    require(managedPhysicalShape(metadata.tableInfoByName, metadata.keyByTable) ==
+                        managedPhysicalShape(state.validated.tableInfoByName, state.validated.keyByTable)) { "bootstrap physical admission changed" }
+                    val admitted = admitBootstrapSchema(db, metadata, version, workspace, "bootstrap-route", cache)
+                    if (admitted is BootstrapSchemaAdmission.Unavailable) {
+                        require(old.snapshotEngine == generalSnapshotEngine) { "pinned bootstrap capability changed" }
+                        syncDiagnosticEvent("snapshot.engine", "general." + admitted.reason.name.lowercase())
+                        sqliteNowLogger.w {
+                            "Oversqlite snapshot: typed bootstrap unavailable (${admitted.reason.label}); using the general snapshot installer." +
+                                (admitted.missingChildIndex?.let { index ->
+                                    " Required leading child index: table ${quoteIdent(index.table)}, column ${quoteIdent(index.column)}, collation ${index.collation}." +
+                                        " Add a matching index to the application schema."
+                                } ?: "")
+                        }
+                        return@withStatementCache null
+                    }
+                    admitted as BootstrapSchemaAdmission.Eligible
+                    if (old.snapshotEngine == generalSnapshotEngine) bindBootstrapDescriptor(db, admitted, metadata, workspace, cache)
+                    else { verifyBootstrapDescriptorHeader(db, admitted.descriptor, cache); verifyBootstrapFamilyObjects(db, admitted.descriptor, cache) }
+                    // Owned layout creation ends the old schema pin before the operation pin.
+                    val afterBinding = db.scalarLong("PRAGMA main.schema_version")
+                    val current = if (afterBinding == version) admitted else
+                        admitBootstrapSchema(db, metadata, afterBinding, workspace, "bootstrap-route", cache)
+                    require(current is BootstrapSchemaAdmission.Eligible)
+                    metadata to current
+                }
+            }
+        } } ?: return null
+        val (metadata, admission) = prepared
+        // The immutable descriptor remains live across session creation and HTTP.
+        // Its holder ends only after the transfer/publication owner has ended.
+        workspace.check("bootstrap-route", admission.descriptor.charge)
+        val descriptorScope = bootstrapReceiptScope(db, workspace, "bootstrap-route", admission.descriptor.charge)
+        return try { withContext(descriptorScope) {
+        val runtime = state.copy(validated = metadata)
+        val source = rotatedSourceId ?: state.sourceId
+        val pin = operations.completeWorkPhase("bootstrap lifecycle capture") { db.transaction(TransactionMode.DEFERRED) {
+            db.withStatementCache(cleanupTimeoutMillis = 5_000) { cache ->
+                val (operation, controlCharge) = readBootstrapOperation(db, workspace, cache)
+                val context = bootstrapLifecycleContext(runtime, admission, mode, remoteReplace, cache, controlCharge, reserveLifecycle = true)
+                BootstrapLifecyclePin(context, operation, controlCharge,
+                    currentCoroutineContext()[AutomaticRecoveryContext]?.pin)
+            }
+        } }
+        descriptorScope.retain(workspace, "bootstrap-route", pin.controlCharge)
+        val operation = pin.operation
+        val retained = operation.snapshotEngine == typedSnapshotEngine
+        val session = if (retained) {
+            val transfer = json.decodeFromString(RetainedSnapshotSeal.serializer(), operation.snapshotTransfer)
+            validateSnapshotSession(transfer.session)
+            require(transfer.authority == config.serviceId && transfer.session.snapshotId == operation.stagedSnapshotId) { "pinned bootstrap authority changed" }
+            if (transfer.source != source) {
+                BootstrapSnapshotRetirement.use(db, config, admission.descriptor, state.admittedContract.generation, operations) {
+                    while (!it.step()) operations.nextWorkSliceIfNeeded()
+                }
+                retireOperationSnapshot(transfer.session.snapshotId, transfer.source)
+                throw RebuildRequiredException()
+            }
+            transfer.session
+        } else {
+            val floor = if (remoteReplace) 0L else operations.completeWorkPhase("bootstrap observation floor") { installation.floor() }
+            val request = if (remoteReplace) null else if (rotatedSourceId != null) SnapshotSessionCreateRequest(
+                SnapshotSourceReplacement(state.sourceId, rotatedSourceId, checkNotNull(replacementReason)))
+                else SnapshotSessionCreateRequest(recovery = SnapshotRecovery(floor))
+            remoteApi.createSnapshotSession(state.sourceId, request) {
+                validateBootstrapLifecycle(runtime, admission, mode, remoteReplace, pin)
+            }.also {
+                require(it.snapshotBundleSeq >= floor) { "snapshot boundary precedes installed observation floor" }
+            }
+        }
+        val currentStageGuard = bootstrapSnapshotStageGuard(pin.context, session)
+        val stageGuard = if (retained) operation.snapshotStageGuard else currentStageGuard
+        val transfer = if (retained) operation.snapshotTransfer else installation.encodeSeal(session, source)
+        val phase = db.withPreparedStatement("SELECT phase FROM _sync_bootstrap_state WHERE singleton_key=1") {
+            require(it.step()); it.getText(0)
+        }
+        if (phase == "retiring") {
+            BootstrapSnapshotRetirement.use(db, config, admission.descriptor, state.admittedContract.generation, operations) {
+                while (!it.step()) operations.nextWorkSliceIfNeeded()
+            }
+            throw RebuildRequiredException()
+        }
+        suspend fun validate(stage: TypedSnapshotStage) {
+            pin.operation = stage.retainedOperation
+            operations.completeWorkPhase("bootstrap lifecycle guard") {
+                validateBootstrapLifecycle(runtime, admission, mode, remoteReplace, pin)
+            }
+        }
+        suspend fun install(stage: TypedSnapshotStage): DownloadWorkflowResult {
+            syncDiagnosticEvent("snapshot.engine", typedSnapshotEngine)
+            snapshotDiagnostics()?.markRestoreAttempt()
+            onPhaseChanged(OversqlitePhase.STAGING_REMOTE_STATE)
+            validate(stage)
+            if (!stage.retainedOperation.snapshotStageComplete) {
+                var after = stage.retainedOperation.snapshotStagedRowCount
+                var more = true
+                while (more) {
+                    operations.nextWorkSliceIfNeeded()
+                    val progress = BootstrapTransportScope.use(workspace) { transport ->
+                        val hardLimit = state.admittedContract.limits.maxSnapshotDecodedBytesPerChunk
+                        suspend fun fetch(rows: Int, bytes: Long) = remoteApi.fetchAndStageBootstrapChunk(stage, after, rows, bytes,
+                            hardLimit, state.admittedContract.limits.maxRowDecodedBytes, transport) { validate(stage) }
+                        try { fetch(limits.maxRows, limits.maxBytes) }
+                        catch (tooSmall: SnapshotChunkTooSmallException) {
+                            if (tooSmall.requiredBytes > hardLimit) throw SnapshotSemanticException(SnapshotSemanticFailure.INVALID_CHUNK)
+                            try { fetch(1, tooSmall.requiredBytes) }
+                            catch (_: SnapshotChunkTooSmallException) { throw SnapshotSemanticException(SnapshotSemanticFailure.INVALID_CHUNK) }
+                        }
+                    }
+                    after = progress.nextOrdinal
+                    validate(stage)
+                    more = progress.hasMore
+                    require(more == (after < session.rowCount))
+                }
+                stage.seal()
+            }
+            snapshotDiagnostics()?.recordStagedRows(session.rowCount)
+            automaticRecovery.phase("prepare_transition")
+            onPhaseChanged(OversqlitePhase.APPLYING_REMOTE_STATE)
+            // Accept only progress produced by this stage owner. The final
+            // writer below reads and checks SQL again after the callback.
+            pin.operation = stage.retainedOperation
+            val result = applyExecutor.inApplyModeTransaction(runtime) { cache ->
+                validateBootstrapLifecycle(runtime, admission, mode, remoteReplace, pin, cache)
+                if (!remoteReplace) check(session.snapshotBundleSeq >= installation.floor())
+                automaticRecovery.ready()
+                val target = OversqliteProvenanceContextStore(db).target(runtime, source)
+                val tables = SnapshotBootstrapInstaller(db, config, operations).install(stage, admission, metadata, target, cache)
+                syncPhase("snapshot.bootstrap.publication", session.rowCount, session.logicalByteCount) {
+                    if (rotatedSourceId != null && state.sourceId != rotatedSourceId) sourceStateStore.markRotated(state.sourceId, rotatedSourceId)
+                    attachmentStateStore.persistAttachedState(source, state.userId, unconfirmedLocalSchema,
+                        session.snapshotBundleSeq, false, "", cache)
+                    automaticRecovery.completed(session.snapshotBundleSeq)
+                    finalizer()
+                    syncPhase("snapshot.bootstrap.cleanup", session.rowCount) { stage.clearAfterInstallation(cache) }
+                }
+                DownloadWorkflowResult(RemoteSyncOutcome.APPLIED_SNAPSHOT, tables,
+                    RestoreSummary(session.snapshotBundleSeq, session.rowCount), rotatedSourceId)
+            }
+            snapshotDiagnostics()?.recordAppliedRows(session.rowCount)
+            retireOperationSnapshot(session.snapshotId, source)
+            notifyUpdatedTables(result.updatedTables)
+            return result
+        }
+        if (retained && currentStageGuard != stageGuard) {
+            BootstrapSnapshotRetirement.use(db, config, admission.descriptor, state.admittedContract.generation, operations) {
+                while (!it.step()) operations.nextWorkSliceIfNeeded()
+            }
+            throw RebuildRequiredException()
+        }
+        try {
+            if (retained) TypedSnapshotStage.resume(db, config, admission.descriptor, session,
+                state.admittedContract.generation, source, operations, ::install)
+            else TypedSnapshotStage.begin(db, config, admission, metadata, session, state.admittedContract.generation,
+                source, stageGuard, transfer, operations, beforeStaging = {
+                    validateBootstrapLifecycle(runtime, admission, mode, remoteReplace, pin)
+                }, block = ::install)
+        } catch (failure: Throwable) {
+            if (failure is SnapshotHttpException && failure.errorCode in setOf("snapshot_session_expired", "snapshot_session_not_found")) {
+                // Retirement completes this transfer. A later legal operation may create another one.
+                try {
+                    BootstrapSnapshotRetirement.use(db, config, admission.descriptor, state.admittedContract.generation, operations) {
+                        while (!it.step()) operations.nextWorkSliceIfNeeded()
+                    }
+                } catch (cleanup: Throwable) { if (cleanup !== failure) failure.addSuppressed(cleanup) }
+            }
+            if (!retained) {
+                try {
+                    val owned = db.withPreparedStatement("SELECT snapshot_engine='typed_bootstrap' AND staged_snapshot_id=? FROM _sync_operation_state WHERE singleton_key=1") {
+                        it.bindText(1, session.snapshotId); require(it.step()); it.getLong(0) == 1L
+                    }
+                    if (!owned) retireOperationSnapshot(session.snapshotId, source)
+                } catch (cleanup: Throwable) { attachSuppressedOnce(failure, cleanup) }
+            }
+            throw failure
+        }
+        } } finally { descriptorScope.close() }
+    }
+
+    private data class BootstrapLifecyclePin(
+        val context: String, var operation: OversqliteOperationState,
+        val controlCharge: WorkspaceCharge, val automatic: AutomaticRecoveryPin?,
+    )
+
+    private fun bootstrapSnapshotStageGuard(context: String, session: SnapshotSession): String =
+        sha256Hex(kotlinx.serialization.json.buildJsonArray {
+            add(kotlinx.serialization.json.JsonPrimitive("oversqlite.bootstrap.lifecycle.v1"))
+            for (value in listOf(context, session.snapshotId, session.snapshotBundleSeq.toString(), session.rowCount.toString(),
+                session.logicalByteCount.toString(), session.snapshotHash)) add(kotlinx.serialization.json.JsonPrimitive(value))
+        }.toString().encodeToByteArray())
+
+    /** No actual mutable operation strings are retrieved by a pinned check. */
+    private suspend fun validateBootstrapLifecycle(
+        state: RuntimeState, admission: BootstrapSchemaAdmission.Eligible, mode: SnapshotRebuildOutboxMode,
+        remoteReplace: Boolean, pin: BootstrapLifecyclePin, writer: StatementCache? = null,
+    ) {
+        suspend fun check(cache: StatementCache) {
+            pin.automatic?.let { automaticRecovery.validate(it) }
+            requireBootstrapOperationMatches(db, pin.operation, cache)
+            require(bootstrapLifecycleContext(state, admission, mode, remoteReplace, cache) == pin.context) {
+                "bootstrap lifecycle context changed"
+            }
+        }
+        if (writer != null) check(writer)
+        else db.transaction(TransactionMode.DEFERRED) { db.withStatementCache(cleanupTimeoutMillis = 5_000) { check(it) } }
+    }
+
+    /** Measure scalar/TEMP lengths before SQL JSON, driver TEXT and UTF-8 copies. */
+    private suspend fun bootstrapLifecycleContext(
+        state: RuntimeState, admission: BootstrapSchemaAdmission.Eligible, mode: SnapshotRebuildOutboxMode,
+        remoteReplace: Boolean, cache: StatementCache, independent: WorkspaceCharge = WorkspaceCharge(), reserveLifecycle: Boolean = false,
+    ): String {
+        cache.requireConnectionOwner(db)
+        admission.pin.requireCurrent(db, state.validated)
+        val workspace = OversqliteWorkspace(db, config)
+        val sourceTables = """FROM _sync_contract_identity i CROSS JOIN _sync_attachment_state a
+            CROSS JOIN _sync_conflict_state f CROSS JOIN _sync_outbox_bundle o CROSS JOIN _sync_operation_state p
+            JOIN _sync_source_state s ON s.source_id=a.current_source_id"""
+        val measure = db.withPreparedStatement("""SELECT
+            length(CAST(i.database_id AS BLOB))+length(CAST(i.service_id AS BLOB))+length(CAST(i.physical_shape AS BLOB))+
+            length(CAST(i.fingerprint AS BLOB))+length(CAST(a.current_source_id AS BLOB))+length(CAST(a.attached_user_id AS BLOB))+
+            length(CAST(a.binding_state AS BLOB))+length(CAST(a.pending_initialization_id AS BLOB))+
+            length(CAST(o.state AS BLOB))+length(CAST(o.source_id AS BLOB))+length(CAST(o.canonical_request_hash AS BLOB))+
+            length(CAST(p.kind AS BLOB))+length(CAST(p.target_user_id AS BLOB))+length(CAST(p.reason AS BLOB))+
+            length(CAST(p.replacement_source_id AS BLOB))+
+            (SELECT COALESCE(sum(length(CAST(name AS BLOB))+length(CAST(type AS BLOB))+length(CAST(tbl_name AS BLOB))+
+                length(CAST(COALESCE(sql,'') AS BLOB))),0) FROM sqlite_temp_schema),
+            (SELECT count(*) FROM sqlite_temp_schema) $sourceTables""", cache) {
+            require(it.step()); it.getLong(0) to it.getLong(1)
+        }
+        val unit = "bootstrap-lifecycle"
+        if (reserveLifecycle) {
+            // The existing64-exchange hard bound permits at most two checks per
+            // exchange, plus eight local boundaries. Unchanged context lengths
+            // are pinned; a changed context fails before adopting any values.
+            val checkWork = snapshotWorkAdd(512, snapshotWorkAdd(snapshotWorkScale(measure.first, 4), snapshotWorkScale(measure.second, 128)))
+            operations.reserveSyncWork(unit, snapshotWorkScale(checkWork, 136), readyAtomic = true)
+        }
+        val host = WorkspaceCharge(workspace.add(unit, WorkspaceCharge(64), WorkspaceCharge(workspace.scale(unit, measure.second, 8))).entries,
+            bootstrapCheckedAdd(32768, bootstrapCheckedAdd(workspace.scale(unit, measure.first, 24), workspace.scale(unit, measure.second, 512))))
+        workspace.check(unit, workspace.add(unit, independent, host), statementCache = cache)
+        val condition = if (remoteReplace) "a.binding_state='anonymous' AND p.kind='remote_replace' AND p.target_user_id=?"
+            else "a.binding_state='attached' AND a.rebuild_required=1 AND a.attached_user_id=? AND p.kind='" +
+                (if (mode == SnapshotRebuildOutboxMode.CLEAN) operationKindNone else operationKindSourceRecovery) + "'"
+        val value = db.withPreparedStatement("""SELECT json_array(i.database_id,i.service_id,i.generation_id,i.local_version,
+            i.physical_shape,i.fingerprint,a.attachment_epoch,a.current_source_id,a.binding_state,a.attached_user_id,
+            a.pending_initialization_id,a.last_bundle_seq_seen,a.rebuild_required,f.dirty_revision,f.baseline_revision,
+            s.next_source_bundle_id,o.state,o.source_id,o.source_bundle_id,o.canonical_request_hash,
+            p.kind,p.target_user_id,p.reason,p.replacement_source_id,(SELECT schema_version FROM pragma_schema_version),
+            json(COALESCE((SELECT json_group_array(json_array(name,type,tbl_name,COALESCE(sql,''))) FROM
+                (SELECT name,type,tbl_name,sql FROM sqlite_temp_schema ORDER BY name,type)),'[]')))
+            $sourceTables WHERE i.singleton_key=1 AND a.singleton_key=1 AND f.singleton_key=1 AND o.singleton_key=1 AND p.singleton_key=1
+            AND i.database_id=? AND i.service_id=? AND i.generation_id=? AND i.fingerprint=? AND i.physical_shape=?
+            AND a.current_source_id=? AND $condition AND o.state='none'
+            AND NOT EXISTS(SELECT 1 FROM _sync_dirty_rows) AND NOT EXISTS(SELECT 1 FROM _sync_outbox_rows)
+            AND NOT EXISTS(SELECT 1 FROM _sync_upload_journal)""", cache) {
+            it.bindText(1, config.databaseId); it.bindText(2, config.serviceId); it.bindLong(3, config.generationId)
+            it.bindText(4, state.admittedContract.generation.fingerprint)
+            it.bindText(5, managedPhysicalShape(state.validated.tableInfoByName, state.validated.keyByTable))
+            it.bindText(6, state.sourceId); it.bindText(7, state.userId)
+            if (it.step()) it.getText(0) else null
+        }
+        requireNotNull(value) { "bootstrap lifecycle admission changed" }
+        val policy = kotlinx.serialization.json.buildJsonArray {
+            for (field in listOf("oversqlite.bootstrap.context.v1", config.maxSyncWorkspaceEntries.toString(),
+                config.maxSyncWorkspaceBytes.toString(), config.maxSyncWorkUnitsPerInvocation.toString(), state.admittedContract.limits.toString()))
+                add(kotlinx.serialization.json.JsonPrimitive(field))
+        }.toString().encodeToByteArray()
+        val bytes = value.encodeToByteArray()
+        val digest = newSnapshotDigest()
+        digest.append(bootstrapBigEndian(policy.size.toLong(), 8)); digest.append(policy)
+        digest.append(bootstrapBigEndian(bytes.size.toLong(), 8)); digest.append(bytes)
+        return digest.finishHex()
     }
 
     internal suspend fun ensureOperationSnapshotStaged(
@@ -570,6 +871,7 @@ internal class OversqliteDownloadWorkflow(
                 lifecycle.verifySnapshot(state, session, statementCache)
             }
             bundleApplier.survivors.finish(replayStatementCache = statementCache)
+            syncPhase("snapshot.publication", session.rowCount, session.logicalByteCount) {
             attachmentStateStore.persistAttachedState(
                 sourceId = currentSourceId,
                 userId = state.userId,
@@ -583,8 +885,9 @@ internal class OversqliteDownloadWorkflow(
             operationStateStore.persistState(OversqliteOperationState(), statementCache)
 
             finalizer()
+            }
 
-            stageStore.deleteSnapshotStage(session.snapshotId, statementCache)
+            syncPhase("snapshot.cleanup", session.rowCount) { stageStore.deleteSnapshotStage(session.snapshotId, statementCache) }
             DownloadWorkflowResult(
                 outcome = RemoteSyncOutcome.APPLIED_SNAPSHOT,
                 updatedTables = state.validated.tables.map { it.tableName.lowercase() }.toSet(),

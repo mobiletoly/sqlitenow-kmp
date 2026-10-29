@@ -29,7 +29,12 @@ internal val oversqliteRetainedTableDdl = mapOf(
     "_sync_apply_state" to """
         CREATE TABLE IF NOT EXISTS _sync_apply_state (
           singleton_key INTEGER NOT NULL PRIMARY KEY CHECK (singleton_key = 1),
-          apply_mode INTEGER NOT NULL DEFAULT 0
+          apply_mode INTEGER NOT NULL DEFAULT 0,
+          baseline_mode TEXT NOT NULL DEFAULT 'row' CHECK(baseline_mode IN ('row','bootstrap')),
+          bootstrap_operation TEXT NOT NULL DEFAULT '',
+          bootstrap_target_context INTEGER NOT NULL DEFAULT 0 CHECK(typeof(bootstrap_target_context)='integer' AND bootstrap_target_context>=0),
+          bootstrap_revision_low INTEGER NOT NULL DEFAULT 0 CHECK(typeof(bootstrap_revision_low)='integer' AND bootstrap_revision_low>=0),
+          bootstrap_revision_high INTEGER NOT NULL DEFAULT 0 CHECK(typeof(bootstrap_revision_high)='integer' AND bootstrap_revision_high>=0)
         )
     """.trimIndent(),
     "_sync_row_state" to authoritativeRowStateDdl,
@@ -118,6 +123,12 @@ internal val oversqliteRetainedTableDdl = mapOf(
           snapshot_staged_byte_count INTEGER NOT NULL DEFAULT 0 CHECK(typeof(snapshot_staged_byte_count)='integer' AND snapshot_staged_byte_count>=0),
           snapshot_stage_guard TEXT NOT NULL DEFAULT '',
           snapshot_transfer TEXT NOT NULL DEFAULT '',
+          snapshot_engine TEXT NOT NULL DEFAULT 'general_delta' CHECK(snapshot_engine IN ('general_delta','typed_bootstrap')),
+          bootstrap_reference TEXT NOT NULL DEFAULT '',
+          bootstrap_cleanup_chain TEXT NOT NULL DEFAULT '',
+          bootstrap_page_count INTEGER NOT NULL DEFAULT 0 CHECK(typeof(bootstrap_page_count)='integer' AND bootstrap_page_count>=0),
+          bootstrap_metadata_entries INTEGER NOT NULL DEFAULT 1 CHECK(typeof(bootstrap_metadata_entries)='integer' AND bootstrap_metadata_entries>=1),
+          bootstrap_metadata_bytes INTEGER NOT NULL DEFAULT 512 CHECK(typeof(bootstrap_metadata_bytes)='integer' AND bootstrap_metadata_bytes>=512),
           recovery_state TEXT NOT NULL DEFAULT '',
           reason TEXT NOT NULL DEFAULT '',
           replacement_source_id TEXT NOT NULL DEFAULT '',
@@ -184,4 +195,4 @@ internal val oversqliteRetainedTableDdl = mapOf(
                 admission TEXT NOT NULL DEFAULT '', admission_hash TEXT NOT NULL DEFAULT ''
             )
     """.trimIndent(),
-)
+) + bootstrapRetainedTableDdl

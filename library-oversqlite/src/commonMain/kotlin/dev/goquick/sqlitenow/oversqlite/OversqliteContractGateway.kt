@@ -80,7 +80,19 @@ internal class OversqliteContractGateway(
             tableInfoCache.install(candidate.tableInfoByName)
             sessionState.validatedConfig = candidate
         }
-        db.transaction(TransactionMode.IMMEDIATE) { OversqliteContractStore(db).recordAdmission(contract) }
+        db.transaction(TransactionMode.IMMEDIATE) {
+            OversqliteContractStore(db).recordAdmission(contract)
+            // Provision new layouts lazily at snapshot admission; always validate
+            // an existing retained family when admitting its contract.
+            if (db.scalarLong(
+                    "SELECT descriptor_signature!='' FROM _sync_bootstrap_state WHERE singleton_key=1") == 1L) {
+                val version = db.scalarLong("PRAGMA main.schema_version")
+                val metadata = SyncRuntimeInitializer(config, TableInfoCache()).validateConfig(db).withGeneration(discovered)
+                db.withStatementCache(cleanupTimeoutMillis = 5_000) { cache ->
+                    prepareBootstrapDescriptorForAdmission(db, config, metadata, version, cache)
+                }
+            }
+        }
         sessionState.admittedContract = contract
         return true
     }

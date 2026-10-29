@@ -49,12 +49,16 @@ internal class OversqliteWorkspace(
     internal suspend fun withCurrentTransientCharges(unit: String, base: WorkspaceCharge): WorkspaceCharge = withTransientCharges(unit, base)
 
     internal suspend fun readDurableBase(unit: String, cache: StatementCache): WorkspaceCharge =
-        usageUncached(unit, statementCache = cache)
+        usageUncached(unit, statementCache = cache).also { base ->
+            currentCoroutineContext()[BootstrapReceiptScope]?.takeIf { it.db === db }?.observe(durable = base)
+        }
 
     internal suspend fun checkCapturedReadBase(unit: String, base: WorkspaceCharge, extra: WorkspaceCharge) {
         val used = withTransientCharges(unit,base)
         checkDimension(unit, "entries", config.maxSyncWorkspaceEntries, used.entries, extra.entries)
         checkDimension(unit, "bytes", config.maxSyncWorkspaceBytes, used.bytes, extra.bytes)
+        currentCoroutineContext()[BootstrapReceiptScope]?.takeIf { it.db === db }
+            ?.observe(durable = base, admitted = WorkspaceCharge(used.entries + extra.entries, used.bytes + extra.bytes))
     }
 
     private data class Reservation(val token: String, val unit: String, val context: String, val entries: Long, val bytes: Long)
@@ -216,7 +220,9 @@ internal class OversqliteWorkspace(
         validateReservationMetadata()
         val unit=ReplayFixedUnits.retainedReconciliation
         val owners=listOf(
-            listOf("_sync_snapshot_stage","charge","64+6*(length(CAST(snapshot_id AS BLOB))+length(CAST(schema_name AS BLOB))+length(CAST(table_name AS BLOB))+length(CAST(key_json AS BLOB)))+length(CAST(COALESCE(payload,'') AS BLOB))","SELECT snapshot_stage_entries,snapshot_stage_bytes FROM _sync_operation_state WHERE singleton_key=1"),
+            // Configured retained census independently audits the typed owners;
+            // their quota must never be attributed to the general payload table.
+            listOf("_sync_snapshot_stage","charge","64+6*(length(CAST(snapshot_id AS BLOB))+length(CAST(schema_name AS BLOB))+length(CAST(table_name AS BLOB))+length(CAST(key_json AS BLOB)))+length(CAST(COALESCE(payload,'') AS BLOB))","SELECT CASE WHEN snapshot_engine='general_delta' THEN snapshot_stage_entries ELSE 0 END,CASE WHEN snapshot_engine='general_delta' THEN snapshot_stage_bytes ELSE 0 END FROM _sync_operation_state WHERE singleton_key=1"),
             listOf("_sync_apply_rows","bytes","96+6*(length(CAST(table_name AS BLOB))+length(CAST(local_pk AS BLOB)))+length(CAST(COALESCE(payload,'') AS BLOB))","SELECT entries,bytes FROM _sync_apply_plan WHERE singleton_key=1"),
             listOf("_sync_apply_edges","bytes","64+6*(length(CAST(parent_table AS BLOB))+length(CAST(parent_pk AS BLOB))+length(CAST(child_table AS BLOB))+length(CAST(child_pk AS BLOB)))","SELECT edge_entries,edge_bytes FROM _sync_apply_plan WHERE singleton_key=1"),
         )
@@ -234,6 +240,11 @@ internal class OversqliteWorkspace(
             val recorded=one(owner[3]) { WorkspaceCharge(it.getLong(0),it.getLong(1)) } ?: WorkspaceCharge()
             require(total==recorded) { "retained totals differ in ${owner[0]}" }
         }
+        val bootstrap = measureBootstrapMetadataCharge(db)
+        val recordedBootstrap = checkNotNull(one("SELECT bootstrap_metadata_entries,bootstrap_metadata_bytes FROM _sync_operation_state WHERE singleton_key=1") {
+            WorkspaceCharge(it.getLong(0), it.getLong(1))
+        })
+        require(bootstrap == recordedBootstrap) { "retained bootstrap metadata totals differ" }
     }
 
     fun add(unit: String, total: WorkspaceCharge, extra: WorkspaceCharge): WorkspaceCharge {
@@ -273,7 +284,9 @@ internal class OversqliteWorkspace(
         val rows = currentCoroutineContext()[OversqliteWorkSlice]?.snapshotRowLease?.extraCharge(db, unit) ?: WorkspaceCharge()
         val plan = currentCoroutineContext()[OversqliteWorkSlice]?.snapshotPlanReader?.takeIf { it.connectionOwner === db }?.retainedCharge ?: WorkspaceCharge()
         val accounting = currentCoroutineContext()[OversqliteWorkSlice]?.snapshotApplyAccounting?.takeIf { it.connectionOwner === db }?.retainedCharge ?: WorkspaceCharge()
-        return add(unit, add(unit, add(unit, add(unit, add(unit, base, memo), preservation), rows), plan), accounting)
+        val bootstrap = currentCoroutineContext()[BootstrapReceiptScope]?.takeIf { it.active && it.db === db }?.charge ?: WorkspaceCharge()
+        val transport = currentCoroutineContext()[BootstrapTransportScope]?.takeIf { it.db === db }?.charge ?: WorkspaceCharge()
+        return add(unit, add(unit, add(unit, add(unit, add(unit, add(unit, add(unit, base, memo), preservation), rows), plan), accounting), bootstrap), transport)
     }
 
     private suspend fun usageWithoutProvenanceMemo(unit: String, apply: WorkspaceCharge?, push: WorkspaceCharge?, statementCache: StatementCache?): WorkspaceCharge {
@@ -303,10 +316,12 @@ internal class OversqliteWorkspace(
             ${if (abandonedReservations) "0" else "length(CAST(o.workspace_context AS BLOB))"}+length(CAST(o.kind AS BLOB))+
             length(CAST(o.target_user_id AS BLOB))+length(CAST(o.reason AS BLOB))+
             length(CAST(o.replacement_source_id AS BLOB))+length(CAST(o.staged_snapshot_id AS BLOB))+
-            length(CAST(o.snapshot_stage_guard AS BLOB))+length(CAST(o.snapshot_transfer AS BLOB))+length(CAST(o.recovery_state AS BLOB)),
+            length(CAST(o.snapshot_stage_guard AS BLOB))+length(CAST(o.snapshot_transfer AS BLOB))+length(CAST(o.recovery_state AS BLOB))+
+            length(CAST(o.snapshot_engine AS BLOB))+length(CAST(o.bootstrap_reference AS BLOB))+length(CAST(o.bootstrap_cleanup_chain AS BLOB)),
             $applyColumns,$pushColumns,
             (SELECT count(*) FROM _sync_upload_journal),
-            COALESCE((SELECT 512+6*length(CAST(binding AS BLOB))+length(request_body)+length(outcome_body) FROM _sync_upload_journal WHERE singleton_key=1),0)
+            COALESCE((SELECT 512+6*length(CAST(binding AS BLOB))+length(request_body)+length(outcome_body) FROM _sync_upload_journal WHERE singleton_key=1),0),
+            o.bootstrap_metadata_entries,o.bootstrap_metadata_bytes
             FROM _sync_operation_state o
             ${if (apply == null) "LEFT JOIN _sync_apply_plan a ON a.singleton_key=1" else ""}
             ${if (push == null) "LEFT JOIN _sync_push_plan p ON p.singleton_key=1" else ""}
@@ -331,7 +346,8 @@ internal class OversqliteWorkspace(
                     add(unit, WorkspaceCharge(statement.getLong(12), statement.getLong(13)),
                         WorkspaceCharge(1, checkedAdd(unit, "bytes", 2048, scale(unit, statement.getLong(14), 6))))
             }
-            add(unit, add(unit,total,pushCharge),WorkspaceCharge(statement.getLong(15),statement.getLong(16)))
+            val ordinary = add(unit, add(unit,total,pushCharge),WorkspaceCharge(statement.getLong(15),statement.getLong(16)))
+            add(unit, ordinary, WorkspaceCharge(statement.getLong(17), statement.getLong(18)))
         }
         }
     }
@@ -350,6 +366,8 @@ internal class OversqliteWorkspace(
             val used = accounting?.usage(this, statementCache) ?: usage(unit, apply, push, statementCache, read)
             checkDimension(unit, "entries", config.maxSyncWorkspaceEntries, used.entries, extra.entries)
             checkDimension(unit, "bytes", config.maxSyncWorkspaceBytes, used.bytes, extra.bytes)
+            currentCoroutineContext()[BootstrapReceiptScope]?.takeIf { it.db === db }
+                ?.observe(admitted = WorkspaceCharge(used.entries + extra.entries, used.bytes + extra.bytes))
             return used
         } catch (capacity: SyncWorkspaceLimitException) {
             if (capacity.suppressedExceptions.isEmpty() && accounting?.retire() == true) {

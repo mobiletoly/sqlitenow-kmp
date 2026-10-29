@@ -92,6 +92,7 @@ internal suspend fun requireExactPreservedTableDeclaration(
     declared: Set<String>,
     oldManaged: Set<String>,
     targetManaged: Set<String>,
+    retainedBootstrapObjects: Set<String> = emptySet(),
 ) {
     require(declared.intersect(oldManaged + targetManaged).isEmpty()) {
         "preserved local tables must be disjoint from both managed generations"
@@ -103,7 +104,7 @@ internal suspend fun requireExactPreservedTableDeclaration(
         ORDER BY lower(name)
         """.trimIndent(),
     ) { row -> row.getText(0) }.toSet() -
-        oversqliteRetainedTables - oversqliteOpeningTable - oldManaged - targetManaged
+        oversqliteRetainedTables - oversqliteOpeningTable - retainedBootstrapObjects - oldManaged - targetManaged
     require(applicationTables == declared) {
         "every application-owned table outside both managed generations must be declared; " +
             "expected=${applicationTables.sorted()} declared=${declared.sorted()}"

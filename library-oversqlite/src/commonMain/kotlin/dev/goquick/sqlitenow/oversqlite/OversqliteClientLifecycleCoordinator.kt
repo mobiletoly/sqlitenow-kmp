@@ -463,6 +463,12 @@ internal class OversqliteClientLifecycleCoordinator(
         require(state.operation.kind == operationKindRemoteReplace) {
             "cannot finalize durable operation ${state.operation.kind} as remote_replace"
         }
+        val runtime = RuntimeState(validated, session.requireAdmittedContract(), state.operation.targetUserId, state.sourceId)
+        downloadWorkflow.tryBootstrapSnapshot(runtime, SnapshotRebuildOutboxMode.CLEAN, remoteReplace = true,
+            onPhaseChanged = { operations.setProgress(operation, it) })?.let {
+            session.applyDownloadResult(it)
+            return it
+        }
         val refreshedState = ensureRemoteReplaceSnapshotStaged(state, operation)
         val snapshotSession = downloadWorkflow.retainedSnapshotSession(refreshedState.operation, refreshedState.sourceId)
         operations.setProgress(operation, OversqlitePhase.APPLYING_REMOTE_STATE)

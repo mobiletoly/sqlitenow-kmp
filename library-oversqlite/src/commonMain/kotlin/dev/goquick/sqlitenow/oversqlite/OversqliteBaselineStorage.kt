@@ -55,7 +55,7 @@ internal fun expectedBaselineRevisionTriggerSql(operation: String): String {
  val insert = if (operation == "delete") "" else
      "UPDATE _sync_row_state SET server_revision=(SELECT baseline_revision FROM _sync_conflict_state WHERE singleton_key=1) WHERE schema_name=NEW.schema_name AND table_name=NEW.table_name AND key_json=NEW.key_json;" +
      relationshipProjectionInsertSql("server","NEW.server_payload","(SELECT baseline_revision FROM _sync_conflict_state WHERE singleton_key=1)","NEW.server_kind='live'")
- return "CREATE TRIGGER IF NOT EXISTS _sync_baseline_revision_$operation AFTER $clause ON _sync_row_state BEGIN UPDATE _sync_conflict_state SET baseline_revision=baseline_revision+1 WHERE singleton_key=1; $oldDelete $insert END"
+ return "CREATE TRIGGER IF NOT EXISTS _sync_baseline_revision_$operation AFTER $clause ON _sync_row_state WHEN (SELECT baseline_mode FROM _sync_apply_state WHERE singleton_key=1)='row' BEGIN UPDATE _sync_conflict_state SET baseline_revision=baseline_revision+1 WHERE singleton_key=1; $oldDelete $insert END"
 }
 
 internal fun expectedConflictRevisionTriggerSql(operation: String): String {

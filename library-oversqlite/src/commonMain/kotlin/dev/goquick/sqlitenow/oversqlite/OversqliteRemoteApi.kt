@@ -147,7 +147,8 @@ private val responseBodyAbandonedCancellation =
 
 private val streamingCallOwnerKey =
     AttributeKey<StreamingCallOwner>("OversqliteStreamingCallOwner")
-private class PushBufferGrowth(val grow: suspend (Long,Long) -> Unit)
+private class PushBufferGrowth(val grow: suspend (Long,Long) -> Unit,
+    val shape: suspend (String) -> Long = ::compactResponseAllocationShape)
 private val pushBufferGrowthKey = AttributeKey<PushBufferGrowth>("OversqlitePushBufferGrowth")
 
 // Count compact row arrays and recursion depth without creating a JSON tree.
@@ -703,57 +704,7 @@ internal class OversqliteRemoteApi(
         admittedMaxBytes: Long,
         beforeDispatch: suspend () -> Unit = {},
     ): SnapshotChunkResponse {
-        val encodedSnapshotId = encodeOversqliteSessionIdPathSegment(snapshotId)
-        val path = buildString {
-            append("/sync/snapshot-sessions/{snapshot_id}")
-            append("?after_row_ordinal=")
-            append(afterRowOrdinal)
-            append("&max_rows=")
-            append(maxRows)
-            append("&max_bytes=")
-            append(maxBytes)
-        }
-        require(maxBytes > 0L && admittedMaxBytes > 0L)
-        val bodyLimit = minOf(maxBytes, admittedMaxBytes, oversqlitePullResponseBodyHardLimit)
-        val wire = executeLoggedStreamingCall(
-            operation = "snapshot chunk request",
-            method = "GET",
-            path = path,
-            prepareCall = {
-                http.prepareGet("sync/snapshot-sessions/$encodedSnapshotId") {
-                    attributes.put(recoveryExchangeKey,RecoveryExchange { beforeDispatch(); beforeRecoveryExchange() })
-                    generationHeaders(sourceId)
-                    acceptBoundedJsonResponse()
-                    url {
-                        parameters.append("after_row_ordinal", afterRowOrdinal.toString())
-                        parameters.append("max_rows", maxRows.toString())
-                        parameters.append("max_bytes", maxBytes.toString())
-                    }
-                }
-            },
-            consume = { response ->
-                requireOkBoundedJson<CompactSnapshotChunkWire>(
-                    operation = "snapshot chunk request",
-                    method = "GET",
-                    path = path,
-                    call = response,
-                    successLimit = bodyLimit,
-                    errorLimit = snapshotControlBodyLimit,
-                    onSuccessRawBody = { raw ->
-                        require(json.parseToJsonElement(raw).jsonObject.keys ==
-                            setOf("rows", "next_row_ordinal", "has_more", "logical_byte_count")) {
-                            "snapshot chunk fields are invalid"
-                        }
-                    },
-                    onCompleteBody = { decodedBytes ->
-                        snapshotDiagnostics()?.recordCompletelyDecodedChunkBody(decodedBytes)
-                    },
-                    customError = { status, raw ->
-                        decodeSnapshotChunkTooSmallOrNull(status, raw, maxBytes)
-                    },
-                )
-            },
-        )
+        val wire = fetchSnapshotChunkWire(snapshotId, sourceId, afterRowOrdinal, maxRows, maxBytes, admittedMaxBytes, beforeDispatch)
         val rows = OversqliteCompactCodec.decodeBundleRows(
             generation = generation(),
             encoded = wire.rows,
@@ -778,6 +729,82 @@ internal class OversqliteRemoteApi(
         snapshotDiagnostics()?.recordValidatedChunk(chunk.rows.size, chunk.logicalByteCount)
         return chunk
     }
+
+    private suspend fun fetchSnapshotChunkWire(
+        snapshotId: String, sourceId: String, afterRowOrdinal: Long, maxRows: Int,
+        maxBytes: Long, admittedMaxBytes: Long, beforeDispatch: suspend () -> Unit,
+        transport: BootstrapTransportScope? = null,
+    ): CompactSnapshotChunkWire {
+        val encodedSnapshotId = encodeOversqliteSessionIdPathSegment(snapshotId)
+        val path = buildString {
+            append("/sync/snapshot-sessions/{snapshot_id}")
+            append("?after_row_ordinal=")
+            append(afterRowOrdinal)
+            append("&max_rows=")
+            append(maxRows)
+            append("&max_bytes=")
+            append(maxBytes)
+        }
+        require(maxBytes > 0L && admittedMaxBytes > 0L)
+        val bodyLimit = minOf(maxBytes, admittedMaxBytes, oversqlitePullResponseBodyHardLimit)
+        return executeLoggedStreamingCall(
+            operation = "snapshot chunk request",
+            method = "GET",
+            path = path,
+            prepareCall = {
+                http.prepareGet("sync/snapshot-sessions/$encodedSnapshotId") {
+                    attributes.put(recoveryExchangeKey,RecoveryExchange { beforeDispatch(); beforeRecoveryExchange() })
+                    generationHeaders(sourceId)
+                    acceptBoundedJsonResponse()
+                    url {
+                        parameters.append("after_row_ordinal", afterRowOrdinal.toString())
+                        parameters.append("max_rows", maxRows.toString())
+                        parameters.append("max_bytes", maxBytes.toString())
+                    }
+                }
+            },
+            consume = { response ->
+                transport?.let { owner ->
+                    response.call.attributes.put(pushBufferGrowthKey, PushBufferGrowth(owner::grow, ::bootstrapTransportAllocationShape))
+                }
+                requireOkBoundedJson<CompactSnapshotChunkWire>(
+                    operation = "snapshot chunk request",
+                    method = "GET",
+                    path = path,
+                    call = response,
+                    successLimit = bodyLimit,
+                    errorLimit = snapshotControlBodyLimit,
+                    onSuccessRawBody = { raw ->
+                        require(json.parseToJsonElement(raw).jsonObject.keys ==
+                            setOf("rows", "next_row_ordinal", "has_more", "logical_byte_count")) {
+                            "snapshot chunk fields are invalid"
+                        }
+                    },
+                    onCompleteBody = { decodedBytes ->
+                        snapshotDiagnostics()?.recordCompletelyDecodedChunkBody(decodedBytes)
+                    },
+                    customError = { status, raw ->
+                        decodeSnapshotChunkTooSmallOrNull(status, raw, maxBytes)
+                    },
+                )
+            },
+        )
+    }
+
+    internal suspend fun fetchAndStageBootstrapChunk(
+        stage: TypedSnapshotStage, afterRowOrdinal: Long, maxRows: Int, maxBytes: Long,
+        admittedMaxBytes: Long, admittedRowBytes: Long, transport: BootstrapTransportScope,
+        beforeDispatch: suspend () -> Unit = {},
+    ): BootstrapChunkProgress {
+        transport.requireCurrent()
+        val wire = fetchSnapshotChunkWire(stage.session.snapshotId, stage.source, afterRowOrdinal,
+            maxRows, maxBytes, admittedMaxBytes, beforeDispatch, transport)
+        val progress = stage.receiveCompact(wire.rows, afterRowOrdinal, wire.nextRowOrdinal, wire.hasMore,
+            wire.logicalByteCount, maxRows, admittedRowBytes, transport)
+        snapshotDiagnostics()?.recordValidatedChunk(progress.rows.toInt(), progress.logicalBytes)
+        return progress
+    }
+
 
     suspend fun deleteSnapshotSessionBestEffort(snapshotId: String, sourceId: String) {
         deleteSessionBestEffort(
@@ -936,7 +963,7 @@ internal class OversqliteRemoteApi(
         }
         val raw = syncDiagnosticWork("http.utf8_decode") { body.decodeToString() }
         response.call.attributes.getOrNull(pushBufferGrowthKey)?.grow?.let { growth ->
-            val shape=compactResponseAllocationShape(raw)
+            val shape=checkNotNull(response.call.attributes.getOrNull(pushBufferGrowthKey)).shape(raw)
             growth(body.size.toLong()*2+65536,shape)
         }
         return BoundedJsonBody(raw = raw, byteCount = body.size.toLong())
