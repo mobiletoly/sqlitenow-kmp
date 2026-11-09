@@ -86,7 +86,12 @@ internal class OversqliteProvenanceContextStore(private val db: SafeSQLiteConnec
 
     suspend fun refreshActiveAndBind() = db.transaction(TransactionMode.IMMEDIATE) {
         val active = intern("a.binding_state", "a.attached_user_id", "a.current_source_id", emptyList())
-        db.withPreparedStatement("UPDATE _sync_provenance_state SET active_context_id=? WHERE singleton_key=1") { it.bindLong(1, active); it.step() }
+        // Same-value updates still rewrite the page; a ready reopen must leave the file unchanged.
+        val stored = db.withPreparedStatement("SELECT coalesce(active_context_id,0) FROM _sync_provenance_state WHERE singleton_key=1") { st ->
+            check(st.step()) { "provenance state is missing" }; st.getLong(0)
+        }
+        var changed = stored != active
+        if (changed) db.withPreparedStatement("UPDATE _sync_provenance_state SET active_context_id=? WHERE singleton_key=1") { it.bindLong(1, active); it.step() }
         currentCoroutineContext()[ProvenanceReadScope]?.takeIf { it.db === db }?.activeChanged(active)
         // Only A and dirty B participate in these established binding transitions. Frozen B is
         // independent, and each promoted identity retains its original observation source.
@@ -121,6 +126,7 @@ internal class OversqliteProvenanceContextStore(private val db: SafeSQLiteConnec
                     st.bindLong(1, after); st.bindLong(2, highWater)
                     if (st.step()) st.getLong(0) else null
                 } ?: break
+                changed = true
                 db.withPreparedStatement(insert, cache) { st ->
                     contextColumns.indices.forEach { st.bindLong(it + 1, captured) }; st.step()
                 }
@@ -148,8 +154,9 @@ internal class OversqliteProvenanceContextStore(private val db: SafeSQLiteConnec
                 after = captured
             }
         }
-        // Three bounded slices settle the small transition set without a whole-history scan.
-        repeat(3) { cleanup() }
+        // Three bounded slices settle the small transition set without a whole-history scan. An
+        // unchanged binding has no transition set; skipping keeps a ready reopen free of writes.
+        if (changed) repeat(3) { cleanup() }
     }
 
     /** At most one complete-context eligibility probe per memoized identity/active binding. */
@@ -220,7 +227,7 @@ internal class OversqliteProvenanceContextStore(private val db: SafeSQLiteConnec
             }
         }
         val next = if (examined == 0) 0L else after
-        db.withPreparedStatement("UPDATE _sync_provenance_state SET cleanup_cursor=? WHERE singleton_key=1") { it.bindLong(1, next); it.step() }
+        db.withPreparedStatement("UPDATE _sync_provenance_state SET cleanup_cursor=?1 WHERE singleton_key=1 AND cleanup_cursor<>?1") { it.bindLong(1, next); it.step() }
         ProvenanceCleanupProgress(next, examined, probes, deleted)
     }
 }

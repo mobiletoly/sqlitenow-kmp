@@ -70,16 +70,20 @@ internal class OversqliteAttachmentStateStore(
         db.withPreparedStatement(
             sql = """
                 UPDATE _sync_attachment_state
-                SET current_source_id = ?,
-                    binding_state = ?,
-                    attached_user_id = ?,
-                    schema_name = ?,
-                    last_bundle_seq_seen = ?,
-                    rebuild_required = ?,
-                    pending_initialization_id = ?,
-                    initialization_reconnect_required = ?,
-                    attachment_epoch = attachment_epoch + CASE WHEN ? = 0 AND (current_source_id <> ? OR binding_state <> ? OR attached_user_id <> ?) THEN 1 ELSE 0 END
+                SET current_source_id = ?1,
+                    binding_state = ?2,
+                    attached_user_id = ?3,
+                    schema_name = ?4,
+                    last_bundle_seq_seen = ?5,
+                    rebuild_required = ?6,
+                    pending_initialization_id = ?7,
+                    initialization_reconnect_required = ?8,
+                    attachment_epoch = attachment_epoch + CASE WHEN ?9 = 0 AND (current_source_id <> ?1 OR binding_state <> ?2 OR attached_user_id <> ?3) THEN 1 ELSE 0 END
                 WHERE singleton_key = 1
+                    -- An identical state is not rewritten; a ready reopen must leave the file unchanged.
+                    AND (current_source_id <> ?1 OR binding_state <> ?2 OR attached_user_id <> ?3 OR schema_name <> ?4
+                        OR last_bundle_seq_seen <> ?5 OR rebuild_required <> ?6 OR pending_initialization_id <> ?7
+                        OR initialization_reconnect_required <> ?8)
             """.trimIndent(),
             statementCache = statementCache,
         ) { st ->
@@ -92,9 +96,6 @@ internal class OversqliteAttachmentStateStore(
             st.bindText(7, state.pendingInitializationId)
             st.bindLong(8,if(state.initializationReconnectRequired)1 else 0)
             st.bindLong(9, if (epochAlreadyAdvanced) 1 else 0)
-            st.bindText(10, state.currentSourceId)
-            st.bindText(11, state.bindingState)
-            st.bindText(12, state.attachedUserId)
             st.step()
         }
         bindLocalBaselineContext(db)

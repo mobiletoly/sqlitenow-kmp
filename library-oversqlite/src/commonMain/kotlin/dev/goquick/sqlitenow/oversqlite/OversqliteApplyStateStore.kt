@@ -41,8 +41,8 @@ internal class OversqliteApplyStateStore(
         db.withPreparedStatement(
             sql = """
                 UPDATE _sync_apply_state
-                SET apply_mode = ?
-                WHERE singleton_key = 1
+                SET apply_mode = ?1
+                WHERE singleton_key = 1 AND apply_mode <> ?1
             """.trimIndent(),
             statementCache = statementCache,
         ) { st ->
