@@ -62,7 +62,13 @@ class AndroidLifecycleSmokeTest {
                     '_sync_outbox_rows',
                     '_sync_row_state',
                     '_sync_snapshot_stage',
-                    '_sync_source_state'
+                    '_sync_source_state',
+                    '_sync_provenance_contexts',
+                    '_sync_provenance_state',
+                    '_sync_bootstrap_state',
+                    '_sync_bootstrap_tables',
+                    '_sync_bootstrap_pages',
+                    '_sync_bootstrap_wire'
                   )
                 """.trimIndent()
             ).use { st ->

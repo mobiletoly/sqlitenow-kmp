@@ -295,6 +295,9 @@ internal class WorkerOversqliteEvidenceTest : PlatformCrossTargetTestSupport() {
                         server.maxRequestBodyBytes,
                     )
 
+                    // Pulled authoritative rows make the follower's managed state non-empty, so the
+                    // rebuild takes the general snapshot installer whose statement lifecycle this observes.
+                    followerClient.sync().getOrThrow()
                     followerClient.rebuild().getOrThrow()
                     assertEquals(Long.MIN_VALUE, scalarLong(follower, "SELECT signed_value FROM typed_rows WHERE id = 'min'"))
                     assertEquals(Long.MAX_VALUE, scalarLong(follower, "SELECT signed_value FROM typed_rows WHERE id = 'max'"))

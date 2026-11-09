@@ -16,6 +16,7 @@ import dev.goquick.sqlitenow.oversqlite.OversqliteSourceStateStore
 import dev.goquick.sqlitenow.oversqlite.SyncRuntimeInitializer
 import dev.goquick.sqlitenow.oversqlite.SyncTable
 import dev.goquick.sqlitenow.oversqlite.TableInfoCache
+import dev.goquick.sqlitenow.oversqlite.bindLocalBaselineContext
 import dev.goquick.sqlitenow.oversqlite.oversqliteTestConnectionProvider
 import dev.goquick.sqlitenow.oversqlite.workerWorkerStorageEvidence
 import dev.goquick.sqlitenow.oversqlite.platformsupport.sha256Hex
@@ -666,7 +667,7 @@ internal class MigratedOversqliteStateTest : PlatformCrossTargetTestSupport() {
         val state = captureMigrationBoundary(db, expectedUserVersion)
         assertEquals("Ada", scalarText(db, "SELECT name FROM users WHERE id = 'local-1'"))
         assertEquals(listOf("[1,0]"), state.applyState)
-        assertNeverPublishedMigrationBaseline(state, attached = false)
+        assertNeverPublishedMigrationBaseline(db, state, attached = false)
         assertEquals(1, state.dirtyRows.size)
         assertEquals(emptyList(), state.uploadJournal)
         assertEquals(emptyList(), state.snapshotStage)
@@ -720,7 +721,7 @@ internal class MigratedOversqliteStateTest : PlatformCrossTargetTestSupport() {
         val state = captureMigrationBoundary(db, expectedUserVersion = 6)
         assertEquals("Ada", scalarText(db, "SELECT name FROM users WHERE id = 'local-1'"))
         assertEquals(listOf("[1,0]"), state.applyState)
-        assertNeverPublishedMigrationBaseline(state, attached = true)
+        assertNeverPublishedMigrationBaseline(db, state, attached = true)
         assertEquals(emptyList(), state.dirtyRows, "prepared F owns the original capture in outbox/journal")
         assertEquals(1, state.uploadJournal.size)
         assertEquals(emptyList(), state.snapshotStage)
@@ -767,7 +768,8 @@ internal class MigratedOversqliteStateTest : PlatformCrossTargetTestSupport() {
         return state
     }
 
-    private fun assertNeverPublishedMigrationBaseline(
+    private suspend fun assertNeverPublishedMigrationBaseline(
+        db: SafeSQLiteConnection,
         state: StatementReuseontrolStateSnapshot,
         attached: Boolean,
     ) {
@@ -803,7 +805,17 @@ internal class MigratedOversqliteStateTest : PlatformCrossTargetTestSupport() {
             put("bundle_sequence", JsonNull)
             put("authoritative_version", 0)
         }
-        assertEquals(expectedProvenance, testJson.parseToJsonElement(row[6].jsonPrimitive.content))
+        // Rows store {context_id, origin, bundle_sequence}; the complete context lives in
+        // _sync_provenance_contexts and the authoritative version in row_version.
+        assertEquals(expectedProvenance, testJson.parseToJsonElement(scalarText(db, """
+            SELECT json_object('database_id',c.database_id,'service_id',c.service_id,
+                'account_scope',json_object('binding',c.account_binding,'account_id',c.account_id),
+                'generation_id',c.generation_id,'generation_fingerprint',c.generation_fingerprint,
+                'admission',c.admission,'local_version',c.local_version,'physical_shape',c.physical_shape,
+                'origin_source_id',c.origin_source_id,'origin',json_extract(r.server_provenance,'$.origin'),
+                'bundle_sequence',json_extract(r.server_provenance,'$.bundle_sequence'),'authoritative_version',r.row_version)
+            FROM _sync_row_state r JOIN _sync_provenance_contexts c ON c.context_id=r.server_context_id
+        """.trimIndent())))
         assertEquals(JsonPrimitive(1), row[7])
         // Insert, then admission's schema/provenance updates, then account binding.
         assertEquals(JsonPrimitive(if (attached) 4 else 1), row[8])
@@ -994,6 +1006,8 @@ internal class MigratedOversqliteStateTest : PlatformCrossTargetTestSupport() {
             "UPDATE _sync_attachment_state SET current_source_id = '$sourceId' " +
                 "WHERE singleton_key = 1",
         )
+        // The active provenance context names its origin source; rebind it as the owner does.
+        bindLocalBaselineContext(db)
     }
 
     private suspend fun assertContinuityBoundary(
@@ -1012,7 +1026,7 @@ internal class MigratedOversqliteStateTest : PlatformCrossTargetTestSupport() {
                     "SELECT name, type FROM sqlite_schema WHERE name IN ('posts', 'users') ORDER BY name)",
             ),
         )
-        assertEquals(22L, scalarLong(
+        assertEquals(28L, scalarLong(
             db,
             "SELECT COUNT(*) FROM sqlite_schema WHERE type = 'table' AND name LIKE '_sync_%'",
         ))
@@ -1113,7 +1127,8 @@ internal suspend fun assertStatementReuseontrolTableSchemasAndIndexes(db: SafeSQ
             "owner_revision|INTEGER|1|0", "saved_rowid|INTEGER|0|0", "source_ordinal|INTEGER|0|0",
         ),
         "_sync_apply_state" to listOf(
-            "singleton_key|INTEGER|1|1", "apply_mode|INTEGER|1|0",
+            "singleton_key|INTEGER|1|1", "apply_mode|INTEGER|1|0", "baseline_mode|TEXT|1|0", "bootstrap_operation|TEXT|1|0",
+            "bootstrap_target_context|INTEGER|1|0", "bootstrap_revision_low|INTEGER|1|0", "bootstrap_revision_high|INTEGER|1|0",
         ),
         "_sync_attachment_state" to listOf(
             "singleton_key|INTEGER|1|1", "attachment_epoch|INTEGER|1|0", "current_source_id|TEXT|1|0", "binding_state|TEXT|1|0",
@@ -1160,9 +1175,10 @@ internal suspend fun assertStatementReuseontrolTableSchemasAndIndexes(db: SafeSQ
             "singleton_key|INTEGER|1|1", "kind|TEXT|1|0", "target_user_id|TEXT|1|0", "staged_snapshot_id|TEXT|1|0",
             "snapshot_bundle_seq|INTEGER|1|0", "snapshot_row_count|INTEGER|1|0", "snapshot_byte_count|INTEGER|1|0", "snapshot_stage_complete|INTEGER|1|0",
             "snapshot_staged_row_count|INTEGER|1|0", "snapshot_staged_byte_count|INTEGER|1|0", "snapshot_stage_guard|TEXT|1|0", "snapshot_transfer|TEXT|1|0",
-            "recovery_state|TEXT|1|0", "reason|TEXT|1|0", "replacement_source_id|TEXT|1|0", "workspace_context|TEXT|1|0",
-            "reserved_entries|INTEGER|1|0", "reserved_bytes|INTEGER|1|0", "snapshot_stage_entries|INTEGER|1|0", "snapshot_stage_bytes|INTEGER|1|0",
-            "snapshot_cleanup_ordinal|INTEGER|1|0",
+            "snapshot_engine|TEXT|1|0", "bootstrap_reference|TEXT|1|0", "bootstrap_cleanup_chain|TEXT|1|0", "bootstrap_page_count|INTEGER|1|0",
+            "bootstrap_metadata_entries|INTEGER|1|0", "bootstrap_metadata_bytes|INTEGER|1|0", "recovery_state|TEXT|1|0", "reason|TEXT|1|0",
+            "replacement_source_id|TEXT|1|0", "workspace_context|TEXT|1|0", "reserved_entries|INTEGER|1|0", "reserved_bytes|INTEGER|1|0",
+            "snapshot_stage_entries|INTEGER|1|0", "snapshot_stage_bytes|INTEGER|1|0", "snapshot_cleanup_ordinal|INTEGER|1|0",
         ),
         "_sync_outbox_bundle" to listOf(
             "singleton_key|INTEGER|1|1", "canonical_json_contract|TEXT|1|0", "state|TEXT|1|0",
@@ -1216,6 +1232,31 @@ internal suspend fun assertStatementReuseontrolTableSchemasAndIndexes(db: SafeSQ
             "singleton_key|INTEGER|1|1", "binding|TEXT|1|0", "request_body|BLOB|1|0", "request_digest|TEXT|1|0",
             "outcome_body|BLOB|1|0", "outcome_hash|TEXT|1|0", "phase|TEXT|1|0",
         ),
+        "_sync_bootstrap_pages" to listOf(
+            "snapshot_id|TEXT|1|1", "page_ordinal|INTEGER|1|2", "first_ordinal|INTEGER|1|0", "last_ordinal|INTEGER|1|0",
+            "row_count|INTEGER|1|0", "logical_bytes|INTEGER|1|0", "wire_hash|TEXT|1|0", "typed_hash|TEXT|1|0",
+            "page_proof|TEXT|1|0", "chain_root|TEXT|1|0", "charge|INTEGER|1|0",
+        ),
+        "_sync_bootstrap_state" to listOf(
+            "singleton_key|INTEGER|0|1", "format_identity|TEXT|1|0", "phase|TEXT|1|0", "snapshot_id|TEXT|1|0",
+            "descriptor_signature|TEXT|1|0", "descriptor_json|TEXT|1|0", "expected_manifest|TEXT|1|0", "chain_root|TEXT|1|0",
+        ),
+        "_sync_bootstrap_tables" to listOf(
+            "slot|INTEGER|0|1", "table_index|INTEGER|1|0", "schema_name|TEXT|1|0", "table_name|TEXT|1|0",
+            "layout_signature|TEXT|1|0", "expected_row_count|INTEGER|1|0", "expected_projection|TEXT|1|0",
+        ),
+        "_sync_bootstrap_wire" to listOf(
+            "snapshot_id|TEXT|1|1", "row_ordinal|INTEGER|1|2", "table_index|INTEGER|1|0", "key_json|TEXT|1|0",
+            "row_version|INTEGER|1|0", "frame|BLOB|1|0", "logical_bytes|INTEGER|1|0", "charge|INTEGER|1|0",
+        ),
+        "_sync_provenance_contexts" to listOf(
+            "context_id|INTEGER|0|1", "database_id|TEXT|1|0", "service_id|TEXT|1|0", "account_binding|TEXT|1|0",
+            "account_id|TEXT|1|0", "generation_id|INTEGER|1|0", "generation_fingerprint|TEXT|1|0", "admission|TEXT|1|0",
+            "local_version|INTEGER|1|0", "physical_shape|TEXT|1|0", "origin_source_id|TEXT|1|0",
+        ),
+        "_sync_provenance_state" to listOf(
+            "singleton_key|INTEGER|0|1", "format_identity|TEXT|1|0", "active_context_id|INTEGER|0|0", "cleanup_cursor|INTEGER|1|0",
+        ),
     )
     assertEquals(expectedColumns.keys.sorted(), readStatementReuseontrolRows(db,
         "SELECT name FROM sqlite_schema WHERE type='table' AND name LIKE '_sync_%' ORDER BY name"))
@@ -1240,6 +1281,7 @@ internal suspend fun assertStatementReuseontrolTableSchemasAndIndexes(db: SafeSQ
         "_sync_apply_plan" to emptyList(),
         "_sync_apply_rows" to listOf(
             "_sync_apply_rows_pending_idx|0|c|0", "_sync_apply_rows_role_ordinal_idx|0|c|0",
+            "_sync_apply_rows_uninstalled_ordinal_idx|0|c|1", "_sync_apply_rows_unscheduled_ordinal_idx|0|c|1",
             "sqlite_autoindex__sync_apply_rows_1|1|u|0",
         ),
         "_sync_apply_state" to emptyList(),
@@ -1247,7 +1289,8 @@ internal suspend fun assertStatementReuseontrolTableSchemasAndIndexes(db: SafeSQ
         "_sync_conflict_state" to emptyList(),
         "_sync_contract_identity" to emptyList(),
         "_sync_dirty_rows" to listOf(
-            "_sync_dirty_rows_order_idx|0|c|0", "sqlite_autoindex__sync_dirty_rows_1|1|pk|0",
+            "_sync_dirty_rows_context_idx|0|c|0", "_sync_dirty_rows_order_idx|0|c|0",
+            "sqlite_autoindex__sync_dirty_rows_1|1|pk|0",
         ),
         "_sync_managed_tables" to listOf(
             "sqlite_autoindex__sync_managed_tables_1|1|pk|0",
@@ -1256,7 +1299,8 @@ internal suspend fun assertStatementReuseontrolTableSchemasAndIndexes(db: SafeSQ
         "_sync_operation_state" to emptyList(),
         "_sync_outbox_bundle" to emptyList(),
         "_sync_outbox_rows" to listOf(
-            "sqlite_autoindex__sync_outbox_rows_1|1|pk|0", "sqlite_autoindex__sync_outbox_rows_2|1|u|0",
+            "_sync_outbox_rows_context_idx|0|c|0", "sqlite_autoindex__sync_outbox_rows_1|1|pk|0",
+            "sqlite_autoindex__sync_outbox_rows_2|1|u|0",
         ),
         "_sync_push_edges" to listOf(
             "_sync_push_edges_incoming_idx|0|c|0", "_sync_push_edges_outgoing_idx|0|c|0",
@@ -1274,7 +1318,8 @@ internal suspend fun assertStatementReuseontrolTableSchemasAndIndexes(db: SafeSQ
             "_sync_relationships_parent_idx|0|c|0", "sqlite_autoindex__sync_relationships_1|1|pk|0",
         ),
         "_sync_row_state" to listOf(
-            "_sync_row_state_unknown_idx|0|c|0", "sqlite_autoindex__sync_row_state_1|1|pk|0",
+            "_sync_row_state_context_idx|0|c|0", "_sync_row_state_unknown_idx|0|c|0",
+            "sqlite_autoindex__sync_row_state_1|1|pk|0",
         ),
         "_sync_snapshot_stage" to listOf(
             "sqlite_autoindex__sync_snapshot_stage_1|1|pk|0", "sqlite_autoindex__sync_snapshot_stage_2|1|u|0",
@@ -1282,6 +1327,20 @@ internal suspend fun assertStatementReuseontrolTableSchemasAndIndexes(db: SafeSQ
         "_sync_source_state" to listOf(
             "sqlite_autoindex__sync_source_state_1|1|pk|0",
         ),
+        "_sync_bootstrap_pages" to listOf(
+            "sqlite_autoindex__sync_bootstrap_pages_1|1|pk|0", "sqlite_autoindex__sync_bootstrap_pages_2|1|u|0",
+        ),
+        "_sync_bootstrap_state" to emptyList(),
+        "_sync_bootstrap_tables" to listOf(
+            "sqlite_autoindex__sync_bootstrap_tables_1|1|u|0", "sqlite_autoindex__sync_bootstrap_tables_2|1|u|0",
+        ),
+        "_sync_bootstrap_wire" to listOf(
+            "sqlite_autoindex__sync_bootstrap_wire_1|1|pk|0",
+        ),
+        "_sync_provenance_contexts" to listOf(
+            "sqlite_autoindex__sync_provenance_contexts_1|1|u|0",
+        ),
+        "_sync_provenance_state" to emptyList(),
     )
     expectedIndexes.forEach { (table, expected) ->
         val actual = mutableListOf<String>()

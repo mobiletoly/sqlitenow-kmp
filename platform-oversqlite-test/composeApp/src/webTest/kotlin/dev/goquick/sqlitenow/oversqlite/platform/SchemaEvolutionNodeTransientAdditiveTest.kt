@@ -8,6 +8,7 @@ import dev.goquick.sqlitenow.oversqlite.DefaultOversqliteClient
 import dev.goquick.sqlitenow.oversqlite.OversqliteConfig
 import dev.goquick.sqlitenow.oversqlite.OversqliteOpeningOutcome
 import dev.goquick.sqlitenow.oversqlite.OversqliteOpeningStore
+import dev.goquick.sqlitenow.oversqlite.bindLocalBaselineContext
 import dev.goquick.sqlitenow.oversqlite.OversqliteUpgradePlan
 import dev.goquick.sqlitenow.oversqlite.ServerWinsResolver
 import dev.goquick.sqlitenow.oversqlite.SyncTable
@@ -90,6 +91,9 @@ internal class SchemaEvolutionNodeTransientAdditiveTest : PlatformCrossTargetTes
                     "WHERE singleton_key=1 AND generation_id=1 AND local_version=1",
             )
             assertEquals(1L, scalarLong(source, "SELECT changes()"))
+            // The owner's local migration rebinds the active provenance context after advancing
+            // the identity; retained reopen requires the two to agree.
+            bindLocalBaselineContext(source)
             val localPlanDigest = sha256Hex(
                 listOf(
                     "sqlitenow-opening-plan-v1",
