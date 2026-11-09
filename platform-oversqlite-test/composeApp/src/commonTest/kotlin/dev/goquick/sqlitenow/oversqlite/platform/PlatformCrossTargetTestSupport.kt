@@ -331,6 +331,29 @@ internal open class PlatformCrossTargetTestSupport {
         }
     }
 
+    // The logical provenance of one retained observation: its compact `{context_id, origin,
+    // bundle_sequence}` joined with the complete provenance context, and the authoritative version
+    // owned by the row's version column (oversqlite-contracts/local-planning/README.md,
+    // complete-context retained format).
+    protected suspend fun logicalProvenance(
+        db: PlatformTestDatabase, table: String, provenance: String, context: String, version: String, predicate: String,
+    ): JsonObject =
+        Json.parseToJsonElement(scalarText(db, """SELECT json_object('database_id',c.database_id,'service_id',c.service_id,
+            'account_scope',json_object('binding',c.account_binding,'account_id',c.account_id),'generation_id',c.generation_id,
+            'generation_fingerprint',c.generation_fingerprint,'admission',c.admission,'local_version',c.local_version,
+            'physical_shape',c.physical_shape,'origin_source_id',c.origin_source_id,
+            'origin',json_extract(r.$provenance,'$.origin'),'bundle_sequence',json_extract(r.$provenance,'$.bundle_sequence'),
+            'authoritative_version',r.$version)
+            FROM $table r JOIN _sync_provenance_contexts c ON c.context_id=r.$context WHERE $predicate""")).jsonObject
+
+    /** The logical A provenance of one `_sync_row_state` row. */
+    protected suspend fun logicalServerProvenance(db: PlatformTestDatabase, predicate: String): JsonObject =
+        logicalProvenance(db, "_sync_row_state", "server_provenance", "server_context_id", "row_version", predicate)
+
+    /** The logical B provenance of one `_sync_dirty_rows` row. */
+    protected suspend fun logicalDirtyBaseProvenance(db: PlatformTestDatabase, predicate: String): JsonObject =
+        logicalProvenance(db, "_sync_dirty_rows", "base_provenance", "base_context_id", "base_row_version", predicate)
+
     protected suspend fun scalarText(db: PlatformTestDatabase, sql: String): String {
         return db.withExclusiveAccess { connection ->
             connection.prepare(sql).use { st ->

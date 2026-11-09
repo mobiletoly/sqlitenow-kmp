@@ -58,7 +58,7 @@ internal class OrdinarySafetyLiveTest : RealServerHarnessSupport() {
             client.attach(user).getOrThrow()
             db.execSQL("INSERT INTO categories VALUES('$p','parent',NULL),('$q','other',NULL),('$c','child','$p'),('$d','grandchild','$c')")
             assertEquals(PushOutcome.COMMITTED, client.pushPending().getOrThrow().outcome)
-            val provenance = Json.parseToJsonElement(scalarText(db, "SELECT server_provenance FROM _sync_row_state WHERE key_json='{\"id\":\"$p\"}'")).jsonObject
+            val provenance = logicalServerProvenance(db, "key_json='{\"id\":\"$p\"}'")
             writerHttp = newRealServerHttpClient(authority.baseUrl,
                 issueDummySigninToken(authority.baseUrl, user, bootstrapManagedSourceId(writerDb, authority.baseUrl)))
             val writer = writerDb.openClient(cfg, writerHttp, ServerWinsResolver)
@@ -98,7 +98,7 @@ internal class OrdinarySafetyLiveTest : RealServerHarnessSupport() {
                     assertEquals(value, Json.parseToJsonElement(scalarText(target, "SELECT server_payload FROM _sync_row_state WHERE $predicate")))
                     assertEquals(JsonObject(provenance + mapOf("origin" to JsonPrimitive("snapshot"), "origin_source_id" to JsonPrimitive(source),
                         "bundle_sequence" to JsonPrimitive(sequence), "authoritative_version" to JsonPrimitive(version))),
-                        Json.parseToJsonElement(scalarText(target, "SELECT server_provenance FROM _sync_row_state WHERE $predicate")), "every provenance field $id")
+                        logicalServerProvenance(target, predicate), "every provenance field $id")
                     assertEquals(version, scalarLong(target, "SELECT row_version FROM _sync_row_state WHERE $predicate"))
                     assertEquals("live", scalarText(target, "SELECT server_kind FROM _sync_row_state WHERE $predicate"))
                     assertEquals(1L, scalarLong(target, "SELECT relationships_known FROM _sync_row_state WHERE $predicate"))
@@ -398,7 +398,7 @@ internal class OrdinarySafetyLiveTest : RealServerHarnessSupport() {
                     assertEquals(expected, Json.parseToJsonElement(scalarText(target, "SELECT coalesce(server_payload,'null') FROM _sync_row_state WHERE $predicate")))
                     assertEquals(JsonObject(provenance + mapOf("origin_source_id" to JsonPrimitive(scalarText(target, "SELECT current_source_id FROM _sync_attachment_state")),
                         "origin" to JsonPrimitive(origin), "bundle_sequence" to JsonPrimitive(sequence), "authoritative_version" to JsonPrimitive(version))),
-                        Json.parseToJsonElement(scalarText(target, "SELECT server_provenance FROM _sync_row_state WHERE $predicate")))
+                        logicalServerProvenance(target, predicate))
                     assertEquals(version, scalarLong(target, "SELECT row_version FROM _sync_row_state WHERE $predicate"))
                     assertEquals(if (expected == JsonNull) "deleted" else "live", scalarText(target, "SELECT server_kind FROM _sync_row_state WHERE $predicate"))
                     assertEquals(1L, scalarLong(target, "SELECT relationships_known FROM _sync_row_state WHERE $predicate"))
@@ -582,7 +582,7 @@ internal class OrdinarySafetyLiveTest : RealServerHarnessSupport() {
                 val predicate = "schema_name='business' AND table_name='categories' AND key_json='{\"id\":\"$id\"}'"
                 assertEquals(payload, Json.parseToJsonElement(scalarText(target, "SELECT server_payload FROM _sync_row_state WHERE $predicate")))
                 assertEquals(JsonObject(provenance + mapOf("origin" to JsonPrimitive(origin), "origin_source_id" to JsonPrimitive(scalarText(target, "SELECT current_source_id FROM _sync_attachment_state")))),
-                    Json.parseToJsonElement(scalarText(target, "SELECT server_provenance FROM _sync_row_state WHERE $predicate")))
+                    logicalServerProvenance(target, predicate))
                 assertEquals(1L, scalarLong(target, "SELECT row_version FROM _sync_row_state WHERE $predicate"))
                 assertEquals(1L, scalarLong(target, "SELECT relationships_known FROM _sync_row_state WHERE $predicate"))
                 assertEquals("live", scalarText(target, "SELECT server_kind FROM _sync_row_state WHERE $predicate"))
@@ -762,7 +762,7 @@ internal class OrdinarySafetyLiveTest : RealServerHarnessSupport() {
                         "bundle_sequence" to JsonPrimitive(if (snapshot) 3L else version), "authoritative_version" to JsonPrimitive(version)))
                     val predicate = "schema_name='business' AND table_name='categories' AND key_json='{\"id\":\"$id\"}'"
                     assertEquals(payload, Json.parseToJsonElement(scalarText(target, "SELECT server_payload FROM _sync_row_state WHERE $predicate")))
-                    assertEquals(expectedProvenance, Json.parseToJsonElement(scalarText(target, "SELECT server_provenance FROM _sync_row_state WHERE $predicate")))
+                    assertEquals(expectedProvenance, logicalServerProvenance(target, predicate))
                     assertEquals(version, scalarLong(target, "SELECT row_version FROM _sync_row_state WHERE $predicate"))
                     assertEquals("live", scalarText(target, "SELECT server_kind FROM _sync_row_state WHERE $predicate"))
                     assertEquals(1L, scalarLong(target, "SELECT relationships_known FROM _sync_row_state WHERE $predicate"))
@@ -910,7 +910,7 @@ internal class OrdinarySafetyLiveTest : RealServerHarnessSupport() {
                 assertEquals(payload, Json.parseToJsonElement(scalarText(target, "SELECT coalesce(server_payload,'null') FROM _sync_row_state WHERE $predicate")))
                 assertEquals(JsonObject(provenance + mapOf("origin_source_id" to JsonPrimitive(originSource), "origin" to JsonPrimitive(origin),
                     "bundle_sequence" to JsonPrimitive(sequence), "authoritative_version" to JsonPrimitive(version))),
-                    Json.parseToJsonElement(scalarText(target, "SELECT server_provenance FROM _sync_row_state WHERE $predicate")))
+                    logicalServerProvenance(target, predicate))
                 assertEquals(version, scalarLong(target, "SELECT row_version FROM _sync_row_state WHERE $predicate"))
                 assertEquals(if (name == null) "deleted" else "live", scalarText(target, "SELECT server_kind FROM _sync_row_state WHERE $predicate"))
                 assertEquals(1L, scalarLong(target, "SELECT relationships_known FROM _sync_row_state WHERE $predicate"))
@@ -933,7 +933,7 @@ internal class OrdinarySafetyLiveTest : RealServerHarnessSupport() {
             assertEquals(typedCategory(p, "a1-delete", null), Json.parseToJsonElement(originalIntent.getValue("L").jsonPrimitive.content))
             assertEquals(JsonObject(provenance + mapOf("origin_source_id" to JsonPrimitive(source), "origin" to JsonPrimitive("settlement"),
                 "bundle_sequence" to JsonPrimitive(1), "authoritative_version" to JsonPrimitive(1))),
-                Json.parseToJsonElement(originalIntent.getValue("provenance").jsonPrimitive.content))
+                logicalDirtyBaseProvenance(db, "key_json='{\"id\":\"$p\"}'"))
             lose = true
             val cancellation = assertFailsWith<CancellationException> { client.pushPending().getOrThrow() }
             assertEquals("committed response loss", cancellation.message)
