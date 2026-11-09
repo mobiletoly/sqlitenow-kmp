@@ -117,8 +117,13 @@ internal class ReplayStatementReuseTest : SurvivorTestSupport() {
                     it.message?.contains("actual SQLite storage integer does not match its declared affinity") == true
                 })
                 assertEquals(before, baselineQualificationVector(db, listOf("nodes") + oversqliteRetainedTableDdl.keys))
-                assertEquals(1, observed.prepares.getValue("SELECT table_name,local_pk,payload,wire,role,source_ordinal,saved_rowid FROM _sync_apply_rows WHERE ordinal=?"))
-                assertTrue(observed.resets.getValue("SELECT table_name,local_pk,payload,wire,role,source_ordinal,saved_rowid FROM _sync_apply_rows WHERE ordinal=?") > 1)
+                // A retained row is read as a charged header first and its payload second, so the
+                // payload is admitted before it is allocated. Each read reuses one cached handle.
+                for (sql in listOf("SELECT bytes,payload IS NOT NULL,wire,role,source_ordinal,saved_rowid FROM _sync_apply_rows WHERE ordinal=?",
+                    "SELECT table_name,local_pk,payload FROM _sync_apply_rows WHERE ordinal=?")) {
+                    assertEquals(1, observed.prepares.getValue(sql), sql)
+                    assertTrue(observed.resets.getValue(sql) > 1, sql)
+                }
                 observed.assertClosed()
             } finally { client.closeFromCoordinatedOwner() }
         }

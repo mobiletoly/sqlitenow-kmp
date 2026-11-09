@@ -170,6 +170,8 @@ internal class ReplaySqlLifecycleTest : SurvivorTestSupport() {
             db.execSQL("CREATE TABLE items(id TEXT PRIMARY KEY NOT NULL,i INTEGER,r REAL,t TEXT,b BLOB,n INTEGER)")
             db.execSQL(oversqliteRetainedTableDdl.getValue("_sync_operation_state"))
             db.execSQL(oversqliteRetainedTableDdl.getValue("_sync_upload_journal")); db.execSQL(applyPlanDdl); db.execSQL(pushPlanDdl)
+            // Charges include the idle typed-bootstrap metadata owner (1 entry, 512 bytes) and the
+            // default snapshot_engine metadata (6*13 bytes); see WorkspaceUsageTest.
             db.execSQL("INSERT INTO _sync_operation_state(singleton_key) VALUES(1)")
             db.execSQL("INSERT INTO _sync_apply_plan(singleton_key,unit,guard,phase,root_cursor,visit_cursor,table_cursor,fk_cursor,entries,bytes,edge_entries,edge_bytes) VALUES(1,'u','g','ready',0,0,0,0,2,10,3,20)")
             db.execSQL("INSERT INTO _sync_push_plan(singleton_key,unit,guard,phase,state,entries,bytes) VALUES(1,'u','g','ready','{}',4,40)")
@@ -189,19 +191,19 @@ internal class ReplaySqlLifecycleTest : SurvivorTestSupport() {
                 read(null)
                 db.execSQL("INSERT INTO items VALUES('a',9007199254740993,1.25,'fresh',X'00ff',NULL)")
                 read("""{"id":{"storage":"text","value":"a"},"i":{"storage":"integer","value":"9007199254740993"},"r":{"storage":"real","value":"1.25"},"t":{"storage":"text","value":"fresh"},"b":{"storage":"blob","value":"00ff"},"n":{"storage":"null","value":null}}""")
-                assertEquals(WorkspaceCharge(12,3202), workspace.usage("a", statementCache=cache))
+                assertEquals(WorkspaceCharge(13,3792), workspace.usage("a", statementCache=cache))
                 assertEquals(workspace.usage("a"), workspace.usage("a",statementCache=cache))
                 db.execSQL("UPDATE items SET i=-7,r=2.5,t='changed 猫',b=X'fe',n=42")
                 read("""{"id":{"storage":"text","value":"a"},"i":{"storage":"integer","value":"-7"},"r":{"storage":"real","value":"2.5"},"t":{"storage":"text","value":"changed 猫"},"b":{"storage":"blob","value":"fe"},"n":{"storage":"integer","value":"42"}}""")
                 db.execSQL("UPDATE _sync_apply_plan SET unit='é',guard='猫',preserve_schema='🙂',preserve_table='t',preserve_key='k'")
                 db.execSQL("UPDATE _sync_push_plan SET unit='é',guard='猫',state='🙂'")
-                assertEquals(WorkspaceCharge(12,3286), workspace.usage("b",statementCache=cache))
+                assertEquals(WorkspaceCharge(13,3876), workspace.usage("b",statementCache=cache))
                 assertEquals(workspace.usage("b"), workspace.usage("b",statementCache=cache))
                 db.execSQL("UPDATE _sync_apply_plan SET row_cursor='é'")
-                assertEquals(WorkspaceCharge(12,3298), workspace.usage("c",statementCache=cache))
+                assertEquals(WorkspaceCharge(13,3888), workspace.usage("c",statementCache=cache))
                 db.execSQL("DELETE FROM items"); read(null)
                 db.execSQL("DELETE FROM _sync_apply_plan"); db.execSQL("DELETE FROM _sync_push_plan")
-                assertEquals(WorkspaceCharge(1,536), workspace.usage("d",statementCache=cache))
+                assertEquals(WorkspaceCharge(2,1126), workspace.usage("d",statementCache=cache))
                 assertEquals(workspace.usage("d"),workspace.usage("d",statementCache=cache))
             }
         } finally { db.close() }

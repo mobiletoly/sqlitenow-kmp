@@ -68,9 +68,12 @@ internal class SurvivorApplyTest : SurvivorTestSupport() {
         for (dimension in listOf("entries", "bytes")) {
             withSurvivorFixture { server, db, http, seed ->
                 seed.closeFromCoordinatedOwner()
+                // An idle opened client charges 2 entries and 1126 bytes: the operation owner and the
+                // idle typed-bootstrap metadata owner. Each limit admits that with 1 entry or 64 bytes
+                // spare, so opening succeeds and the pull is the first owner that cannot fit.
                 val client = newClient(db, http, syncTables = nodeTables,
-                    workspaceEntries = if (dimension == "entries") 2 else 100000,
-                    workspaceBytes = if (dimension == "bytes") 600 else 256L * 1024 * 1024,
+                    workspaceEntries = if (dimension == "entries") 3 else 100000,
+                    workspaceBytes = if (dimension == "bytes") 1190 else 256L * 1024 * 1024,
                     workUnits = 1000000)
                 client.openAndConnect("user-1").getOrThrow()
                 server.addRemoteBundleForTest(effects())
@@ -127,17 +130,17 @@ internal class SurvivorApplyTest : SurvivorTestSupport() {
 
     @Test
     fun entryLimitBoundary() = runOwnedWebDatabaseTest {
-        for (entries in listOf(44L, 45L, 46L)) withSurvivorFixture { server, db, http, seed ->
+        for (entries in listOf(45L, 46L, 47L)) withSurvivorFixture { server, db, http, seed ->
             seed.closeFromCoordinatedOwner()
             val client = newClient(db, http, syncTables = nodeTables, workspaceEntries = entries)
             client.openAndConnect("user-1").getOrThrow()
             server.addRemoteBundleForTest(effects())
             val result = client.pullToStable()
-            if (entries == 44L) {
+            if (entries == 45L) {
                 val limit = assertIs<SyncWorkspaceLimitException>(result.exceptionOrNull())
                 assertEquals("entries", limit.dimension)
-                // 32 context slots + 4 registration + 8 FK + singleton.
-                assertEquals(45L, limit.used + limit.reserved)
+                // 32 context slots + 4 registration + 8 FK + singleton + idle typed-bootstrap metadata.
+                assertEquals(46L, limit.used + limit.reserved)
             } else {
                 result.getOrThrow()
                 requireSurvivors(db)

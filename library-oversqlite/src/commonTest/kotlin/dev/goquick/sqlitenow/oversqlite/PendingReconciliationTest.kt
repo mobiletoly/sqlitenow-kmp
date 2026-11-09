@@ -12,13 +12,13 @@ internal class PendingReconciliationTest : SurvivorTestSupport() {
                 var parent="missing"
                 if(detail=="relationship_unknown") {
                     parent="Q"
-                    db.execSQL("UPDATE _sync_row_state SET server_kind='unknown',server_payload=NULL,row_version=0,relationships_known=0,server_provenance=json_set(server_provenance,'$.authoritative_version',0,'$.origin','explicit_conflict','$.bundle_sequence',NULL) WHERE json_extract(key_json,'$.id')='Q'")
+                    db.execSQL("UPDATE _sync_row_state SET server_kind='unknown',server_payload=NULL,row_version=0,relationships_known=0,server_provenance=json_set(server_provenance,'$.origin','explicit_conflict','$.bundle_sequence',NULL) WHERE json_extract(key_json,'$.id')='Q'")
                 }
                 if(detail=="historical_repair_required") {
                     parent="Q"
                     db.execSQL("UPDATE _sync_apply_state SET apply_mode=1")
                     db.execSQL("DELETE FROM nodes WHERE id='Q'")
-                    db.execSQL("UPDATE _sync_row_state SET server_kind='deleted',server_payload=NULL,row_version=5,server_provenance=json_set(server_provenance,'$.authoritative_version',5,'$.origin','explicit_conflict','$.bundle_sequence',NULL) WHERE json_extract(key_json,'$.id')='Q'")
+                    db.execSQL("UPDATE _sync_row_state SET server_kind='deleted',server_payload=NULL,row_version=5,server_provenance=json_set(server_provenance,'$.origin','explicit_conflict','$.bundle_sequence',NULL) WHERE json_extract(key_json,'$.id')='Q'")
                     db.execSQL("UPDATE _sync_apply_state SET apply_mode=0")
                 }
                 server.addRemoteBundleForTest(listOf(BundleRow("main","nodes",mapOf("id" to "R"),"INSERT",2,

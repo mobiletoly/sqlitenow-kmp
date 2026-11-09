@@ -11,6 +11,7 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
+import kotlin.time.Duration.Companion.seconds
 
 internal class SnapshotBootstrapInstallerTest : SnapshotBootstrapTestSupport() {
     private class StatementBoundaryFailure(val point: String) : RuntimeException("owned final $point failure")
@@ -400,5 +401,67 @@ internal class SnapshotBootstrapInstallerTest : SnapshotBootstrapTestSupport() {
             }
         }.getOrThrow()
         assertEquals(0L, fixture.db.scalarLong("SELECT apply_mode FROM _sync_apply_state"))
+    }
+
+    @Test fun chunkRowsAreBoundedByTheAvailableEntryQuota() = runOwnedWebDatabaseTest {
+        // 900 rows fit one 1000-row chunk by row target, but the transport admission of such a
+        // chunk (32 entries per JSON container, about 86k entries) does not fit 40,000 entries.
+        // The installer requests smaller chunks and installs every row instead of refusing.
+        val server = MockSyncServer()
+        val columns = listOf(GenerationColumn("id", "text", false), GenerationColumn("name", "text", false))
+        server.generationOverride = SyncGeneration("1", "", listOf(GenerationTable("main", "quota_rows", listOf("id"), columns, emptyList())))
+            .let { it.copy(fingerprint = it.computeFingerprint()) }
+        val db = newDb(); val http = server.newHttpClient()
+        val tables = listOf(SyncTable("quota_rows", syncKeyColumnName = "id"))
+        val client = newClient(db, http, syncTables = tables, workspaceEntries = 40_000, workUnits = 100_000_000)
+        try {
+            db.execSQL("CREATE TABLE quota_rows(id TEXT PRIMARY KEY NOT NULL,name TEXT NOT NULL)")
+            client.openAndConnect("user-1").getOrThrow()
+            server.addRemoteBundleForTest((0 until 900).map { row ->
+                BundleRow("main", "quota_rows", mapOf("id" to "row-$row"), "INSERT", 1, buildJsonObject { put("id", "row-$row"); put("name", "name-$row") })
+            })
+            client.rebuild().getOrThrow()
+            assertEquals(900L, db.scalarLong("SELECT count(*) FROM quota_rows"))
+            assertEquals(900L, db.scalarLong("SELECT count(*) FROM _sync_row_state"))
+            assertEquals("name-899", scalarText(db, "SELECT name FROM quota_rows WHERE id='row-899'"))
+            assertTrue(server.snapshotChunkRequests.size > 1, "chunks shrink to the quota: ${server.snapshotChunkRequests.size} requests")
+            assertEquals(0L, db.scalarLong("SELECT reserved_entries+reserved_bytes+snapshot_stage_entries+snapshot_stage_bytes FROM _sync_operation_state"))
+        } finally { client.closeFromCoordinatedOwner(); http.close(); db.close() }
+    }
+
+    @Test fun chunkSizingLeavesRoomForReceiptAndStaging() {
+        // Each row costs its measured transport share plus 3 durable entries (typed row, wire frame,
+        // page record); one 2-column receipt page and the shape constant take 2*(32+8)+256 entries.
+        assertEquals(393, bootstrapChunkRowsForQuota(39_709, 97, 2, 1000))
+        assertEquals(1000, bootstrapChunkRowsForQuota(1_000_000, 97, 2, 1000))
+        assertEquals(1, bootstrapChunkRowsForQuota(300, 97, 2, 1000))
+        assertEquals(1, bootstrapChunkRowsForQuota(-5, 97, 2, 1000))
+        assertEquals(4, bootstrapCeilDiv(10, 3))
+        assertEquals(3, bootstrapCeilDiv(9, 3))
+    }
+
+    @Test fun restoreBeyondOneChunkOfHeadroomCompletesAtDefaultQuota() = runOwnedWebDatabaseTest(timeout = 300.seconds) {
+        // At the default 131,072 entries, 20,000 staged rows plus one 1000-row chunk being parsed
+        // exceed the quota part-way through the restore. Later chunks are sized from fresh usage, so
+        // the restore completes instead of refusing to stage a received chunk.
+        val server = MockSyncServer()
+        val columns = listOf(GenerationColumn("id", "text", false), GenerationColumn("name", "text", false))
+        server.generationOverride = SyncGeneration("1", "", listOf(GenerationTable("main", "quota_rows", listOf("id"), columns, emptyList())))
+            .let { it.copy(fingerprint = it.computeFingerprint()) }
+        val db = newDb(); val http = server.newHttpClient()
+        val tables = listOf(SyncTable("quota_rows", syncKeyColumnName = "id"))
+        val client = newClient(db, http, syncTables = tables, workspaceEntries = OversqliteConfig(1, tables, "fixture", "main").maxSyncWorkspaceEntries,
+            workUnits = 1_000_000_000)
+        try {
+            db.execSQL("CREATE TABLE quota_rows(id TEXT PRIMARY KEY NOT NULL,name TEXT NOT NULL)")
+            client.openAndConnect("user-1").getOrThrow()
+            server.addRemoteBundleForTest((0 until 20_000).map { row ->
+                BundleRow("main", "quota_rows", mapOf("id" to "row-$row"), "INSERT", 1, buildJsonObject { put("id", "row-$row"); put("name", "name-$row") })
+            })
+            client.rebuild().getOrThrow()
+            assertEquals(20_000L, db.scalarLong("SELECT count(*) FROM quota_rows"))
+            assertEquals(20_000L, db.scalarLong("SELECT count(*) FROM _sync_row_state"))
+            assertEquals(0L, db.scalarLong("SELECT reserved_entries+reserved_bytes+snapshot_stage_entries+snapshot_stage_bytes FROM _sync_operation_state"))
+        } finally { client.closeFromCoordinatedOwner(); http.close(); db.close() }
     }
 }

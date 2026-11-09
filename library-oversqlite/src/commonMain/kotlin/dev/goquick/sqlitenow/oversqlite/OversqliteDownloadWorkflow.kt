@@ -301,18 +301,54 @@ internal class OversqliteDownloadWorkflow(
             if (!stage.retainedOperation.snapshotStageComplete) {
                 var after = stage.retainedOperation.snapshotStagedRowCount
                 var more = true
+                // Rows per chunk request. Staged rows stay charged until install, so once a chunk's
+                // transport cost per row is measured, every later request is sized from fresh usage to
+                // leave room for receipt and staging, not only after a transport refusal.
+                var chunkRows = limits.maxRows
+                var transportEntriesPerRow = 0L
+                val maxColumns = stage.descriptor.tables.maxOfOrNull { it.columns.size } ?: 0
+                suspend fun quotaRows() = bootstrapChunkRowsForQuota(
+                    config.maxSyncWorkspaceEntries - workspace.usage("bootstrap-transport").entries,
+                    transportEntriesPerRow, maxColumns, limits.maxRows)
                 while (more) {
                     operations.nextWorkSliceIfNeeded()
-                    val progress = BootstrapTransportScope.use(workspace) { transport ->
-                        val hardLimit = state.admittedContract.limits.maxSnapshotDecodedBytesPerChunk
-                        suspend fun fetch(rows: Int, bytes: Long) = remoteApi.fetchAndStageBootstrapChunk(stage, after, rows, bytes,
-                            hardLimit, state.admittedContract.limits.maxRowDecodedBytes, transport) { validate(stage) }
-                        try { fetch(limits.maxRows, limits.maxBytes) }
-                        catch (tooSmall: SnapshotChunkTooSmallException) {
-                            if (tooSmall.requiredBytes > hardLimit) throw SnapshotSemanticException(SnapshotSemanticFailure.INVALID_CHUNK)
-                            try { fetch(1, tooSmall.requiredBytes) }
-                            catch (_: SnapshotChunkTooSmallException) { throw SnapshotSemanticException(SnapshotSemanticFailure.INVALID_CHUNK) }
+                    if (transportEntriesPerRow > 0) chunkRows = quotaRows()
+                    val progress = run {
+                        while (true) {
+                            var halveForBytes = false
+                            val received = BootstrapTransportScope.use(workspace) { transport ->
+                                val hardLimit = state.admittedContract.limits.maxSnapshotDecodedBytesPerChunk
+                                suspend fun fetch(rows: Int, bytes: Long) = remoteApi.fetchAndStageBootstrapChunk(stage, after, rows, bytes,
+                                    hardLimit, state.admittedContract.limits.maxRowDecodedBytes, transport) { validate(stage) }
+                                try {
+                                    val chunk = try { fetch(chunkRows, limits.maxBytes) }
+                                    catch (tooSmall: SnapshotChunkTooSmallException) {
+                                        if (tooSmall.requiredBytes > hardLimit) throw SnapshotSemanticException(SnapshotSemanticFailure.INVALID_CHUNK)
+                                        try { fetch(1, tooSmall.requiredBytes) }
+                                        catch (_: SnapshotChunkTooSmallException) { throw SnapshotSemanticException(SnapshotSemanticFailure.INVALID_CHUNK) }
+                                    }
+                                    if (chunk.rows > 0) transportEntriesPerRow = maxOf(transportEntriesPerRow,
+                                        bootstrapCeilDiv(transport.charge.entries, chunk.rows))
+                                    chunk
+                                } catch (capacity: SyncWorkspaceLimitException) {
+                                    // A transport refusal happens before any JSON tree, receipt or staging,
+                                    // so the same ordinal is requested again with fewer rows. Any other
+                                    // refusal, or one row that did not fit, stays final.
+                                    if (capacity.unit != "bootstrap-transport" || capacity.resumable || chunkRows <= 1) throw capacity
+                                    if (capacity.dimension == "entries") {
+                                        val receivable = minOf(chunkRows.toLong(), stage.session.rowCount - after).coerceAtLeast(1)
+                                        transportEntriesPerRow = maxOf(transportEntriesPerRow,
+                                            bootstrapCeilDiv(transport.charge.entries + capacity.reserved, receivable))
+                                    } else halveForBytes = true
+                                    null
+                                }
+                            }
+                            if (received != null) return@run received
+                            // Body bytes are buffered incrementally, so a bytes refusal is not proportional
+                            // to one admission and the request halves. Every retry requests fewer rows.
+                            chunkRows = minOf(chunkRows - 1, if (halveForBytes) chunkRows / 2 else quotaRows()).coerceAtLeast(1)
                         }
+                        @Suppress("UNREACHABLE_CODE") error("unreachable")
                     }
                     after = progress.nextOrdinal
                     validate(stage)
@@ -1043,3 +1079,21 @@ internal data class IncrementalPullResult(
     val updatedTables: Set<String>,
     val outcome: RemoteSyncOutcome,
 )
+
+/**
+ * Typed bootstrap chunk rows that fit [freeEntries] of fresh workspace quota. Each row costs its
+ * measured [transportEntriesPerRow] while its chunk is received, plus its durable typed row, wire
+ * frame and page record; one receipt page also needs transient room for its rows. Never below one row
+ * (the exact admission checks then decide) and never above the negotiated [maxRows].
+ */
+internal fun bootstrapChunkRowsForQuota(freeEntries: Long, transportEntriesPerRow: Long, maxColumns: Int, maxRows: Int): Int {
+    require(transportEntriesPerRow > 0 && maxColumns >= 0 && maxRows > 0)
+    val available = freeEntries - 2 * (32 + 4L * maxColumns) - 256
+    val rows = if (available <= 0) 1L else available / (transportEntriesPerRow + 3)
+    return rows.coerceIn(1L, maxRows.toLong()).toInt()
+}
+
+internal fun bootstrapCeilDiv(value: Long, divisor: Long): Long {
+    require(value >= 0 && divisor > 0)
+    return value / divisor + if (value % divisor == 0L) 0 else 1
+}

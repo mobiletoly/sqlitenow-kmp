@@ -129,7 +129,7 @@ internal class SettlementSqlVolumeTest : CrossTargetSyncTestSupport() {
         withFixture(32) { server, db, client ->
             db.execSQL("UPDATE nodes SET parent_id='Q' WHERE id='W'")
             server.beforePushResponse = {
-                db.execSQL("UPDATE _sync_row_state SET server_kind='unknown',server_payload=NULL,row_version=0,relationships_known=0,server_provenance=json_set(server_provenance,'$.authoritative_version',0,'$.origin','explicit_conflict','$.bundle_sequence',NULL) WHERE table_name='nodes' AND key_json='{\"id\":\"Q\"}'")
+                db.execSQL("UPDATE _sync_row_state SET server_kind='unknown',server_payload=NULL,row_version=0,relationships_known=0,server_provenance=json_set(server_provenance,'$.origin','explicit_conflict','$.bundle_sequence',NULL) WHERE table_name='nodes' AND key_json='{\"id\":\"Q\"}'")
             }
             assertIs<FKReconciliationRequiredException>(client.pushPending().exceptionOrNull())
             assertEquals(1L, scalarLong(db, "SELECT last_bundle_seq_seen FROM _sync_attachment_state"))

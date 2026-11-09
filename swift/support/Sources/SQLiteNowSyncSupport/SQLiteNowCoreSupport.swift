@@ -180,6 +180,7 @@ public enum SQLiteNowError: Error, CustomStringConvertible, Equatable {
     case syncWorkLimit(SQLiteNowSyncWorkLimit)
     case syncWorkspaceLimit(SQLiteNowSyncWorkspaceLimit)
     case stalePushDependencyDiagnostic(SQLiteNowStalePushDependencyDiagnostic)
+    case pendingIntentUnsatisfiable(SQLiteNowPendingIntentUnsatisfiable)
     case conflictNeedsResolution(message: String)
     case staleConflictResolution(message: String)
     case `protocol`(message: String)
@@ -211,6 +212,7 @@ public enum SQLiteNowError: Error, CustomStringConvertible, Equatable {
         case let .syncWorkLimit(result): return result.reason
         case let .syncWorkspaceLimit(result): return result.reason
         case let .stalePushDependencyDiagnostic(result): return result.reason
+        case let .pendingIntentUnsatisfiable(result): return "\(result.reason): \(result.tables.joined(separator: ", "))"
         case let .conflictNeedsResolution(message): return message
         case let .staleConflictResolution(message): return message
         case let .protocol(message): return message

@@ -40,7 +40,7 @@ internal class HistoricalContextRetentionTest : SurvivorTestSupport() {
         } finally { deleteTempSqliteNowTestDbArtifacts(path) }
     }
 
-    @Test fun frozenRootsBlockReplacementAndCleanRecoveryUsesNewSource() = runOwnedWebDatabaseTest {
+    @Test fun frozenRootsKeepContextUntilSettledAndRecoveryUsesNewSource() = runOwnedWebDatabaseTest {
         withSurvivorFixture { server, db, _, client ->
             try {
                 val oldSource = scalarText(db, "SELECT current_source_id FROM _sync_attachment_state")

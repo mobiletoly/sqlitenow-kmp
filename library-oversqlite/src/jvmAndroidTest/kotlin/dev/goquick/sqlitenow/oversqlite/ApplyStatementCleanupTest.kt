@@ -182,7 +182,7 @@ internal class ApplyStatementCleanupTest : ApplyStatementTestSupport() {
     }
     @Test fun pullStillRejectsUnknownParentEvidence() = runOwnedWebDatabaseTest {
         withApplyFixture(0) { f ->
-            f.db.execSQL("UPDATE _sync_row_state SET server_kind='unknown',server_payload=NULL,row_version=0,relationships_known=0,server_provenance=json_set(server_provenance,'$.authoritative_version',0,'$.origin','explicit_conflict','$.bundle_sequence',NULL) WHERE key_json='{\"id\":\"Q\"}'")
+            f.db.execSQL("UPDATE _sync_row_state SET server_kind='unknown',server_payload=NULL,row_version=0,relationships_known=0,server_provenance=json_set(server_provenance,'$.origin','explicit_conflict','$.bundle_sequence',NULL) WHERE key_json='{\"id\":\"Q\"}'")
             val row = rootEffect("replacement")
             f.server.addRemoteBundleForTest(listOf(row.copy(payload = JsonObject(row.payload!!.jsonObject + ("parent_id" to JsonPrimitive("Q"))))))
             assertIs<FKReconciliationRequiredException>(f.client.pullToStable().exceptionOrNull())

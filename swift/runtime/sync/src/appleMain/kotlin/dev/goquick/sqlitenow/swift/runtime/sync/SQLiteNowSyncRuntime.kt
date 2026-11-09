@@ -28,6 +28,8 @@ import dev.goquick.sqlitenow.oversqlite.BundleChangeWatchMode
 import dev.goquick.sqlitenow.oversqlite.ConflictContext
 import dev.goquick.sqlitenow.oversqlite.DefaultOversqliteClient
 import dev.goquick.sqlitenow.oversqlite.DetachOutcome
+import dev.goquick.sqlitenow.oversqlite.DiscardedPendingIntent
+import dev.goquick.sqlitenow.oversqlite.PendingIntentUnsatisfiableException
 import dev.goquick.sqlitenow.oversqlite.DeferConflictResolver
 import dev.goquick.sqlitenow.oversqlite.MergeResult
 import dev.goquick.sqlitenow.oversqlite.OversqliteAutomaticDownloadConfig
@@ -240,6 +242,18 @@ class SQLiteNowSyncRuntimeAttachResult(
 
 class SQLiteNowSyncRuntimeDetachOutcome(
     val outcome: String,
+)
+
+/** One pending edit dropped by `discardPendingIntentForRecovery`; `keyJson` is the canonical local sync key. */
+class SQLiteNowSyncRuntimeDiscardedIntentRow(
+    val schema: String,
+    val table: String,
+    val keyJson: String,
+    val op: String,
+)
+
+class SQLiteNowSyncRuntimeDiscardedPendingIntent(
+    val rows: List<SQLiteNowSyncRuntimeDiscardedIntentRow>,
 )
 
 class SQLiteNowSyncRuntimePushReport(
@@ -675,6 +689,11 @@ class SQLiteNowSyncRuntimeClient private constructor(
     }
 
     @Throws(SQLiteNowSyncRuntimeException::class, CancellationException::class)
+    suspend fun discardPendingIntentForRecovery(): SQLiteNowSyncRuntimeDiscardedPendingIntent = mapSyncRuntimeErrors {
+        inRuntimeScope { client.discardPendingIntentForRecovery().runtimeGet().toRuntimeDiscardedPendingIntent() }
+    }
+
+    @Throws(SQLiteNowSyncRuntimeException::class, CancellationException::class)
     suspend fun pushPending(): SQLiteNowSyncRuntimePushReport = mapSyncRuntimeErrors {
         inRuntimeScope {
             SwiftA3ConflictApplyProbe.aroundPendingUpload(client) {
@@ -1049,6 +1068,9 @@ private fun SourceInfo.toRuntimeSourceInfo(): SQLiteNowSyncRuntimeSourceInfo =
         sourceRecoveryReason = sourceRecoveryReason?.name,
     )
 
+private fun DiscardedPendingIntent.toRuntimeDiscardedPendingIntent(): SQLiteNowSyncRuntimeDiscardedPendingIntent =
+    SQLiteNowSyncRuntimeDiscardedPendingIntent(rows.map { SQLiteNowSyncRuntimeDiscardedIntentRow(it.schema, it.table, it.keyJson, it.op) })
+
 private fun DetachOutcome.toRuntimeDetachOutcome(): SQLiteNowSyncRuntimeDetachOutcome =
     when (this) {
         DetachOutcome.DETACHED -> SQLiteNowSyncRuntimeDetachOutcome(outcome = "DETACHED")
@@ -1272,6 +1294,7 @@ private fun localPlanningErrorJson(error: Throwable?): String? {
         is SyncWorkLimitException -> error.progress
         is SyncWorkspaceLimitException -> error.progress
         is StalePushDependencyDiagnosticException -> null
+        is PendingIntentUnsatisfiableException -> null
         else -> return null
     }
     return buildJsonObject {
@@ -1294,6 +1317,10 @@ private fun localPlanningErrorJson(error: Throwable?): String? {
                 put("limit",error.limit);put("used",error.used);put("reserved",error.reserved);put("resumable",error.resumable)
             }
             is StalePushDependencyDiagnosticException -> {put("reason",error.reason);put("diagnosticId",error.diagnosticId)}
+            is PendingIntentUnsatisfiableException -> {
+                put("reason","pending_intent_unsatisfiable")
+                put("tables",Json.encodeToJsonElement(error.tables.sorted()))
+            }
         }
         if(progress!=null) put("progress",buildJsonObject {
             put("dirtyRows",progress.dirtyRows);put("outboundRows",progress.outboundRows);put("committedBundles",progress.committedBundles)

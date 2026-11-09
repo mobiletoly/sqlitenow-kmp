@@ -21,15 +21,22 @@ internal class SnapshotStatementReuseTest : SurvivorTestSupport() {
             assertTrue(observation.cachePreparedSql.isNotEmpty())
             for(owner in observation.cachePreparedSql) assertEquals(owner.distinct().size,owner.size,"one physical handle per shape in each writer")
         }
-        for (observation in listOf(small, large)) {
+        // The apply plan is retained by its planned-rows reader across rows, so its read is a cached
+        // per-writer shape that runs fewer times than there are rows; the other shapes run per row.
+        val planRead = "SELECT unit,guard,phase,root_cursor"
+        for ((rows, observation) in listOf(100 to small, 1000 to large)) {
             for (prefix in listOf("SELECT charge FROM _sync_snapshot_stage", "SELECT table_name,key_json,payload,row_version",
-                "INSERT INTO _sync_apply_plan(", "SELECT bytes FROM _sync_apply_rows", "SELECT unit,guard,phase,root_cursor",
+                "INSERT INTO _sync_apply_plan(",
+                // The retained-row header read carries the charge before the payload is loaded.
+                "SELECT bytes,payload IS NOT NULL,wire,role,source_ordinal,saved_rowid FROM _sync_apply_rows", planRead,
                 "SELECT 1 FROM _sync_row_state WHERE schema_name=? AND table_name=? AND key_json=?")) {
                 val sql = observation.physicalPrepares.keys.single { it.startsWith(prefix) }
                 val owners=observation.cachePreparedSql.count {sql in it}
                 assertTrue(owners>0,"hot shape must use an observed writer cache: $prefix")
                 assertEquals(owners.toLong(),observation.physicalPrepares.getValue(sql),"one physical handle per actual writer: $prefix")
-                assertTrue(observation.logicalSteps.getValue(sql) >= 100, "hot shape remains executed per row: $prefix")
+                val steps = observation.logicalSteps.getValue(sql)
+                if (prefix == planRead) assertTrue(steps > 0 && steps < rows, "retained plan is read per writer, not per row: $steps for $rows rows")
+                else assertTrue(steps >= 100, "hot shape remains executed per row: $prefix")
             }
         }
     }

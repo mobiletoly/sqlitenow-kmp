@@ -47,6 +47,23 @@ internal class OrdinarySafetyPlatformTest : PlatformCrossTargetTestSupport() {
         put("storage", if (value.isString) "text" else "integer"); put("value", value)
     }
 
+    // An idle opened database charges its operation owner (1 entry, 512 bytes plus six copies of its
+    // metadata, including the default snapshot_engine `general_delta`) and the idle typed-bootstrap
+    // metadata owner (1 entry, 512 bytes).
+    private val idleWorkspaceCharge = WorkspaceCharge(2, 1126)
+
+    // The logical A provenance of one `_sync_row_state` row: its compact observation joined with the
+    // complete provenance context, and the authoritative version owned by `row_version`
+    // (oversqlite-contracts/local-planning/README.md, complete-context retained format).
+    private suspend fun logicalServerProvenance(db: PlatformTestDatabase, predicate: String): JsonObject =
+        Json.parseToJsonElement(scalarText(db, """SELECT json_object('database_id',c.database_id,'service_id',c.service_id,
+            'account_scope',json_object('binding',c.account_binding,'account_id',c.account_id),'generation_id',c.generation_id,
+            'generation_fingerprint',c.generation_fingerprint,'admission',c.admission,'local_version',c.local_version,
+            'physical_shape',c.physical_shape,'origin_source_id',c.origin_source_id,
+            'origin',json_extract(r.server_provenance,'$.origin'),'bundle_sequence',json_extract(r.server_provenance,'$.bundle_sequence'),
+            'authoritative_version',r.row_version)
+            FROM _sync_row_state r JOIN _sync_provenance_contexts c ON c.context_id=r.server_context_id WHERE $predicate""")).jsonObject
+
     private suspend fun operationRecord(db: PlatformTestDatabase): JsonObject {
         val columns = db.connection().queryList("SELECT name FROM pragma_table_info('_sync_operation_state') ORDER BY cid") { it.getText(0) }
         val projection = columns.joinToString(",") { column ->
@@ -2483,6 +2500,7 @@ internal class OrdinarySafetyPlatformTest : PlatformCrossTargetTestSupport() {
                     val emptyOperation = operationRecord(db)
                     val originalAuthority = scalarText(db, "SELECT server_payload FROM _sync_row_state WHERE key_json='{\"id\":\"P\"}'")
                     val originalProvenance = scalarText(db, "SELECT server_provenance FROM _sync_row_state WHERE key_json='{\"id\":\"P\"}'")
+                    val originalLogicalProvenance = logicalServerProvenance(db, "key_json='{\"id\":\"P\"}'")
                     db.execSQL("UPDATE nodes SET name='frozen L' WHERE id='P'")
                     if (committed) server.beforePushResponse = { server.beforePushResponse = null; throw CancellationException("committed reply lost before source recovery") }
                     else server.beforePushCommit = { server.beforePushCommit = null; throw CancellationException("prepared input before source recovery") }
@@ -2505,7 +2523,7 @@ internal class OrdinarySafetyPlatformTest : PlatformCrossTargetTestSupport() {
                     val workspace = OversqliteWorkspace(db.connection(), cfg)
                     val unit = applyUnit("author-prepared-recovery", 0, "")
                     val usage = workspace.usage(unit)
-                    assertTrue(usage.entries > 1 && usage.bytes > 536)
+                    assertTrue(usage.entries > idleWorkspaceCharge.entries && usage.bytes > idleWorkspaceCharge.bytes)
                     assertTrue(usage.entries <= cfg.maxSyncWorkspaceEntries && usage.bytes <= cfg.maxSyncWorkspaceBytes)
                     // Requiring source recovery leaves the frozen request, its captures and its charges intact.
                     assertEquals(rows, OversqliteOutboxStateStore(db.connection()).loadRows())
@@ -2577,9 +2595,10 @@ internal class OrdinarySafetyPlatformTest : PlatformCrossTargetTestSupport() {
                         assertEquals(revision + index + 1, scalarLong(db, "SELECT server_revision FROM _sync_row_state WHERE $predicate"))
                         assertEquals(1L, scalarLong(db, "SELECT relationships_known FROM _sync_row_state WHERE $predicate"))
                         assertEquals("live", scalarText(db, "SELECT server_kind FROM _sync_row_state WHERE $predicate"))
-                        val provenance = Json.parseToJsonElement(originalProvenance).jsonObject
-                        assertEquals(JsonObject(provenance + mapOf("origin" to JsonPrimitive("snapshot"), "bundle_sequence" to JsonPrimitive(3), "authoritative_version" to JsonPrimitive(values.third))),
-                            Json.parseToJsonElement(scalarText(db, "SELECT server_provenance FROM _sync_row_state WHERE $predicate")))
+                        // Snapshot installation binds the target (replacement) source context and never the
+                        // retired source (oversqlite-contracts/local-planning/README.md).
+                        assertEquals(JsonObject(originalLogicalProvenance + mapOf("origin_source_id" to JsonPrimitive(replacement), "origin" to JsonPrimitive("snapshot"), "bundle_sequence" to JsonPrimitive(3), "authoritative_version" to JsonPrimitive(values.third))),
+                            logicalServerProvenance(db, predicate))
                         val at = scalarText(db, "SELECT updated_at FROM _sync_row_state WHERE $predicate")
                         assertTrue(at >= publicationStart && at <= publicationEnd)
                         for (column in listOf("schema_name", "table_name", "key_json", "server_kind", "server_payload", "server_provenance", "updated_at")) assertEquals("text", scalarText(db, "SELECT typeof($column) FROM _sync_row_state WHERE $predicate"))
@@ -2596,7 +2615,7 @@ internal class OrdinarySafetyPlatformTest : PlatformCrossTargetTestSupport() {
                     val rebuilt = databaseStateVector(db.connection(), listOf("nodes", "_sync_upload_journal"))
                     for (table in listOf("_sync_opening_state", "_sync_contract_identity", "_sync_admitted_contracts", "_sync_managed_tables")) assertEquals(clean.getValue(table), rebuilt.getValue(table), "clean replacement preserves complete $table")
                     for (table in listOf("_sync_upload_journal", "_sync_dirty_rows", "_sync_outbox_rows", "_sync_snapshot_stage", "_sync_apply_plan", "_sync_apply_rows", "_sync_apply_edges", "_sync_push_plan", "_sync_push_nodes", "_sync_push_edges")) assertTrue(rebuilt.getValue(table).isEmpty(), "retired owner $table")
-                    assertEquals(WorkspaceCharge(1, 536), workspace.usage(unit), "only the cleared operation singleton remains charged")
+                    assertEquals(idleWorkspaceCharge, workspace.usage(unit), "only the cleared idle operation owners remain charged")
                     val unchangedFollowup = mapOf("nodes" to "id<>'P'", "_sync_row_state" to "key_json<>'{\"id\":\"P\"}'")
                     val beforeFollowup = databaseStateVector(db.connection(), listOf("nodes", "_sync_upload_journal"), unchangedFollowup)
                     db.execSQL("UPDATE nodes SET name='replacement followup' WHERE id='P'")
@@ -2609,9 +2628,9 @@ internal class OrdinarySafetyPlatformTest : PlatformCrossTargetTestSupport() {
                     assertEquals(4L, scalarLong(db, "SELECT last_bundle_seq_seen FROM _sync_attachment_state"))
                     assertEquals(1L, Json.parseToJsonElement(server.requestBodies.last { it.first == "/sync/push" }.second).jsonObject.getValue("source_bundle_id").jsonPrimitive.long)
                     expected["P"] = Triple("replacement followup", null, 4L)
-                    val provenanceBefore = Json.parseToJsonElement(originalProvenance).jsonObject
+                    val provenanceBefore = originalLogicalProvenance
                     assertEquals(JsonObject(provenanceBefore + mapOf("origin_source_id" to JsonPrimitive(replacement), "origin" to JsonPrimitive("settlement"), "bundle_sequence" to JsonPrimitive(4), "authoritative_version" to JsonPrimitive(4))),
-                        Json.parseToJsonElement(scalarText(db, "SELECT server_provenance FROM _sync_row_state WHERE key_json='{\"id\":\"P\"}'")), "followup settlement binds the actual replacement writer")
+                        logicalServerProvenance(db, "key_json='{\"id\":\"P\"}'"), "followup settlement binds the actual replacement writer")
                     val followupAt = scalarText(db, "SELECT updated_at FROM _sync_row_state WHERE key_json='{\"id\":\"P\"}'")
                     assertTrue(followupAt >= followupPublicationStart && followupAt <= followupPublicationEnd)
                     assertEquals(JsonObject(conflictBefore + mapOf("baseline_revision" to typed(JsonPrimitive(revision + 5), "integer"), "dirty_revision" to typed(JsonPrimitive(conflictBefore.getValue("dirty_revision").jsonObject.getValue("value").jsonPrimitive.long + 2), "integer"))),
@@ -2638,7 +2657,7 @@ internal class OrdinarySafetyPlatformTest : PlatformCrossTargetTestSupport() {
                     assertEquals(beforeFollowup.filterKeys { it !in permittedFollowup }, afterFollowup.filterKeys { it !in permittedFollowup }, "every complete non-P authority/intent/edge/plan/journal/identity/operation owner remains exact")
                     for (table in listOf("_sync_upload_journal", "_sync_dirty_rows", "_sync_outbox_rows", "_sync_snapshot_stage", "_sync_apply_plan", "_sync_apply_rows", "_sync_apply_edges", "_sync_push_plan", "_sync_push_nodes", "_sync_push_edges")) assertTrue(afterFollowup.getValue(table).isEmpty(), "confirmed replacement cleanup $table")
                     assertEquals(OversqliteOutboxBundleState(), OversqliteOutboxStateStore(db.connection()).loadBundleState())
-                    assertEquals(WorkspaceCharge(1, 536), workspace.usage(unit))
+                    assertEquals(idleWorkspaceCharge, workspace.usage(unit))
                     val beforeReadback = databaseStateVector(db.connection(), listOf("nodes"))
                     val pushesBeforeReadback = server.pushRequestCount
                     val workspaceUnit = unit
@@ -2678,7 +2697,7 @@ internal class OrdinarySafetyPlatformTest : PlatformCrossTargetTestSupport() {
                         assertEquals(expected, Json.parseToJsonElement(scalarText(peer, "SELECT server_payload FROM _sync_row_state WHERE $predicate")), "full independent A $id")
                         assertEquals(JsonObject(provenanceBefore + mapOf("origin_source_id" to JsonPrimitive(peerSource), "origin" to JsonPrimitive("snapshot"),
                             "bundle_sequence" to JsonPrimitive(4), "authoritative_version" to JsonPrimitive(version))),
-                            Json.parseToJsonElement(scalarText(peer, "SELECT server_provenance FROM _sync_row_state WHERE $predicate")), "full independent provenance $id")
+                            logicalServerProvenance(peer, predicate), "full independent provenance $id")
                         assertEquals(version, scalarLong(peer, "SELECT row_version FROM _sync_row_state WHERE $predicate"))
                         assertEquals("live", scalarText(peer, "SELECT server_kind FROM _sync_row_state WHERE $predicate"))
                         assertEquals(1L, scalarLong(peer, "SELECT relationships_known FROM _sync_row_state WHERE $predicate"))
@@ -2735,7 +2754,7 @@ internal class OrdinarySafetyPlatformTest : PlatformCrossTargetTestSupport() {
                         "table_name" to typed(JsonPrimitive("nodes"), "text"))))), Json.parseToJsonElement(scalarText(peer,
                         "SELECT json_group_array(json_object(${typedProjection(listOf("schema_name", "table_name"))})) FROM _sync_managed_tables")),
                         "exact registered fixture routing after admission")
-                    assertEquals(WorkspaceCharge(1, 536), OversqliteWorkspace(peer.connection(), cfg).usage(workspaceUnit))
+                    assertEquals(idleWorkspaceCharge, OversqliteWorkspace(peer.connection(), cfg).usage(workspaceUnit))
                     assertEquals(0L, scalarLong(peer, "SELECT count(*) FROM pragma_foreign_key_check"))
                     assertEquals(pushesBeforeReadback, server.pushRequestCount, "verification never sends new intent")
                     assertEquals(beforeReadback, databaseStateVector(db.connection(), listOf("nodes")), "independent readback preserves every original primary/recovery/stage field")

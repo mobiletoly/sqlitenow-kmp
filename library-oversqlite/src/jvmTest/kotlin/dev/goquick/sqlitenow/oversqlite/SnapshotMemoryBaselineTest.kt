@@ -4,6 +4,8 @@ import dev.goquick.sqlitenow.core.BundledSqliteConnectionProvider
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.cio.CIO
 import io.ktor.client.plugins.defaultRequest
+import io.ktor.client.request.HttpSendPipeline
+import io.ktor.http.HttpMethod
 import java.lang.management.ManagementFactory
 import java.nio.file.Path
 import java.util.concurrent.TimeUnit
@@ -48,6 +50,7 @@ class SnapshotMemoryBaselineTest {
         lateinit var fixtureFinal: SnapshotMemoryServerFinal
         var appliedRows = 0L
         var maximumBodyBytes = 0L
+        var publicCalls = 0
         withSnapshotMemoryCleanup {
             val fixture = SnapshotMemoryFixtureProcess.start(rows, rowBytes)
             defer(SnapshotMemoryCleanupPhase.FIXTURE, "compact fixture") { fixtureFinal = fixture.stop() }
@@ -60,7 +63,33 @@ class SnapshotMemoryBaselineTest {
             defer(SnapshotMemoryCleanupPhase.DATABASE, "database") { db.close() }
             db.execSQL("CREATE TABLE users(id TEXT PRIMARY KEY NOT NULL, name TEXT NOT NULL)")
             db.execSQL("PRAGMA journal_mode = WAL")
-            val http = HttpClient(CIO) { defaultRequest { url("http://127.0.0.1:${fixture.port}/") } }
+            // A separate WAL reader sees only committed state, so it observes durable staging pages
+            // between chunk fetches without a hook inside the restore engine.
+            val reader = BundledSqliteConnectionProvider.openConnection(
+                directory.path.resolve("oversqlite.sqlite").toString(), debug = false)
+            defer(SnapshotMemoryCleanupPhase.DATABASE, "staging reader") { reader.close() }
+            // The bootstrap tables are created by the first public call.
+            suspend fun stagedPages(): Long =
+                if (reader.scalarLong("SELECT count(*) FROM sqlite_master WHERE name='_sync_bootstrap_pages'") == 0L) 0L
+                else reader.scalarLong("SELECT count(*) FROM _sync_bootstrap_pages")
+            var stagingCommits = 0
+            val http = HttpClient(CIO) {
+                defaultRequest { url("http://127.0.0.1:${fixture.port}/") }
+                install("SnapshotStagingProbe") {
+                    sendPipeline.intercept(HttpSendPipeline.Monitoring) {
+                        if (context.method == HttpMethod.Get &&
+                            context.url.build().encodedPath.startsWith("/sync/snapshot-sessions/")) {
+                            assertEquals(0L, reader.scalarLong("SELECT count(*) FROM users"),
+                                "snapshot never publishes a partial business state")
+                            assertEquals(0L, reader.scalarLong("SELECT count(*) FROM _sync_row_state"),
+                                "authoritative state waits for atomic installation")
+                            assertEquals(0L, reader.scalarLong("SELECT last_bundle_seq_seen FROM _sync_attachment_state"))
+                            if (stagedPages() > 0L) stagingCommits++
+                        }
+                        proceed()
+                    }
+                }
+            }
             defer(SnapshotMemoryCleanupPhase.HTTP_CLOSE, "HTTP client") { http.close() }
             defer(SnapshotMemoryCleanupPhase.HTTP_JOIN, "HTTP job") {
                 withTimeout(20_000L) { http.coroutineContext.job.join() }
@@ -79,33 +108,33 @@ class SnapshotMemoryBaselineTest {
                 ),
             )
             defer(SnapshotMemoryCleanupPhase.CLIENT, "oversqlite client") { client.close() }
-            var stagingCommits = 0
-            client.setSnapshotApplyFaultInjectorForTest(SnapshotApplyFaultInjector(beforeCommit = {
-                val businessRows = db.scalarLong("SELECT count(*) FROM users")
-                val authoritativeRows = db.scalarLong("SELECT count(*) FROM _sync_row_state")
-                assertTrue(businessRows == 0L || businessRows == rows.toLong(), "snapshot never publishes a partial business state")
-                if (businessRows == 0L) {
-                    assertEquals(0L, authoritativeRows, "authoritative state waits for atomic installation")
-                    assertEquals(0L, db.scalarLong("SELECT last_bundle_seq_seen FROM _sync_attachment_state"))
-                    stagingCommits++
-                } else assertEquals(rows.toLong(), authoritativeRows)
-            }))
-            client.openAndConnect("user-1").getOrThrow()
-            assertTrue(stagingCommits > 0, "one public call crosses durable staging boundaries")
-            client.setSnapshotApplyFaultInjectorForTest(null)
+            // One public call is bounded to 64 server exchanges; a larger restore returns
+            // UploadRecoveryIncompleteException with its staged pages kept, and the next call resumes.
+            while (true) {
+                publicCalls++
+                val stagedBefore = stagedPages()
+                val result = client.openAndConnect("user-1")
+                maximumBodyBytes = maxOf(maximumBodyBytes,
+                    client.snapshotRestoreDiagnosticsForTest().maxCompletelyDecodedChunkBodyBytes)
+                val failure = result.exceptionOrNull() ?: break
+                if (failure !is UploadRecoveryIncompleteException) throw failure
+                assertTrue(stagedPages() > stagedBefore,
+                    "each incomplete call keeps more durable staging pages")
+                assertTrue(publicCalls < 20, "restore makes progress across public calls")
+            }
+            assertTrue(stagingCommits > 0, "the restore crosses durable staging boundaries before installation")
             appliedRows = db.scalarLong("SELECT COUNT(*) FROM users")
             assertEquals(rows.toLong(), appliedRows)
             assertEquals(0L, db.scalarLong("SELECT COUNT(*) FROM _sync_snapshot_stage"))
             val diagnostics = client.snapshotRestoreDiagnosticsForTest()
             assertEquals(rows.toLong(), diagnostics.finalStagedRows)
             assertEquals(rows.toLong(), diagnostics.finalAppliedRows)
-            maximumBodyBytes = maxOf(maximumBodyBytes, diagnostics.maxCompletelyDecodedChunkBodyBytes)
             assertTrue(maximumBodyBytes in 1..(4L * 1024L * 1024L))
         }
         assertTrue(fixtureFinal.chunkCount >= (rows + 999L) / 1000L, "all rows use the configured bounded chunks")
         recordResult(label, rows, rowBytes, metrics)
         println("snapshot_memory_mapping protocol=compact rows=$rows target_row_bytes=$rowBytes " +
-            "applied_rows=$appliedRows chunks=${fixtureFinal.chunkCount} " +
+            "applied_rows=$appliedRows chunks=${fixtureFinal.chunkCount} public_calls=$publicCalls " +
             "max_decoded_body_bytes=$maximumBodyBytes peak_heap_bytes=${metrics.peakHeapBytes} " +
             "peak_rss_bytes=${metrics.peakRssBytes}")
     }

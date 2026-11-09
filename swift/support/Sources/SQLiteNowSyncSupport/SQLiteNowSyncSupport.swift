@@ -46,6 +46,14 @@ public extension SQLiteNowError {
                     return .syncWorkspaceLimit(result)
                 case "StalePushDependencyDiagnosticException":
                     return .stalePushDependencyDiagnostic(try decoder.decode(SQLiteNowStalePushDependencyDiagnostic.self, from: data))
+                case "PendingIntentUnsatisfiableException":
+                    let result = try decoder.decode(SQLiteNowPendingIntentUnsatisfiable.self, from: data)
+                    guard payload.category == "state", !payload.remoteContract,
+                          result.reason == "pending_intent_unsatisfiable",
+                          !result.tables.isEmpty, result.tables.allSatisfy({ !$0.isEmpty }),
+                          validPlanningFields(data, ["reason", "tables"])
+                    else { return .protocol(message: "invalid local planning result") }
+                    return .pendingIntentUnsatisfiable(result)
                 default: return .protocol(message: "unknown local planning result")
                 }
             } catch { return .protocol(message: "invalid local planning result") }
@@ -195,6 +203,14 @@ public struct SQLiteNowSyncWorkspaceLimit: Codable, Equatable, Sendable {
 public struct SQLiteNowStalePushDependencyDiagnostic: Codable, Equatable, Sendable {
     public let reason: String
     public let diagnosticId: String
+}
+
+/// `rebuild()` could not apply the pending local edits of these tables to the authoritative
+/// snapshot during source recovery and changed nothing. The only exit is
+/// `discardPendingIntentForRecovery()` after explicit user consent.
+public struct SQLiteNowPendingIntentUnsatisfiable: Codable, Equatable, Sendable {
+    public let reason: String
+    public let tables: [String]
 }
 
 public struct SQLiteNowSyncAuth: @unchecked Sendable {
@@ -596,6 +612,30 @@ public struct SQLiteNowSourceInfo: Equatable, Sendable {
         rebuildRequired = runtime.rebuildRequired
         sourceRecoveryRequired = runtime.sourceRecoveryRequired
         sourceRecoveryReason = runtime.sourceRecoveryReason.map(SQLiteNowSourceRecoveryReason.init)
+    }
+}
+
+/// One pending edit dropped by `discardPendingIntentForRecovery()`. `keyJson` is the canonical local
+/// sync key object of the row and `op` is `INSERT`, `UPDATE` or `DELETE`.
+public struct SQLiteNowDiscardedIntentRow: Equatable, Sendable {
+    public let schema: String
+    public let table: String
+    public let keyJson: String
+    public let op: String
+
+    internal init(_ runtime: SQLiteNowSyncRuntimeDiscardedIntentRow) {
+        schema = runtime.schema
+        table = runtime.table
+        keyJson = runtime.keyJson
+        op = runtime.op
+    }
+}
+
+public struct SQLiteNowDiscardedPendingIntent: Equatable, Sendable {
+    public let rows: [SQLiteNowDiscardedIntentRow]
+
+    internal init(_ runtime: SQLiteNowSyncRuntimeDiscardedPendingIntent) {
+        rows = runtime.rows.map(SQLiteNowDiscardedIntentRow.init)
     }
 }
 
@@ -1017,6 +1057,16 @@ public final class SQLiteNowSyncClient {
     /// user consent.
     public func discardAnonymousLocalData() async throws {
         _ = try await mapRuntimeErrors { try await runtime.discardAnonymousLocalData() }
+    }
+
+    /// Permanently drops the pending local edits that `rebuild()` would otherwise carry across a
+    /// source recovery and reports exactly which rows were dropped. Call it only after `rebuild()`
+    /// fails with `.pendingIntentUnsatisfiable`, or when the user explicitly abandons unsynced edits;
+    /// it must follow explicit user consent. Runs only while source recovery is required.
+    public func discardPendingIntentForRecovery() async throws -> SQLiteNowDiscardedPendingIntent {
+        try await mapRuntimeErrors {
+            SQLiteNowDiscardedPendingIntent(try await runtime.discardPendingIntentForRecovery())
+        }
     }
 
     public func pushPending() async throws -> SQLiteNowPushReport {

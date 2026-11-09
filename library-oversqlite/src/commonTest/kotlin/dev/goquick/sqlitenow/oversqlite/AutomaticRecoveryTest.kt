@@ -175,7 +175,8 @@ internal class AutomaticRecoveryTest : CrossTargetSyncTestSupport() {
         historical(server)
         // Preserve an installed authoritative observation newer than both the
         // blocked unit and server S. Snapshot creation must retain that floor.
-        db.execSQL("UPDATE _sync_row_state SET row_version=17,server_provenance=json_set(server_provenance,'$.authoritative_version',17) WHERE table_name='users' AND key_json='{\"id\":\"B\"}'")
+        // row_version owns the authoritative version; the compact provenance observation carries none.
+        db.execSQL("UPDATE _sync_row_state SET row_version=17 WHERE table_name='users' AND key_json='{\"id\":\"B\"}'")
         assertTrue(client.sync().isFailure)
         assertEquals("recovery_floor_ahead",client.recoveryStatus().getOrThrow().reason)
         val before=vector(db);val requests=server.requestTrace.toList()

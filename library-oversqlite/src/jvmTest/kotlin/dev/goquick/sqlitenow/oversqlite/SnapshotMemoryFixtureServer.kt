@@ -7,7 +7,13 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
+import java.security.MessageDigest
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.add
+import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 
@@ -79,12 +85,15 @@ private class SnapshotMemoryFixtureServer(
         server.createContext("/sync/snapshot-sessions") { exchange ->
             if (exchange.requestMethod != "POST") return@createContext methodNotAllowed(exchange)
             val sampleBytes = OversqliteCompactCodec.snapshotLogicalByteCount(generation, listOf(row(1)))
+            val logicalBytes = Math.multiplyExact(sampleBytes, rowCount.toLong())
+            val source = checkNotNull(exchange.requestHeaders.getFirst("Oversync-Source-ID")) { "source id header is required" }
             respondJson(exchange, buildJsonObject {
                 put("snapshot_id", JsonPrimitive(fixtureSnapshotId))
                 put("snapshot_bundle_seq", JsonPrimitive(1))
                 put("row_count", JsonPrimitive(rowCount))
-                put("logical_byte_count", JsonPrimitive(Math.multiplyExact(sampleBytes, rowCount.toLong())))
+                put("logical_byte_count", JsonPrimitive(logicalBytes))
                 put("expires_at", JsonPrimitive("2099-01-01T00:00:00Z"))
+                put("snapshot_hash", JsonPrimitive(snapshotHash(source, logicalBytes)))
             }.toString())
         }
         server.createContext("/sync/pull") { exchange ->
@@ -138,6 +147,28 @@ private class SnapshotMemoryFixtureServer(
         maxChunkRows.accumulateAndGet(count.toLong(), ::maxOf)
         maxChunkBytes.accumulateAndGet(body.encodeToByteArray().size.toLong(), ::maxOf)
         respondJson(exchange, body)
+    }
+
+    /** Streams the client's sealed snapshot frames (header, one per row, end) without retaining rows. */
+    private fun snapshotHash(source: String, logicalBytes: Long): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        fun frame(value: JsonElement) {
+            val bytes = independentCanonical(value).toByteArray()
+            digest.update(ByteArray(8) { (bytes.size.toLong() ushr ((7 - it) * 8)).toByte() })
+            digest.update(bytes)
+        }
+        frame(buildJsonArray {
+            add("oversqlite.snapshot.v1"); add(source); add(generation.id); add(generation.fingerprint)
+            add(fixtureSnapshotId); add("1"); add(JsonNull)
+        })
+        for (index in 1..rowCount) {
+            val row = row(index)
+            frame(buildJsonArray {
+                add("i"); add("0"); add(JsonArray(listOf(JsonPrimitive(row.key.getValue("id"))))); add("1"); add(row.payload!!)
+            })
+        }
+        frame(buildJsonArray { add("end"); add(rowCount.toString()); add(logicalBytes.toString()) })
+        return digest.digest().joinToString("") { "%02x".format(it) }
     }
 
     private fun row(index: Int): BundleRow {

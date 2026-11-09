@@ -876,7 +876,7 @@ internal class PlatformParityTest : PlatformCrossTargetTestSupport() {
     }
 
     @Test
-    fun sourceRetired_precommitPreservesFrozenIntentAndBlocksSnapshot() = runTest {
+    fun sourceRetired_precommitCarriesFrozenIntentToReplacementSource() = runTest {
         if (!platformSuiteEnabled()) return@runTest
         val server = MockSyncServer()
         val activeDb = newCoordinatedDb()

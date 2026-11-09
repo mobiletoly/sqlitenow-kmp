@@ -35,14 +35,15 @@ final class SyncConvergentMappingTests: XCTestCase {
             ("ResolutionBaseUnavailableException", #"{"reason":"resolution_base_unavailable","unit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","sample":[],"hasMore":false,"# + progress + "}"),
             ("SyncWorkLimitException", #"{"reason":"sync_work_limit","unit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","limit":100,"used":99,"# + progress + "}"),
             ("SyncWorkspaceLimitException", #"{"reason":"sync_workspace_limit","unit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","dimension":"entries","limit":100,"used":99,"reserved":2,"resumable":false,"# + progress + "}"),
-            ("StalePushDependencyDiagnosticException", #"{"reason":"stale_push_dependency_diagnostic","diagnosticId":"diagnostic"}"#)
+            ("StalePushDependencyDiagnosticException", #"{"reason":"stale_push_dependency_diagnostic","diagnosticId":"diagnostic"}"#),
+            ("PendingIntentUnsatisfiableException", #"{"reason":"pending_intent_unsatisfiable","tables":["posts","users"]}"#)
         ]
         for (code, body) in bodies {
             let payload = SQLiteNowSyncRuntimeErrorPayload(category: "state", code: code, message: "local", remoteContract: false,
                 httpStatus: 0, operation: "", remediation: nil, retryable: false, generationId: nil, incompleteReason: nil,
                 dirtyCount: 0, outboundCount: 0, confirmedBundleCount: 0, pushAttempts: 0, localPlanningJson: body)
             switch SQLiteNowError.from(payload) {
-            case .fkReconciliationRequired, .resolutionBaseUnavailable, .syncWorkLimit, .syncWorkspaceLimit, .stalePushDependencyDiagnostic: break
+            case .fkReconciliationRequired, .resolutionBaseUnavailable, .syncWorkLimit, .syncWorkspaceLimit, .stalePushDependencyDiagnostic, .pendingIntentUnsatisfiable: break
             default: XCTFail("lost local typed result: \(code)")
             }
         }

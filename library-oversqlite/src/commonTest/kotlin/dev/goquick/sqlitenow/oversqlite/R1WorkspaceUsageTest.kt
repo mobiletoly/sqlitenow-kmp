@@ -23,21 +23,21 @@ internal class R1WorkspaceUsageTest : CrossTargetSyncTestSupport() {
                 }
                 compare()
                 val workspace = OversqliteWorkspace(db, config)
-                assertEquals(WorkspaceCharge(12, 3202), workspace.usage("u", statementCache = cache))
+                assertEquals(WorkspaceCharge(13, 3792), workspace.usage("u", statementCache = cache))
                 db.execSQL("UPDATE _sync_apply_plan SET unit='é',guard='猫',preserve_schema='🙂',preserve_table='t',preserve_key='k'")
                 db.execSQL("UPDATE _sync_push_plan SET unit='é',guard='猫',state='🙂'")
-                assertEquals(WorkspaceCharge(12, 3286), workspace.usage("u", statementCache = cache))
+                assertEquals(WorkspaceCharge(13, 3876), workspace.usage("u", statementCache = cache))
                 db.execSQL("UPDATE _sync_apply_plan SET row_cursor='é'")
-                assertEquals(WorkspaceCharge(12, 3298), workspace.usage("u", statementCache = cache))
+                assertEquals(WorkspaceCharge(13, 3888), workspace.usage("u", statementCache = cache))
                 db.execSQL("UPDATE _sync_operation_state SET reserved_entries=1,reserved_bytes=7,workspace_context='é'")
                 compare()
                 db.execSQL("DELETE FROM _sync_apply_plan"); db.execSQL("DELETE FROM _sync_push_plan")
-                assertEquals(WorkspaceCharge(2, 555), workspace.usage("u", statementCache = cache))
+                assertEquals(WorkspaceCharge(3, 1145), workspace.usage("u", statementCache = cache))
                 compare()
                 db.execSQL("""INSERT INTO _sync_apply_plan(singleton_key,unit,guard,phase,root_cursor,visit_cursor,table_cursor,fk_cursor,entries,bytes,edge_entries,edge_bytes)
                     VALUES(1,'u','g','ready',0,0,0,0,2,10,3,20)""")
                 db.execSQL("INSERT INTO _sync_push_plan(singleton_key,unit,guard,phase,state,entries,bytes) VALUES(1,'u','g','ready','{}',4,40)")
-                assertEquals(WorkspaceCharge(13, 3221), workspace.usage("u", statementCache = cache))
+                assertEquals(WorkspaceCharge(14, 3811), workspace.usage("u", statementCache = cache))
                 compare()
             }
         }
@@ -47,7 +47,7 @@ internal class R1WorkspaceUsageTest : CrossTargetSyncTestSupport() {
         metadata { db ->
             val workspace = OversqliteWorkspace(db, config)
             db.withStatementCache { cache ->
-                assertEquals(WorkspaceCharge(12, 3202), workspace.usage("u", statementCache = cache))
+                assertEquals(WorkspaceCharge(13, 3792), workspace.usage("u", statementCache = cache))
                 db.execSQL("UPDATE _sync_operation_state SET reserved_entries=${Long.MAX_VALUE}")
                 db.execSQL("UPDATE _sync_apply_plan SET entries=-1")
                 val overflow = assertFailsWith<SyncWorkspaceLimitException> { workspace.usage("u", statementCache = cache) }
@@ -75,7 +75,7 @@ internal class R1WorkspaceUsageTest : CrossTargetSyncTestSupport() {
                 repeat(2) { invocation ->
                     db.transaction {
                         db.withStatementCache(operations) { cache ->
-                            repeat(3) { assertEquals(WorkspaceCharge(12, 3202), OversqliteWorkspace(db, config).usage("u", statementCache = cache)) }
+                            repeat(3) { assertEquals(WorkspaceCharge(13, 3792), OversqliteWorkspace(db, config).usage("u", statementCache = cache)) }
                         }
                     }
                     assertEquals(invocation + 1, preparations)
@@ -89,6 +89,8 @@ internal class R1WorkspaceUsageTest : CrossTargetSyncTestSupport() {
         try {
             db.execSQL(oversqliteRetainedTableDdl.getValue("_sync_operation_state"))
             db.execSQL(oversqliteRetainedTableDdl.getValue("_sync_upload_journal")); db.execSQL(applyPlanDdl); db.execSQL(pushPlanDdl)
+            // Every expected charge includes the idle typed-bootstrap metadata owner (1 entry, 512 bytes)
+            // and the default snapshot_engine metadata (6*13 bytes); see WorkspaceUsageTest.
             db.execSQL("INSERT INTO _sync_operation_state(singleton_key) VALUES(1)")
             db.execSQL("""INSERT INTO _sync_apply_plan(singleton_key,unit,guard,phase,root_cursor,visit_cursor,table_cursor,fk_cursor,entries,bytes,edge_entries,edge_bytes)
                 VALUES(1,'u','g','ready',0,0,0,0,2,10,3,20)""")

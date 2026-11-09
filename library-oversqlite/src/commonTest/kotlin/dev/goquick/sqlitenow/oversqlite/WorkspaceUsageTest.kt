@@ -11,19 +11,19 @@ internal class WorkspaceUsageTest : CrossTargetSyncTestSupport() {
 
     @Test fun absentAndPresentOwnersHaveExactCharges() = runOwnedWebDatabaseTest {
         withMetadata { db, workspace ->
-            assertEquals(WorkspaceCharge(1, 536), workspace.usage(unit))
+            assertEquals(WorkspaceCharge(2, 1126), workspace.usage(unit))
             insertApply(db)
-            assertEquals(WorkspaceCharge(7, 1090), workspace.usage(unit))
+            assertEquals(WorkspaceCharge(8, 1680), workspace.usage(unit))
             insertPush(db)
-            assertEquals(WorkspaceCharge(12, 3202), workspace.usage(unit))
+            assertEquals(WorkspaceCharge(13, 3792), workspace.usage(unit))
             db.execSQL("DELETE FROM _sync_apply_plan")
-            assertEquals(WorkspaceCharge(6, 2648), workspace.usage(unit))
+            assertEquals(WorkspaceCharge(7, 3238), workspace.usage(unit))
             db.execSQL("UPDATE _sync_push_plan SET entries=0,bytes=0")
-            assertEquals(WorkspaceCharge(2, 2608), workspace.usage(unit), "present empty plan retains its owner charge")
+            assertEquals(WorkspaceCharge(3, 3198), workspace.usage(unit), "present empty plan retains its owner charge")
             db.execSQL("DELETE FROM _sync_push_plan")
             insertApply(db)
             db.execSQL("UPDATE _sync_apply_plan SET entries=0,bytes=0,edge_entries=0,edge_bytes=0")
-            assertEquals(WorkspaceCharge(2, 1060), workspace.usage(unit))
+            assertEquals(WorkspaceCharge(3, 1650), workspace.usage(unit))
         }
     }
 
@@ -31,17 +31,17 @@ internal class WorkspaceUsageTest : CrossTargetSyncTestSupport() {
         withMetadata { db, workspace ->
             insertApply(db)
             insertPush(db)
-            assertEquals(WorkspaceCharge(8, 2698), workspace.usage(unit, apply = WorkspaceCharge(2, 50)))
-            assertEquals(WorkspaceCharge(10, 1150), workspace.usage(unit, push = WorkspaceCharge(3, 60)))
-            assertEquals(WorkspaceCharge(6, 646), workspace.usage(unit, WorkspaceCharge(2, 50), WorkspaceCharge(3, 60)))
+            assertEquals(WorkspaceCharge(9, 3288), workspace.usage(unit, apply = WorkspaceCharge(2, 50)))
+            assertEquals(WorkspaceCharge(11, 1740), workspace.usage(unit, push = WorkspaceCharge(3, 60)))
+            assertEquals(WorkspaceCharge(7, 1236), workspace.usage(unit, WorkspaceCharge(2, 50), WorkspaceCharge(3, 60)))
             db.execSQL("UPDATE _sync_apply_plan SET entries=${Long.MAX_VALUE},bytes=${Long.MAX_VALUE}")
-            assertEquals(WorkspaceCharge(6, 2648), workspace.usage(unit, apply = WorkspaceCharge()))
+            assertEquals(WorkspaceCharge(7, 3238), workspace.usage(unit, apply = WorkspaceCharge()))
             db.execSQL("UPDATE _sync_push_plan SET entries=${Long.MAX_VALUE},bytes=${Long.MAX_VALUE}")
-            assertEquals(WorkspaceCharge(1, 536), workspace.usage(unit, WorkspaceCharge(), WorkspaceCharge()))
+            assertEquals(WorkspaceCharge(2, 1126), workspace.usage(unit, WorkspaceCharge(), WorkspaceCharge()))
             // A supplied charge must not even require the corresponding table.
             db.execSQL("DROP TABLE _sync_apply_plan")
             db.execSQL("DROP TABLE _sync_push_plan")
-            assertEquals(WorkspaceCharge(6, 646), workspace.usage(unit, WorkspaceCharge(2, 50), WorkspaceCharge(3, 60)))
+            assertEquals(WorkspaceCharge(7, 1236), workspace.usage(unit, WorkspaceCharge(2, 50), WorkspaceCharge(3, 60)))
         }
     }
 
@@ -49,12 +49,12 @@ internal class WorkspaceUsageTest : CrossTargetSyncTestSupport() {
         withMetadata { db, workspace ->
             db.execSQL("""UPDATE _sync_operation_state SET workspace_context='é',target_user_id='猫',reason='🙂',
                 reserved_entries=2,reserved_bytes=11,snapshot_stage_entries=3,snapshot_stage_bytes=13""")
-            assertEquals(WorkspaceCharge(6, 614), workspace.usage(unit))
+            assertEquals(WorkspaceCharge(7, 1204), workspace.usage(unit))
             val abandoned = OversqliteWorkspace(db, config, abandonedReservations = true)
-            assertEquals(WorkspaceCharge(4, 591), abandoned.usage(unit))
+            assertEquals(WorkspaceCharge(5, 1181), abandoned.usage(unit))
             insertApply(db)
             insertPush(db)
-            assertEquals(WorkspaceCharge(15, 3257), abandoned.usage(unit))
+            assertEquals(WorkspaceCharge(16, 3847), abandoned.usage(unit))
         }
     }
 
@@ -64,14 +64,14 @@ internal class WorkspaceUsageTest : CrossTargetSyncTestSupport() {
             insertPush(db)
             db.execSQL("UPDATE _sync_apply_plan SET unit='é',guard='猫',preserve_schema='🙂',preserve_table='t',preserve_key='k'")
             db.execSQL("UPDATE _sync_push_plan SET unit='é',guard='猫',state='🙂'")
-            assertEquals(WorkspaceCharge(12, 3286), workspace.usage(unit))
+            assertEquals(WorkspaceCharge(13, 3876), workspace.usage(unit))
             db.execSQL("UPDATE _sync_apply_plan SET row_cursor='é'")
-            assertEquals(WorkspaceCharge(12, 3298), workspace.usage(unit))
+            assertEquals(WorkspaceCharge(13, 3888), workspace.usage(unit))
             db.execSQL("UPDATE _sync_operation_state SET reserved_entries=1,reserved_bytes=7")
-            assertEquals(WorkspaceCharge(13, 3305), workspace.usage(unit))
+            assertEquals(WorkspaceCharge(14, 3895), workspace.usage(unit))
             db.execSQL("DELETE FROM _sync_apply_plan")
             db.execSQL("DELETE FROM _sync_push_plan")
-            assertEquals(WorkspaceCharge(2, 543), workspace.usage(unit))
+            assertEquals(WorkspaceCharge(3, 1133), workspace.usage(unit))
         }
     }
 
@@ -92,11 +92,11 @@ internal class WorkspaceUsageTest : CrossTargetSyncTestSupport() {
             insertApply(db)
             insertPush(db)
             for (delta in listOf(-1L, 0L, 1L)) {
-                val entries = OversqliteWorkspace(db, config.copy(maxSyncWorkspaceEntries = 12 + delta))
-                val bytes = OversqliteWorkspace(db, config.copy(maxSyncWorkspaceBytes = 3202 + delta))
+                val entries = OversqliteWorkspace(db, config.copy(maxSyncWorkspaceEntries = 13 + delta))
+                val bytes = OversqliteWorkspace(db, config.copy(maxSyncWorkspaceBytes = 3792 + delta))
                 if (delta < 0) {
-                    assertLimit(assertFailsWith { entries.check(unit) }, "entries", 11, 12, 0)
-                    assertLimit(assertFailsWith { bytes.check(unit) }, "bytes", 3201, 3202, 0)
+                    assertLimit(assertFailsWith { entries.check(unit) }, "entries", 12, 13, 0)
+                    assertLimit(assertFailsWith { bytes.check(unit) }, "bytes", 3791, 3792, 0)
                 } else {
                     entries.check(unit)
                     bytes.check(unit)
@@ -117,7 +117,7 @@ internal class WorkspaceUsageTest : CrossTargetSyncTestSupport() {
             db.execSQL("UPDATE _sync_push_plan SET entries=0,bytes=${Long.MAX_VALUE}")
             assertLimit(assertFailsWith { workspace.usage(unit) }, "bytes", config.maxSyncWorkspaceBytes, Long.MAX_VALUE, 2072)
             db.execSQL("DELETE FROM _sync_push_plan")
-            assertEquals(WorkspaceCharge(1, 536), workspace.usage(unit), "connection remains usable after failures")
+            assertEquals(WorkspaceCharge(2, 1126), workspace.usage(unit), "connection remains usable after failures")
         }
     }
 
@@ -155,6 +155,10 @@ internal class WorkspaceUsageTest : CrossTargetSyncTestSupport() {
             db.execSQL(oversqliteRetainedTableDdl.getValue("_sync_upload_journal"))
             db.execSQL(applyPlanDdl)
             db.execSQL(pushPlanDdl)
+            // The idle operation owner charges 1 entry and 512 bytes, plus six copies of its UTF-8
+            // metadata, which includes the default snapshot_engine `general_delta` (6*13 bytes). It also
+            // carries the idle typed-bootstrap metadata owner of 1 entry and 512 bytes, so a bare owner
+            // charges 2 entries and 1126 bytes.
             db.execSQL("INSERT INTO _sync_operation_state(singleton_key) VALUES(1)")
             block(db, OversqliteWorkspace(db, config))
         } finally { withContext(NonCancellable) { db.close() } }
