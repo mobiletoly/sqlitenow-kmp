@@ -285,7 +285,7 @@ internal class TypedSnapshotStage private constructor(
             released = workspace.add("bootstrap-cleanup", released,
                 deleteBootstrapPage(db, descriptor, session.snapshotId, operation.snapshotBundleSeq, record, page, cache))
         }
-        require(released.entries == bootstrapCheckedAdd(bootstrapCheckedAdd(operation.snapshotStagedRowCount, operation.snapshotStagedRowCount), operation.bootstrapPageCount))
+        require(released.entries == bootstrapCheckedAdd(operation.snapshotStagedRowCount, operation.bootstrapPageCount))
         finishBootstrapCleanup(db, descriptor, cache)
         sealed = false
         poison()
@@ -783,7 +783,9 @@ internal class BootstrapReceivedRow private constructor(
             frame[frame.lastIndex] = ']'.code.toByte()
             val identityBytes = bootstrapCheckedAdd(bootstrapCheckedAdd(utf8Size(snapshotId), utf8Size(binding.schema)),
                 bootstrapCheckedAdd(utf8Size(binding.table), utf8Size(keyJson)))
-            val wire = WorkspaceCharge(1, bootstrapCheckedAdd(64,
+            // One staged logical row owns one entry (on its typed row); its canonical frame
+            // is a second representation and charges bytes only.
+            val wire = WorkspaceCharge(0, bootstrapCheckedAdd(64,
                 bootstrapCheckedAdd(bootstrapReceiptScale(identityBytes, 6), frame.size.toLong())))
             val typed = WorkspaceCharge(1, bootstrapCheckedAdd(96,
                 bootstrapCheckedAdd(bootstrapReceiptScale(utf8Size(keyJson), 6),
@@ -973,7 +975,7 @@ private suspend fun deleteBootstrapPage(db: SafeSQLiteConnection, descriptor: Sn
     db.withPreparedStatement("DELETE FROM _sync_bootstrap_pages WHERE snapshot_id=? AND page_ordinal=?", cache) {
         it.bindText(1, snapshot); it.bindLong(2, page); it.step()
     }
-    val charge = WorkspaceCharge(bootstrapCheckedAdd(bootstrapCheckedAdd(record.rows, record.rows), 1),
+    val charge = WorkspaceCharge(bootstrapCheckedAdd(record.rows, 1),
         bootstrapCheckedAdd(record.charge, bootstrapCheckedAdd(wireBytes, typedBytes)))
     db.withPreparedStatement("""UPDATE _sync_operation_state SET snapshot_stage_entries=snapshot_stage_entries-?,
         snapshot_stage_bytes=snapshot_stage_bytes-? WHERE singleton_key=1 AND snapshot_stage_entries>=? AND snapshot_stage_bytes>=?""", cache) {

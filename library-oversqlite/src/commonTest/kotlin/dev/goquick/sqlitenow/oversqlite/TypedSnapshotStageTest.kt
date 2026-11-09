@@ -165,7 +165,8 @@ internal class TypedSnapshotStageTest : SnapshotBootstrapTestSupport() {
             }
             assertEquals(2L, fixture.db.scalarLong("SELECT count(*) FROM _sync_bootstrap_wire"))
             assertEquals(2L, fixture.db.scalarLong("SELECT bootstrap_page_count FROM _sync_operation_state"))
-            assertEquals(6L, fixture.db.scalarLong("SELECT snapshot_stage_entries FROM _sync_operation_state"))
+            // One entry per staged row (2) plus one per page proof (2).
+            assertEquals(4L, fixture.db.scalarLong("SELECT snapshot_stage_entries FROM _sync_operation_state"))
             assertEquals("CURRENT", inspectRetainedRuntime(fixture.db, fixture.config))
         }
     }
@@ -290,7 +291,8 @@ internal class TypedSnapshotStageTest : SnapshotBootstrapTestSupport() {
                     }
                     deliver(0)
                     assertEquals(1L, fixture.db.scalarLong("SELECT bootstrap_page_count FROM _sync_operation_state"))
-                    assertEquals(3L, fixture.db.scalarLong("SELECT snapshot_stage_entries FROM _sync_operation_state"))
+                    // One staged row plus its page proof.
+                    assertEquals(2L, fixture.db.scalarLong("SELECT snapshot_stage_entries FROM _sync_operation_state"))
                     assertEquals(0L, fixture.db.scalarLong("SELECT count(*) FROM bootstrap_parents"))
                     deliver(1)
                     stage.seal()

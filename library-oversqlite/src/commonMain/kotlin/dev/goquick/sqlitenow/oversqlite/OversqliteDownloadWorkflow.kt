@@ -392,6 +392,13 @@ internal class OversqliteDownloadWorkflow(
             throw RebuildRequiredException()
         }
         try {
+            // Staging capacity preflight (spec section 3, condition 7): before the engine is pinned or any
+            // chunk is requested, a provable lower bound of the whole retained stage must fit fresh usage.
+            // A shortfall is a final quota refusal, never a part-way one. It is not a route fallback: the
+            // general route retains at least one stage row and one snapshot reference per row.
+            if (!retained) workspace.check("bootstrap-preflight", typedBootstrapStageLowerBound(
+                session.rowCount, session.logicalByteCount, session.snapshotId, admission.descriptor,
+                minOf(config.transferTargets.maxSnapshotChunkRows, config.snapshotApplyBatchRows, limits.maxRows)))
             if (retained) TypedSnapshotStage.resume(db, config, admission.descriptor, session,
                 state.admittedContract.generation, source, operations, ::install)
             else TypedSnapshotStage.begin(db, config, admission, metadata, session, state.admittedContract.generation,
@@ -1082,16 +1089,42 @@ internal data class IncrementalPullResult(
 
 /**
  * Typed bootstrap chunk rows that fit [freeEntries] of fresh workspace quota. Each row costs its
- * measured [transportEntriesPerRow] while its chunk is received, plus its durable typed row, wire
- * frame and page record; one receipt page also needs transient room for its rows. Never below one row
+ * measured [transportEntriesPerRow] while its chunk is received, plus its one durable staged-row entry
+ * (the wire frame charges bytes only) and at most one page record; one receipt page also needs transient room for its rows. Never below one row
  * (the exact admission checks then decide) and never above the negotiated [maxRows].
  */
 internal fun bootstrapChunkRowsForQuota(freeEntries: Long, transportEntriesPerRow: Long, maxColumns: Int, maxRows: Int): Int {
     require(transportEntriesPerRow > 0 && maxColumns >= 0 && maxRows > 0)
     val available = freeEntries - 2 * (32 + 4L * maxColumns) - 256
-    val rows = if (available <= 0) 1L else available / (transportEntriesPerRow + 3)
+    val rows = if (available <= 0) 1L else available / (transportEntriesPerRow + 2)
     return rows.coerceIn(1L, maxRows.toLong()).toInt()
 }
+
+/**
+ * Lower bound of the complete typed stage for [rows] rows of [logicalBytes] logical wire bytes, all of
+ * which stay charged until installation. Every term is at most what receipt records: one entry per row
+ * and per page of at most [pageRows] rows; per row the fixed typed (96) and wire (64) bytes, six times
+ * the shortest snapshot/schema/table identity, and a frame of logical bytes plus 12. Key and typed-body
+ * terms are omitted, so this never refuses a stage that fits. Saturates instead of overflowing.
+ */
+internal fun typedBootstrapStageLowerBound(rows: Long, logicalBytes: Long, snapshotId: String,
+    descriptor: SnapshotDescriptor, pageRows: Int): WorkspaceCharge {
+    require(rows >= 0 && logicalBytes >= 0 && pageRows > 0)
+    val pages = bootstrapCeilDiv(rows, pageRows.toLong())
+    val perRow = saturatingAdd(160 + 12, saturatingMultiply(6, shortestStageIdentity(snapshotId, descriptor)))
+    val pageBytes = bootstrapPageCharge(snapshotId).bytes
+    return WorkspaceCharge(saturatingAdd(rows, pages), saturatingAdd(saturatingAdd(saturatingMultiply(rows, perRow),
+        logicalBytes), saturatingMultiply(pages, pageBytes)))
+}
+
+private fun shortestStageIdentity(snapshotId: String, descriptor: SnapshotDescriptor): Long =
+    utf8Size(snapshotId) + (descriptor.tables.minOfOrNull { utf8Size(it.schema) + utf8Size(it.table) } ?: 0L)
+
+private fun saturatingAdd(left: Long, right: Long): Long =
+    if (left > Long.MAX_VALUE - right) Long.MAX_VALUE else left + right
+
+private fun saturatingMultiply(left: Long, right: Long): Long =
+    if (left != 0L && right > Long.MAX_VALUE / left) Long.MAX_VALUE else left * right
 
 internal fun bootstrapCeilDiv(value: Long, divisor: Long): Long {
     require(value >= 0 && divisor > 0)

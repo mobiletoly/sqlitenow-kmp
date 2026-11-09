@@ -430,9 +430,10 @@ internal class SnapshotBootstrapInstallerTest : SnapshotBootstrapTestSupport() {
     }
 
     @Test fun chunkSizingLeavesRoomForReceiptAndStaging() {
-        // Each row costs its measured transport share plus 3 durable entries (typed row, wire frame,
-        // page record); one 2-column receipt page and the shape constant take 2*(32+8)+256 entries.
-        assertEquals(393, bootstrapChunkRowsForQuota(39_709, 97, 2, 1000))
+        // Each row costs its measured transport share plus one durable staged-row entry and at most one
+        // page record; one 2-column receipt page and the shape constant take 2*(32+8)+256 entries.
+        // (39,709 - 2*(32+4*2) - 256) / (97 + 2) = 397.
+        assertEquals(397, bootstrapChunkRowsForQuota(39_709, 97, 2, 1000))
         assertEquals(1000, bootstrapChunkRowsForQuota(1_000_000, 97, 2, 1000))
         assertEquals(1, bootstrapChunkRowsForQuota(300, 97, 2, 1000))
         assertEquals(1, bootstrapChunkRowsForQuota(-5, 97, 2, 1000))
@@ -462,6 +463,62 @@ internal class SnapshotBootstrapInstallerTest : SnapshotBootstrapTestSupport() {
             assertEquals(20_000L, db.scalarLong("SELECT count(*) FROM quota_rows"))
             assertEquals(20_000L, db.scalarLong("SELECT count(*) FROM _sync_row_state"))
             assertEquals(0L, db.scalarLong("SELECT reserved_entries+reserved_bytes+snapshot_stage_entries+snapshot_stage_bytes FROM _sync_operation_state"))
+        } finally { client.closeFromCoordinatedOwner(); http.close(); db.close() }
+    }
+
+    private suspend fun quotaRowsClient(server: MockSyncServer, db: dev.goquick.sqlitenow.core.SafeSQLiteConnection,
+        http: io.ktor.client.HttpClient, rows: Int, workspaceEntries: Long): DefaultOversqliteClient {
+        val columns = listOf(GenerationColumn("id", "text", false), GenerationColumn("name", "text", false))
+        server.generationOverride = SyncGeneration("1", "", listOf(GenerationTable("main", "quota_rows", listOf("id"), columns, emptyList())))
+            .let { it.copy(fingerprint = it.computeFingerprint()) }
+        val tables = listOf(SyncTable("quota_rows", syncKeyColumnName = "id"))
+        val client = newClient(db, http, syncTables = tables, workspaceEntries = workspaceEntries, workUnits = 1_000_000_000)
+        db.execSQL("CREATE TABLE quota_rows(id TEXT PRIMARY KEY NOT NULL,name TEXT NOT NULL)")
+        client.openAndConnect("user-1").getOrThrow()
+        server.addRemoteBundleForTest((0 until rows).map { row ->
+            BundleRow("main", "quota_rows", mapOf("id" to "row-$row"), "INSERT", 1, buildJsonObject { put("id", "row-$row"); put("name", "name-$row") })
+        })
+        return client
+    }
+
+    @Test fun typedRestoreBeyondHalfTheEntryQuotaCompletesAcrossCalls() = runOwnedWebDatabaseTest(timeout = 900.seconds) {
+        // 100,000 staged rows at one entry each fit the default 131,072 entries. The per-call exchange
+        // budget makes the restore resumable over several public calls, each continuing the same stage.
+        val server = MockSyncServer(); val db = newDb(); val http = server.newHttpClient()
+        val client = quotaRowsClient(server, db, http, 100_000,
+            OversqliteConfig(1, listOf(SyncTable("quota_rows", syncKeyColumnName = "id")), "fixture", "main").maxSyncWorkspaceEntries)
+        try {
+            var calls = 0
+            while (true) {
+                calls++
+                val failure = client.rebuild().exceptionOrNull() ?: break
+                assertTrue(failure is UploadRecoveryIncompleteException, "only the resumable exchange budget may stop a call: $failure")
+                assertTrue(calls < 8, "restore did not converge in $calls calls")
+                assertEquals(0L, db.scalarLong("SELECT count(*) FROM quota_rows"))
+            }
+            assertEquals(100_000L, db.scalarLong("SELECT count(*) FROM quota_rows"))
+            assertEquals(100_000L, db.scalarLong("SELECT count(*) FROM _sync_row_state"))
+            assertEquals("name-99999", scalarText(db, "SELECT name FROM quota_rows WHERE id='row-99999'"))
+            assertEquals(0L, db.scalarLong("SELECT reserved_entries+reserved_bytes+snapshot_stage_entries+snapshot_stage_bytes FROM _sync_operation_state"))
+            println("TYPED_RESTORE_100K calls=$calls chunkRequests=${server.snapshotChunkRequests.size}")
+        } finally { client.closeFromCoordinatedOwner(); http.close(); db.close() }
+    }
+
+    @Test fun restoreThatCannotFitIsRefusedBeforeStaging() = runOwnedWebDatabaseTest(timeout = 300.seconds) {
+        // 12,000 rows need at least 12,000 staged-row entries, more than the 10,000-entry workspace
+        // holds. The refusal happens before any chunk request or stage row.
+        val server = MockSyncServer(); val db = newDb(); val http = server.newHttpClient()
+        val client = quotaRowsClient(server, db, http, 12_000, 10_000)
+        try {
+            val refusal = assertIs<SyncWorkspaceLimitException>(client.rebuild().exceptionOrNull())
+            assertEquals("bootstrap-preflight", refusal.unit)
+            assertEquals("entries", refusal.dimension)
+            assertFalse(refusal.resumable)
+            assertEquals(emptyList(), server.snapshotChunkRequests)
+            assertEquals(0L, db.scalarLong("SELECT count(*) FROM _sync_bootstrap_wire"))
+            assertEquals(0L, db.scalarLong("SELECT count(*) FROM _sync_bootstrap_pages"))
+            assertEquals(0L, db.scalarLong("SELECT count(*) FROM quota_rows"))
+            assertEquals(0L, db.scalarLong("SELECT snapshot_stage_entries+snapshot_stage_bytes+bootstrap_page_count FROM _sync_operation_state"))
         } finally { client.closeFromCoordinatedOwner(); http.close(); db.close() }
     }
 }

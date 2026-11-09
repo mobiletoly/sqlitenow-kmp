@@ -150,7 +150,7 @@ internal suspend fun measureBootstrapStage(
         require(it.getLong(0) == operation.bootstrapPageCount && it.getLong(1) == it.getLong(2) && it.getLong(3) == 0L) { "bootstrap page quota differs" }
         WorkspaceCharge(it.getLong(0), it.getLong(1))
     }
-    val charge = WorkspaceCharge(bootstrapCheckedAdd(bootstrapCheckedAdd(typedRows, wire[0]), pages.entries),
+    val charge = WorkspaceCharge(bootstrapCheckedAdd(typedRows, pages.entries),
         bootstrapCheckedAdd(bootstrapCheckedAdd(typedBytes, wire[5]), pages.bytes))
     require(db.withPreparedStatement("SELECT snapshot_stage_entries,snapshot_stage_bytes FROM _sync_operation_state WHERE singleton_key=1", cache) {
         require(it.step()); WorkspaceCharge(it.getLong(0), it.getLong(1))

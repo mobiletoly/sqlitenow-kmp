@@ -689,6 +689,19 @@ internal open class PlatformCrossTargetTestSupport {
                     val currentVersion = liveRow?.rowVersion ?: 0L
                     val forcedConflict = conflictOverride?.invoke(row, currentVersion, liveRow?.payload)
                     if (forcedConflict != null) {
+                        // Conflict observations are authoritative history; subsequent commits must be newer.
+                        // The real server never skips a sequence, so the jump is filled with empty envelopes.
+                        while (nextBundleSeq <= forcedConflict.serverRowVersion) {
+                            val fillerSeq = nextBundleSeq++
+                            bundles += StoredBundle(
+                                bundleSeq = fillerSeq,
+                                sourceId = "mock-forced-history",
+                                sourceBundleId = fillerSeq,
+                                rows = emptyList(),
+                                bundleHash = computeCommittedBundleHash(emptyList()),
+                                canonicalRequestHash = "",
+                            )
+                        }
                         if (forcedConflict.serverRowDeleted) {
                             liveRows.remove(key)
                         } else {
@@ -702,7 +715,6 @@ internal open class PlatformCrossTargetTestSupport {
                             )
                             }
                         }
-                        nextBundleSeq = maxOf(nextBundleSeq, forcedConflict.serverRowVersion + 1L)
                         return terminalRejection(sourceId, operation, selected, forcedConflict)
                     }
                     if (currentVersion != row.baseRowVersion) {
