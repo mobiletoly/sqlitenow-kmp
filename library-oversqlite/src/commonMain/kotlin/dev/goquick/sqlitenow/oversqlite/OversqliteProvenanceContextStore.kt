@@ -70,14 +70,18 @@ internal class OversqliteProvenanceContextStore(private val db: SafeSQLiteConnec
         val projection = "i.database_id,i.service_id,$binding,$account,i.generation_id,i.fingerprint," +
             "CASE WHEN i.fingerprint='' THEN 'unadmitted' ELSE 'admitted' END,i.local_version,i.physical_shape,$source"
         val from = " FROM _sync_contract_identity i CROSS JOIN _sync_attachment_state a WHERE i.singleton_key=1 AND a.singleton_key=1"
-        db.withPreparedStatement("INSERT OR IGNORE INTO _sync_provenance_contexts(${contextColumns.joinToString()}) SELECT $projection$from") { st ->
-            values.forEachIndexed { index, value -> st.bindText(index + 1, value) }; st.step()
-        }
-        return db.withPreparedStatement("SELECT c.context_id FROM _sync_provenance_contexts c WHERE (" +
+        suspend fun existing(): Long? = db.withPreparedStatement("SELECT c.context_id FROM _sync_provenance_contexts c WHERE (" +
             contextColumns.joinToString { "c.$it" } + ")=(SELECT $projection$from)") { st ->
             values.forEachIndexed { index, value -> st.bindText(index + 1, value) }
-            check(st.step()) { "complete provenance context is missing" }; st.getLong(0)
+            if (st.step()) st.getLong(0) else null
         }
+        // Look up first: an ignored INSERT OR IGNORE still consumes an AUTOINCREMENT value, so an
+        // unconditional insert would make every ready reopen write sqlite_sequence.
+        existing()?.let { return it }
+        db.withPreparedStatement("INSERT INTO _sync_provenance_contexts(${contextColumns.joinToString()}) SELECT $projection$from") { st ->
+            values.forEachIndexed { index, value -> st.bindText(index + 1, value) }; st.step()
+        }
+        return checkNotNull(existing()) { "complete provenance context is missing" }
     }
 
     suspend fun refreshActiveAndBind() = db.transaction(TransactionMode.IMMEDIATE) {

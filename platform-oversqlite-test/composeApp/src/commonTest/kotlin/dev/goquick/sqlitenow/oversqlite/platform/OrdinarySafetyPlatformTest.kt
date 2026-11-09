@@ -52,17 +52,28 @@ internal class OrdinarySafetyPlatformTest : PlatformCrossTargetTestSupport() {
     // metadata owner (1 entry, 512 bytes).
     private val idleWorkspaceCharge = WorkspaceCharge(2, 1126)
 
-    // The logical A provenance of one `_sync_row_state` row: its compact observation joined with the
-    // complete provenance context, and the authoritative version owned by `row_version`
-    // (oversqlite-contracts/local-planning/README.md, complete-context retained format).
-    private suspend fun logicalServerProvenance(db: PlatformTestDatabase, predicate: String): JsonObject =
+    // The logical provenance of one retained observation: its compact `{context_id, origin,
+    // bundle_sequence}` joined with the complete provenance context, and the authoritative version
+    // owned by the row's version column (oversqlite-contracts/local-planning/README.md,
+    // complete-context retained format).
+    private suspend fun logicalProvenance(
+        db: PlatformTestDatabase, table: String, provenance: String, context: String, version: String, predicate: String,
+    ): JsonObject =
         Json.parseToJsonElement(scalarText(db, """SELECT json_object('database_id',c.database_id,'service_id',c.service_id,
             'account_scope',json_object('binding',c.account_binding,'account_id',c.account_id),'generation_id',c.generation_id,
             'generation_fingerprint',c.generation_fingerprint,'admission',c.admission,'local_version',c.local_version,
             'physical_shape',c.physical_shape,'origin_source_id',c.origin_source_id,
-            'origin',json_extract(r.server_provenance,'$.origin'),'bundle_sequence',json_extract(r.server_provenance,'$.bundle_sequence'),
-            'authoritative_version',r.row_version)
-            FROM _sync_row_state r JOIN _sync_provenance_contexts c ON c.context_id=r.server_context_id WHERE $predicate""")).jsonObject
+            'origin',json_extract(r.$provenance,'$.origin'),'bundle_sequence',json_extract(r.$provenance,'$.bundle_sequence'),
+            'authoritative_version',r.$version)
+            FROM $table r JOIN _sync_provenance_contexts c ON c.context_id=r.$context WHERE $predicate""")).jsonObject
+
+    /** The logical A provenance of one `_sync_row_state` row. */
+    private suspend fun logicalServerProvenance(db: PlatformTestDatabase, predicate: String): JsonObject =
+        logicalProvenance(db, "_sync_row_state", "server_provenance", "server_context_id", "row_version", predicate)
+
+    /** The logical B provenance of one `_sync_dirty_rows` row. */
+    private suspend fun logicalDirtyBaseProvenance(db: PlatformTestDatabase, predicate: String): JsonObject =
+        logicalProvenance(db, "_sync_dirty_rows", "base_provenance", "base_context_id", "base_row_version", predicate)
 
     private suspend fun operationRecord(db: PlatformTestDatabase): JsonObject {
         val columns = db.connection().queryList("SELECT name FROM pragma_table_info('_sync_operation_state') ORDER BY cid") { it.getText(0) }
@@ -232,7 +243,7 @@ internal class OrdinarySafetyPlatformTest : PlatformCrossTargetTestSupport() {
                     client.attach("user-1").getOrThrow()
                     db.execSQL("INSERT INTO nodes VALUES('P','parent',NULL),('Q','other',NULL),('C','child','P'),('D','grandchild','C')")
                     client.pushPending().getOrThrow()
-                    val seedProvenance = Json.parseToJsonElement(scalarText(db, "SELECT server_provenance FROM _sync_row_state WHERE key_json='{\"id\":\"P\"}'")).jsonObject
+                    val seedProvenance = logicalServerProvenance(db, "key_json='{\"id\":\"P\"}'")
                     val expectedValues = linkedMapOf("P" to ("parent" to null), "Q" to ("other" to null),
                         "C" to ("child" to "P"), "D" to ("grandchild" to "C"))
                     for (row in rows) {
@@ -298,7 +309,7 @@ internal class OrdinarySafetyPlatformTest : PlatformCrossTargetTestSupport() {
                             assertEquals(value, Json.parseToJsonElement(scalarText(target, "SELECT server_payload FROM _sync_row_state WHERE $predicate")))
                             assertEquals(JsonObject(seedProvenance + mapOf("origin" to JsonPrimitive("snapshot"), "origin_source_id" to JsonPrimitive(source),
                                 "bundle_sequence" to JsonPrimitive(2), "authoritative_version" to JsonPrimitive(version))),
-                                Json.parseToJsonElement(scalarText(target, "SELECT server_provenance FROM _sync_row_state WHERE $predicate")), "$reason complete provenance $id")
+                                logicalServerProvenance(target, "$predicate"), "$reason complete provenance $id")
                             assertEquals(version, scalarLong(target, "SELECT row_version FROM _sync_row_state WHERE $predicate"))
                             assertEquals("live", scalarText(target, "SELECT server_kind FROM _sync_row_state WHERE $predicate"))
                             assertEquals(1L, scalarLong(target, "SELECT relationships_known FROM _sync_row_state WHERE $predicate"))
@@ -326,7 +337,7 @@ internal class OrdinarySafetyPlatformTest : PlatformCrossTargetTestSupport() {
                             assertTrue(vector.getValue(table).isEmpty(), "$reason retired transient owner $table")
                         assertEquals(OversqliteOperationState(), OversqliteOperationStateStore(target.connection()).loadState())
                         assertEquals(OversqliteOutboxBundleState(), OversqliteOutboxStateStore(target.connection()).loadBundleState())
-                        assertEquals(WorkspaceCharge(1, 536), OversqliteWorkspace(target.connection(), nodeConfig).usage(applyUnit("author-snapshot-parents", 0, "")))
+                        assertEquals(idleWorkspaceCharge, OversqliteWorkspace(target.connection(), nodeConfig).usage(applyUnit("author-snapshot-parents", 0, "")))
                         assertEquals(0L, scalarLong(target, "SELECT count(*) FROM pragma_foreign_key_check"))
                     }
                     verifySnapshot(db, attachmentBefore.currentSourceId, revisionBefore + 1, publicationStart, publicationEnd)
@@ -443,7 +454,7 @@ internal class OrdinarySafetyPlatformTest : PlatformCrossTargetTestSupport() {
                     val changed = rows.map { it.key.getValue("id") }.toSet()
                     val unchangedPredicate = "key_json NOT IN (${changed.joinToString(",") { "'{\"id\":\"$it\"}'" }})"
                     val unchangedA = databaseStateVector(db.connection(), listOf("nodes"), predicates = mapOf("_sync_row_state" to unchangedPredicate)).getValue("_sync_row_state")
-                    val seedProvenance = Json.parseToJsonElement(scalarText(db, "SELECT server_provenance FROM _sync_row_state WHERE key_json='{\"id\":\"P\"}'")).jsonObject
+                    val seedProvenance = logicalServerProvenance(db, "key_json='{\"id\":\"P\"}'")
                     val expected = linkedMapOf("P" to ("parent" to null), "Q" to ("other" to null), "C" to ("child" to "P"), "D" to ("grandchild" to "C"))
                     val newKeys = changed - expected.keys
                     val capturedBaselineCount = if (operation == "push") newKeys.size else 0
@@ -469,11 +480,11 @@ internal class OrdinarySafetyPlatformTest : PlatformCrossTargetTestSupport() {
                             assertEquals(1L, scalarLong(db, "SELECT relationships_known FROM _sync_row_state WHERE $predicate"))
                             assertEquals(1L, scalarLong(db, "SELECT server_payload IS NULL FROM _sync_row_state WHERE $predicate"))
                             val unpublishedProvenance = JsonObject(seedProvenance + mapOf("origin" to JsonPrimitive("never_published"), "bundle_sequence" to JsonNull, "authoritative_version" to JsonPrimitive(0)))
-                            assertEquals(unpublishedProvenance, Json.parseToJsonElement(scalarText(db, "SELECT server_provenance FROM _sync_row_state WHERE $predicate")), "$tag new owner is never-published, not unknown or confirmed authority")
+                            assertEquals(unpublishedProvenance, logicalServerProvenance(db, predicate), "$tag new owner is never-published, not unknown or confirmed authority")
                             assertEquals("absent", scalarText(db, "SELECT base_kind FROM _sync_dirty_rows WHERE $predicate"))
                             assertEquals(0L, scalarLong(db, "SELECT base_row_version FROM _sync_dirty_rows WHERE $predicate"))
                             assertEquals(1L, scalarLong(db, "SELECT base_payload IS NULL FROM _sync_dirty_rows WHERE $predicate"))
-                            assertEquals(unpublishedProvenance, Json.parseToJsonElement(scalarText(db, "SELECT base_provenance FROM _sync_dirty_rows WHERE $predicate")))
+                            assertEquals(unpublishedProvenance, logicalDirtyBaseProvenance(db, predicate))
                         }
                         client.pushPending().getOrThrow()
                     } else {
@@ -496,7 +507,7 @@ internal class OrdinarySafetyPlatformTest : PlatformCrossTargetTestSupport() {
                         assertEquals(typed, Json.parseToJsonElement(scalarText(db, "SELECT server_payload FROM _sync_row_state WHERE key_json='{\"id\":\"$id\"}'")), "$tag complete typed A $id")
                         val version = if (id in changed) 2L else 1L
                         val provenance = if (id in changed) JsonObject(seedProvenance + mapOf("origin" to JsonPrimitive(if (operation == "push") "settlement" else "pull"), "bundle_sequence" to JsonPrimitive(2), "authoritative_version" to JsonPrimitive(2))) else seedProvenance
-                        assertEquals(provenance, Json.parseToJsonElement(scalarText(db, "SELECT server_provenance FROM _sync_row_state WHERE key_json='{\"id\":\"$id\"}'")), "$tag every provenance field $id")
+                        assertEquals(provenance, logicalServerProvenance(db, "key_json='{\"id\":\"$id\"}'"), "$tag every provenance field $id")
                         assertEquals(version, scalarLong(db, "SELECT row_version FROM _sync_row_state WHERE key_json='{\"id\":\"$id\"}'"))
                         assertEquals(1L, scalarLong(db, "SELECT relationships_known FROM _sync_row_state WHERE key_json='{\"id\":\"$id\"}'"))
                         val predicate = "key_json='{\"id\":\"$id\"}'"
@@ -607,7 +618,7 @@ internal class OrdinarySafetyPlatformTest : PlatformCrossTargetTestSupport() {
                     assertEquals(1L, scalarLong(db, "SELECT count(*) FROM _sync_source_state"))
                     val sourceBefore = requireNotNull(OversqliteSourceStateStore(db.connection()).loadState(scalarText(db, "SELECT current_source_id FROM _sync_attachment_state")))
                     val stable = databaseStateVector(db.connection(), listOf("nodes"), predicates = mapOf("_sync_row_state" to "key_json<>'{\"id\":\"P\"}'"))
-                    val provenance = Json.parseToJsonElement(scalarText(db, "SELECT server_provenance FROM _sync_row_state WHERE key_json='{\"id\":\"P\"}'")).jsonObject
+                    val provenance = logicalServerProvenance(db, "key_json='{\"id\":\"P\"}'")
                     db.execSQL("UPDATE nodes SET name='frozen parent' WHERE id='P'")
                     db.execSQL("UPDATE nodes SET parent_id='Q' WHERE id='C'")
                     db.execSQL("UPDATE nodes SET name='dirty full grandchild' WHERE id='D'")
@@ -632,7 +643,7 @@ internal class OrdinarySafetyPlatformTest : PlatformCrossTargetTestSupport() {
                     val after = databaseStateVector(db.connection(), listOf("nodes"), predicates = mapOf("_sync_row_state" to "key_json<>'{\"id\":\"P\"}'"))
                     assertEquals(stable.getValue("_sync_row_state"), after.getValue("_sync_row_state"), "$action every untouched A field")
                     val tombstoneProvenance = JsonObject(provenance + mapOf("origin" to JsonPrimitive("explicit_conflict"), "bundle_sequence" to JsonNull, "authoritative_version" to JsonPrimitive(2)))
-                    assertEquals(tombstoneProvenance, Json.parseToJsonElement(scalarText(db, "SELECT server_provenance FROM _sync_row_state WHERE key_json='{\"id\":\"P\"}'")))
+                    assertEquals(tombstoneProvenance, logicalServerProvenance(db, "key_json='{\"id\":\"P\"}'"))
                     assertEquals(1L, scalarLong(db, "SELECT count(*) FROM _sync_row_state WHERE key_json='{\"id\":\"P\"}' AND server_kind='deleted' AND row_version=2 AND server_payload IS NULL AND relationships_known=1"))
                     val edges = Json.parseToJsonElement("""[{"view":"desired","child":"C","parent":"Q"},{"view":"desired","child":"D","parent":"C"},{"view":"server","child":"C","parent":"P"},{"view":"server","child":"D","parent":"C"}]""")
                     assertEquals(edges, Json.parseToJsonElement(scalarText(db, "SELECT json_group_array(json_object('view',view,'child',json_extract(child_key,'$.id'),'parent',json_extract(parent_key,'$.id'))) FROM (SELECT * FROM _sync_relationships ORDER BY view,child_key)")), "$action exact historical server and current desired edge identities")
@@ -739,7 +750,7 @@ internal class OrdinarySafetyPlatformTest : PlatformCrossTargetTestSupport() {
                             assertEquals(expectedTyped, Json.parseToJsonElement(scalarText(db, "SELECT server_payload FROM _sync_row_state WHERE key_json='{\"id\":\"$id\"}'")), "$tag exact typed A $id")
                             assertEquals(2L, scalarLong(db, "SELECT row_version FROM _sync_row_state WHERE key_json='{\"id\":\"$id\"}'"), tag)
                             assertEquals(1L, scalarLong(db, "SELECT relationships_known FROM _sync_row_state WHERE key_json='{\"id\":\"$id\"}'"), tag)
-                            val provenance = Json.parseToJsonElement(scalarText(db, "SELECT server_provenance FROM _sync_row_state WHERE key_json='{\"id\":\"$id\"}'")).jsonObject
+                            val provenance = logicalServerProvenance(db, "key_json='{\"id\":\"$id\"}'")
                             assertEquals(2, provenance.getValue("authoritative_version").jsonPrimitive.int, tag)
                             assertEquals(2, provenance.getValue("bundle_sequence").jsonPrimitive.int, tag)
                             assertEquals("user-1", provenance.getValue("account_scope").jsonObject.getValue("account_id").jsonPrimitive.content, tag)
@@ -779,7 +790,7 @@ internal class OrdinarySafetyPlatformTest : PlatformCrossTargetTestSupport() {
                 // Seed an already authoritative newer D without generating local intent.
                 db.execSQL("UPDATE _sync_apply_state SET apply_mode=1")
                 db.execSQL("UPDATE nodes SET name='newer grandchild' WHERE id='D'")
-                db.execSQL("UPDATE _sync_row_state SET row_version=3,server_payload=json_set(server_payload,'$.name.value','newer grandchild'),server_provenance=json_set(server_provenance,'$.authoritative_version',3) WHERE key_json='{\"id\":\"D\"}'")
+                db.execSQL("UPDATE _sync_row_state SET row_version=3,server_payload=json_set(server_payload,'$.name.value','newer grandchild') WHERE key_json='{\"id\":\"D\"}'")
                 db.execSQL("UPDATE _sync_apply_state SET apply_mode=0")
                 db.execSQL("CREATE TRIGGER delete_c AFTER DELETE ON nodes WHEN OLD.id='P' BEGIN DELETE FROM nodes WHERE id='C'; END")
                 val projection = mapOf("nodes" to "id IN ('D','Q')", "_sync_row_state" to "key_json IN ('{\"id\":\"D\"}','{\"id\":\"Q\"}')", "_sync_relationships" to "child_key IN ('{\"id\":\"D\"}','{\"id\":\"Q\"}')")
@@ -791,7 +802,7 @@ internal class OrdinarySafetyPlatformTest : PlatformCrossTargetTestSupport() {
                 val pulls = server.pullRequestCount
                 val baselineRevision = scalarLong(db, "SELECT baseline_revision FROM _sync_conflict_state")
                 val descendantRevision = scalarLong(db, "SELECT server_revision FROM _sync_row_state WHERE key_json='{\"id\":\"D\"}'")
-                val provenance = Json.parseToJsonElement(scalarText(db, "SELECT server_provenance FROM _sync_row_state WHERE key_json='{\"id\":\"Q\"}'")).jsonObject
+                val provenance = logicalServerProvenance(db, "key_json='{\"id\":\"Q\"}'")
                 val publicationStart = scalarText(db, "SELECT strftime('%Y-%m-%dT%H:%M:%fZ','now')")
                 server.addRemoteBundleForTest(nodeEffects() + remoteNode("D", "C"))
                 client.pullToStable().getOrThrow()
@@ -819,7 +830,7 @@ internal class OrdinarySafetyPlatformTest : PlatformCrossTargetTestSupport() {
                     assertEquals("main", scalarText(db, "SELECT schema_name FROM _sync_row_state WHERE $predicate"))
                     assertEquals("nodes", scalarText(db, "SELECT table_name FROM _sync_row_state WHERE $predicate"))
                     assertEquals(JsonObject(provenance + mapOf("origin" to JsonPrimitive("pull"), "bundle_sequence" to JsonPrimitive(2), "authoritative_version" to JsonPrimitive(2))),
-                        Json.parseToJsonElement(scalarText(db, "SELECT server_provenance FROM _sync_row_state WHERE $predicate")), "$action every changed-authority provenance field $id")
+                        logicalServerProvenance(db, predicate), "$action every changed-authority provenance field $id")
                     if (id == "P") {
                         assertEquals(1L, scalarLong(db, "SELECT server_payload IS NULL FROM _sync_row_state WHERE $predicate"))
                         assertEquals(baselineRevision + 1, scalarLong(db, "SELECT server_revision FROM _sync_row_state WHERE $predicate"))
@@ -880,6 +891,7 @@ internal class OrdinarySafetyPlatformTest : PlatformCrossTargetTestSupport() {
                 client.pushPending().getOrThrow()
                 val intermediatePayload = scalarText(db, "SELECT server_payload FROM _sync_row_state WHERE key_json='{\"id\":\"R\"}'")
                 val intermediateProvenance = scalarText(db, "SELECT server_provenance FROM _sync_row_state WHERE key_json='{\"id\":\"R\"}'")
+                val intermediateLogicalProvenance = logicalServerProvenance(db, "key_json='{\"id\":\"R\"}'")
                 assertEquals(2L, scalarLong(db, "SELECT row_version FROM _sync_row_state WHERE key_json='{\"id\":\"R\"}'"))
                 db.connection().transaction(TransactionMode.IMMEDIATE) {
                     db.execSQL("UPDATE nodes SET id='S' WHERE id='R'")
@@ -951,7 +963,7 @@ internal class OrdinarySafetyPlatformTest : PlatformCrossTargetTestSupport() {
                 assertEquals(JsonObject(frozenConflict + mapOf("baseline_revision" to JsonPrimitive(baselineRevision + 3), "dirty_revision" to JsonPrimitive(frozenConflict.getValue("dirty_revision").jsonPrimitive.long + 2 * frozenRows.size))),
                     Json.parseToJsonElement(scalarText(db, conflictQuery)), "all conflict controls preserve the frozen identity; only three authority installs advance its revision")
                 assertEquals(6L, scalarLong(db, "SELECT count(*) FROM _sync_row_state"), "P/R tombstones and C/D/Q/S authority are the complete key inventory")
-                val provenance = Json.parseToJsonElement(intermediateProvenance).jsonObject
+                val provenance = intermediateLogicalProvenance
                 for (id in listOf("R", "S", "C")) {
                     val predicate = "key_json='{\"id\":\"$id\"}'"
                     val row = frozenRows.single { it.keyJson == "{\"id\":\"$id\"}" }
@@ -962,7 +974,7 @@ internal class OrdinarySafetyPlatformTest : PlatformCrossTargetTestSupport() {
                     assertEquals(if (id == "R") "deleted" else "live", scalarText(db, "SELECT server_kind FROM _sync_row_state WHERE $predicate"))
                     assertEquals(1L, scalarLong(db, "SELECT relationships_known FROM _sync_row_state WHERE $predicate"))
                     assertEquals(JsonObject(provenance + mapOf("origin" to JsonPrimitive("settlement"), "bundle_sequence" to JsonPrimitive(3), "authoritative_version" to JsonPrimitive(3))),
-                        Json.parseToJsonElement(scalarText(db, "SELECT server_provenance FROM _sync_row_state WHERE $predicate")), "$action every rekey authority provenance field $id")
+                        logicalServerProvenance(db, predicate), "$action every rekey authority provenance field $id")
                     if (id == "R") assertEquals(1L, scalarLong(db, "SELECT server_payload IS NULL FROM _sync_row_state WHERE $predicate"))
                     else {
                         fun typed(value: JsonElement) = buildJsonObject { put("storage", if (value == JsonNull) "null" else "text"); put("value", value) }
@@ -1326,11 +1338,11 @@ internal class OrdinarySafetyPlatformTest : PlatformCrossTargetTestSupport() {
                     db.execSQL("INSERT INTO nodes VALUES('P','parent',NULL),('Q','other',NULL),('C','child','P'),('D','grandchild','C')")
                     client.pushPending().getOrThrow()
                     val parent = if (detail == "dependency_unavailable") "missing" else "Q"
-                    if (detail == "relationship_unknown") db.execSQL("UPDATE _sync_row_state SET server_kind='unknown',server_payload=NULL,row_version=0,relationships_known=0,server_provenance=json_set(server_provenance,'$.authoritative_version',0,'$.origin','explicit_conflict','$.bundle_sequence',NULL) WHERE key_json='{\"id\":\"Q\"}'")
+                    if (detail == "relationship_unknown") db.execSQL("UPDATE _sync_row_state SET server_kind='unknown',server_payload=NULL,row_version=0,relationships_known=0,server_provenance=json_set(server_provenance,'$.origin','explicit_conflict','$.bundle_sequence',NULL) WHERE key_json='{\"id\":\"Q\"}'")
                     if (detail == "historical_repair_required") {
                         db.execSQL("UPDATE _sync_apply_state SET apply_mode=1")
                         db.execSQL("DELETE FROM nodes WHERE id='Q'")
-                        db.execSQL("UPDATE _sync_row_state SET server_kind='deleted',server_payload=NULL,row_version=5,server_provenance=json_set(server_provenance,'$.authoritative_version',5,'$.origin','explicit_conflict','$.bundle_sequence',NULL) WHERE key_json='{\"id\":\"Q\"}'")
+                        db.execSQL("UPDATE _sync_row_state SET server_kind='deleted',server_payload=NULL,row_version=5,server_provenance=json_set(server_provenance,'$.origin','explicit_conflict','$.bundle_sequence',NULL) WHERE key_json='{\"id\":\"Q\"}'")
                         db.execSQL("UPDATE _sync_apply_state SET apply_mode=0")
                     }
                     val selectedRow = remoteNode("R", parent).copy(op = "INSERT")
@@ -1433,7 +1445,7 @@ internal class OrdinarySafetyPlatformTest : PlatformCrossTargetTestSupport() {
                     assertEquals(1L, scalarLong(db, "SELECT count(*) FROM _sync_source_state"))
                     val sourceBefore = requireNotNull(OversqliteSourceStateStore(db.connection()).loadState(scalarText(db, "SELECT current_source_id FROM _sync_attachment_state")))
                     val before = databaseStateVector(db.connection(), listOf("nodes"), predicates = mapOf("_sync_row_state" to "key_json<>'{\"id\":\"C\"}'"))
-                    val seedProvenance = Json.parseToJsonElement(scalarText(db, "SELECT server_provenance FROM _sync_row_state WHERE key_json='{\"id\":\"C\"}'")).jsonObject
+                    val seedProvenance = logicalServerProvenance(db, "key_json='{\"id\":\"C\"}'")
                     val dirtyFields = "json_object('schema',schema_name,'table',table_name,'key',key_json,'op',op,'version',base_row_version,'kind',base_kind,'B',base_payload,'provenance',base_provenance,'L',payload)"
                     val otherDirtyQuery = "SELECT json_group_array($dirtyFields) FROM (SELECT * FROM _sync_dirty_rows WHERE key_json<>'{\"id\":\"C\"}' ORDER BY key_json)"
                     val otherDirty = Json.parseToJsonElement(scalarText(db, otherDirtyQuery))
@@ -1465,7 +1477,7 @@ internal class OrdinarySafetyPlatformTest : PlatformCrossTargetTestSupport() {
                     assertEquals(JsonArray(expectedBusiness.toList().sortedBy { it.first }.map { it.second }), Json.parseToJsonElement(scalarText(db, "SELECT json_group_array(json_object('id',id,'name',name,'parent_id',parent_id)) FROM (SELECT * FROM nodes ORDER BY id)")), "$tag every business value")
                     assertEquals(typed(remote), Json.parseToJsonElement(scalarText(db, "SELECT server_payload FROM _sync_row_state WHERE key_json='{\"id\":\"C\"}'")), "$tag authoritative A differs from chosen L when required")
                     val expectedProvenance = JsonObject(seedProvenance + mapOf("origin" to JsonPrimitive("explicit_conflict"), "bundle_sequence" to JsonNull, "authoritative_version" to JsonPrimitive(2)))
-                    assertEquals(expectedProvenance, Json.parseToJsonElement(scalarText(db, "SELECT server_provenance FROM _sync_row_state WHERE key_json='{\"id\":\"C\"}'")), "$tag every new authoritative provenance field")
+                    assertEquals(expectedProvenance, logicalServerProvenance(db, "key_json='{\"id\":\"C\"}'"), "$tag every new authoritative provenance field")
                     assertEquals(2L, scalarLong(db, "SELECT row_version FROM _sync_row_state WHERE key_json='{\"id\":\"C\"}'"))
                     assertEquals(1L, scalarLong(db, "SELECT relationships_known FROM _sync_row_state WHERE key_json='{\"id\":\"C\"}'"))
                     assertEquals(otherDirty, Json.parseToJsonElement(scalarText(db, otherDirtyQuery)), "$tag unrelated frozen historical B and L requeued exactly")
@@ -1473,7 +1485,7 @@ internal class OrdinarySafetyPlatformTest : PlatformCrossTargetTestSupport() {
                     else {
                         assertEquals(1L, scalarLong(db, "SELECT count(*) FROM _sync_dirty_rows WHERE key_json='{\"id\":\"C\"}' AND op='UPDATE' AND base_kind='present' AND base_row_version=2"))
                         assertEquals(typed(remote), Json.parseToJsonElement(scalarText(db, "SELECT base_payload FROM _sync_dirty_rows WHERE key_json='{\"id\":\"C\"}'")), "$tag B rebases from validated A, never current L")
-                        assertEquals(expectedProvenance, Json.parseToJsonElement(scalarText(db, "SELECT base_provenance FROM _sync_dirty_rows WHERE key_json='{\"id\":\"C\"}'")))
+                        assertEquals(expectedProvenance, logicalDirtyBaseProvenance(db, "key_json='{\"id\":\"C\"}'"))
                         assertEquals(typed(desired), Json.parseToJsonElement(scalarText(db, "SELECT payload FROM _sync_dirty_rows WHERE key_json='{\"id\":\"C\"}'")), "$tag exact chosen dirty L")
                     }
                     val expectedEdges = mutableListOf<Triple<String, String, String>>()
@@ -1524,7 +1536,7 @@ internal class OrdinarySafetyPlatformTest : PlatformCrossTargetTestSupport() {
                     val dirtyFields = "json_object('schema',schema_name,'table',table_name,'key',key_json,'op',op,'version',base_row_version,'kind',base_kind,'B',base_payload,'provenance',base_provenance,'L',payload)"
                     val otherDirtyQuery = "SELECT json_group_array($dirtyFields) FROM (SELECT * FROM _sync_dirty_rows WHERE key_json<>'{\"id\":\"C\"}' ORDER BY key_json)"
                     val otherDirty = Json.parseToJsonElement(scalarText(db, otherDirtyQuery))
-                    val seedProvenance = Json.parseToJsonElement(scalarText(db, "SELECT server_provenance FROM _sync_row_state WHERE key_json='{\"id\":\"C\"}'")).jsonObject
+                    val seedProvenance = logicalServerProvenance(db, "key_json='{\"id\":\"C\"}'")
                     assertEquals(1L, scalarLong(db, "SELECT count(*) FROM _sync_source_state"))
                     val sourceBefore = requireNotNull(OversqliteSourceStateStore(db.connection()).loadState(scalarText(db, "SELECT current_source_id FROM _sync_attachment_state")))
                     val unaffected = databaseStateVector(db.connection(), listOf("nodes"), predicates = mapOf("nodes" to "id<>'C'", "_sync_row_state" to "key_json<>'{\"id\":\"C\"}'"))
@@ -1561,7 +1573,7 @@ internal class OrdinarySafetyPlatformTest : PlatformCrossTargetTestSupport() {
                         assertEquals(5L, scalarLong(db, "SELECT count(*) FROM nodes"))
                         val expectedA = buildJsonObject { for ((column, field) in remote) putJsonObject(column) { put("storage", if (field == JsonNull) "null" else "text"); put("value", field) } }
                         assertEquals(expectedA, Json.parseToJsonElement(scalarText(db, "SELECT server_payload FROM _sync_row_state WHERE key_json='{\"id\":\"C\"}'")))
-                        assertEquals(JsonObject(seedProvenance + mapOf("origin" to JsonPrimitive("explicit_conflict"), "bundle_sequence" to JsonNull, "authoritative_version" to JsonPrimitive(2))), Json.parseToJsonElement(scalarText(db, "SELECT server_provenance FROM _sync_row_state WHERE key_json='{\"id\":\"C\"}'")))
+                        assertEquals(JsonObject(seedProvenance + mapOf("origin" to JsonPrimitive("explicit_conflict"), "bundle_sequence" to JsonNull, "authoritative_version" to JsonPrimitive(2))), logicalServerProvenance(db, "key_json='{\"id\":\"C\"}'"))
                         assertEquals(otherDirty, Json.parseToJsonElement(scalarText(db, otherDirtyQuery)), "cycle retains complete unrelated historical B and unpublished X intent")
                         assertEquals(0L, scalarLong(db, "SELECT count(*) FROM _sync_dirty_rows WHERE key_json='{\"id\":\"C\"}'"))
                         val after = databaseStateVector(db.connection(), listOf("nodes"), predicates = mapOf("nodes" to "id<>'C'", "_sync_row_state" to "key_json<>'{\"id\":\"C\"}'"))
@@ -1604,11 +1616,11 @@ internal class OrdinarySafetyPlatformTest : PlatformCrossTargetTestSupport() {
                     db.execSQL("INSERT INTO nodes VALUES('P','parent',NULL),('Q','other',NULL),('C','child','P'),('D','grandchild','C')")
                     client.pushPending().getOrThrow()
                     val parent = if (detail == "dependency_unavailable") "missing" else "Q"
-                    if (detail == "relationship_unknown") db.execSQL("UPDATE _sync_row_state SET server_kind='unknown',server_payload=NULL,row_version=0,relationships_known=0,server_provenance=json_set(server_provenance,'$.authoritative_version',0,'$.origin','explicit_conflict','$.bundle_sequence',NULL) WHERE key_json='{\"id\":\"Q\"}'")
+                    if (detail == "relationship_unknown") db.execSQL("UPDATE _sync_row_state SET server_kind='unknown',server_payload=NULL,row_version=0,relationships_known=0,server_provenance=json_set(server_provenance,'$.origin','explicit_conflict','$.bundle_sequence',NULL) WHERE key_json='{\"id\":\"Q\"}'")
                     if (detail == "historical_repair_required") {
                         db.execSQL("UPDATE _sync_apply_state SET apply_mode=1")
                         db.execSQL("DELETE FROM nodes WHERE id='Q'")
-                        db.execSQL("UPDATE _sync_row_state SET server_kind='deleted',server_payload=NULL,row_version=5,server_provenance=json_set(server_provenance,'$.authoritative_version',5,'$.origin','explicit_conflict','$.bundle_sequence',NULL) WHERE key_json='{\"id\":\"Q\"}'")
+                        db.execSQL("UPDATE _sync_row_state SET server_kind='deleted',server_payload=NULL,row_version=5,server_provenance=json_set(server_provenance,'$.origin','explicit_conflict','$.bundle_sequence',NULL) WHERE key_json='{\"id\":\"Q\"}'")
                         db.execSQL("UPDATE _sync_apply_state SET apply_mode=0")
                     }
                     db.execSQL("UPDATE nodes SET name='frozen local parent' WHERE id='P'")
@@ -1690,13 +1702,13 @@ internal class OrdinarySafetyPlatformTest : PlatformCrossTargetTestSupport() {
                     var parent = "missing"
                     if (detail == "relationship_unknown") {
                         parent = "Q"
-                        db.execSQL("UPDATE _sync_row_state SET server_kind='unknown',server_payload=NULL,row_version=0,relationships_known=0,server_provenance=json_set(server_provenance,'$.authoritative_version',0,'$.origin','explicit_conflict','$.bundle_sequence',NULL) WHERE json_extract(key_json,'$.id')='Q'")
+                        db.execSQL("UPDATE _sync_row_state SET server_kind='unknown',server_payload=NULL,row_version=0,relationships_known=0,server_provenance=json_set(server_provenance,'$.origin','explicit_conflict','$.bundle_sequence',NULL) WHERE json_extract(key_json,'$.id')='Q'")
                     }
                     if (detail == "historical_repair_required") {
                         parent = "Q"
                         db.execSQL("UPDATE _sync_apply_state SET apply_mode=1")
                         db.execSQL("DELETE FROM nodes WHERE id='Q'")
-                        db.execSQL("UPDATE _sync_row_state SET server_kind='deleted',server_payload=NULL,row_version=5,server_provenance=json_set(server_provenance,'$.authoritative_version',5,'$.origin','explicit_conflict','$.bundle_sequence',NULL) WHERE json_extract(key_json,'$.id')='Q'")
+                        db.execSQL("UPDATE _sync_row_state SET server_kind='deleted',server_payload=NULL,row_version=5,server_provenance=json_set(server_provenance,'$.origin','explicit_conflict','$.bundle_sequence',NULL) WHERE json_extract(key_json,'$.id')='Q'")
                         db.execSQL("UPDATE _sync_apply_state SET apply_mode=0")
                     }
                     server.addRemoteBundleForTest(listOf(BundleRow(
@@ -2292,7 +2304,7 @@ internal class OrdinarySafetyPlatformTest : PlatformCrossTargetTestSupport() {
                     client.attach("user-1").getOrThrow()
                     db.execSQL("INSERT INTO nodes VALUES('P','parent',NULL),('Q','other',NULL),('C','child','P'),('D','grandchild','C')")
                     client.pushPending().getOrThrow()
-                    val seedProvenance = Json.parseToJsonElement(scalarText(db, "SELECT server_provenance FROM _sync_row_state WHERE key_json='{\"id\":\"P\"}'")).jsonObject
+                    val seedProvenance = logicalServerProvenance(db, "key_json='{\"id\":\"P\"}'")
                     assertEquals(2L, server.addRemoteBundleForTest(listOf(BundleRow("main", "nodes", mapOf("id" to "C"), "UPDATE", 2,
                         Json.parseToJsonElement("""{"id":"C","name":"new remote child","parent_id":"Q"}""")))))
                     db.execSQL("UPDATE _sync_attachment_state SET last_bundle_seq_seen=${if (reason == "history_pruned") 0 else 3}")
@@ -2374,7 +2386,7 @@ internal class OrdinarySafetyPlatformTest : PlatformCrossTargetTestSupport() {
                             assertEquals(value, Json.parseToJsonElement(scalarText(target, "SELECT server_payload FROM _sync_row_state WHERE $predicate")))
                             assertEquals(JsonObject(seedProvenance + mapOf("origin" to JsonPrimitive("snapshot"), "origin_source_id" to JsonPrimitive(source),
                                 "bundle_sequence" to JsonPrimitive(boundary), "authoritative_version" to JsonPrimitive(version))),
-                                Json.parseToJsonElement(scalarText(target, "SELECT server_provenance FROM _sync_row_state WHERE $predicate")), "$reason complete provenance $id")
+                                logicalServerProvenance(target, "$predicate"), "$reason complete provenance $id")
                             assertEquals(version, scalarLong(target, "SELECT row_version FROM _sync_row_state WHERE $predicate"))
                             assertEquals("live", scalarText(target, "SELECT server_kind FROM _sync_row_state WHERE $predicate"))
                             assertEquals(1L, scalarLong(target, "SELECT relationships_known FROM _sync_row_state WHERE $predicate"))
@@ -2400,7 +2412,7 @@ internal class OrdinarySafetyPlatformTest : PlatformCrossTargetTestSupport() {
                             assertTrue(vector.getValue(table).isEmpty(), "$reason retired transient owner $table")
                         assertEquals(OversqliteOperationState(), OversqliteOperationStateStore(target.connection()).loadState())
                         assertEquals(OversqliteOutboxBundleState(), OversqliteOutboxStateStore(target.connection()).loadBundleState())
-                        assertEquals(WorkspaceCharge(1, 536 + 6 * scalarLong(target, "SELECT length(CAST(recovery_state AS BLOB)) FROM _sync_operation_state")), OversqliteWorkspace(target.connection(), nodeConfig).usage(applyUnit("author-pull-recovery", 0, "")))
+                        assertEquals(WorkspaceCharge(idleWorkspaceCharge.entries, idleWorkspaceCharge.bytes + 6 * scalarLong(target, "SELECT length(CAST(recovery_state AS BLOB)) FROM _sync_operation_state")), OversqliteWorkspace(target.connection(), nodeConfig).usage(applyUnit("author-pull-recovery", 0, "")))
                         assertEquals(0L, scalarLong(target, "SELECT count(*) FROM pragma_foreign_key_check"))
                     }
                     verifySnapshot(db, attachmentBefore.currentSourceId, revisionBefore + 1, publicationStart, publicationEnd)
@@ -3336,7 +3348,7 @@ internal class OrdinarySafetyPlatformTest : PlatformCrossTargetTestSupport() {
                         assertEquals(typed, Json.parseToJsonElement(scalarText(db, "SELECT server_payload FROM _sync_row_state WHERE key_json='{\"id\":\"$id\"}'")), "$shape full A $id")
                         val version = batchOf.getValue(id).toLong() + 1
                         assertEquals(version, scalarLong(db, "SELECT row_version FROM _sync_row_state WHERE key_json='{\"id\":\"$id\"}'"))
-                        val provenance = Json.parseToJsonElement(scalarText(db, "SELECT server_provenance FROM _sync_row_state WHERE key_json='{\"id\":\"$id\"}'")).jsonObject
+                        val provenance = logicalServerProvenance(db, "key_json='{\"id\":\"$id\"}'")
                         assertEquals(version, provenance.getValue("authoritative_version").jsonPrimitive.long)
                         assertEquals(version, provenance.getValue("bundle_sequence").jsonPrimitive.long)
                         assertEquals("user-1", provenance.getValue("account_scope").jsonObject.getValue("account_id").jsonPrimitive.content)
@@ -3524,7 +3536,7 @@ internal class OrdinarySafetyPlatformTest : PlatformCrossTargetTestSupport() {
                             val typed = buildJsonObject { putJsonObject("id") { put("storage", "text"); put("value", "U00$i") }; putJsonObject("name") { put("storage", "text"); put("value", "complete payload $i") } }
                             val version = (i / 2 + 1).toLong()
                             assertEquals(typed, Json.parseToJsonElement(scalarText(target, "SELECT server_payload FROM _sync_row_state WHERE key_json='{\"id\":\"U00$i\"}'")))
-                            assertEquals(JsonObject(base + mapOf("bundle_sequence" to JsonPrimitive(if (snapshot) 3L else version), "authoritative_version" to JsonPrimitive(version))), Json.parseToJsonElement(scalarText(target, "SELECT server_provenance FROM _sync_row_state WHERE key_json='{\"id\":\"U00$i\"}'")))
+                            assertEquals(JsonObject(base + mapOf("bundle_sequence" to JsonPrimitive(if (snapshot) 3L else version), "authoritative_version" to JsonPrimitive(version))), logicalServerProvenance(target, "key_json='{\"id\":\"U00$i\"}'"))
                             assertEquals(version, scalarLong(target, "SELECT row_version FROM _sync_row_state WHERE key_json='{\"id\":\"U00$i\"}'"))
                             assertEquals("live", scalarText(target, "SELECT server_kind FROM _sync_row_state WHERE key_json='{\"id\":\"U00$i\"}'"))
                             assertEquals(1L, scalarLong(target, "SELECT relationships_known FROM _sync_row_state WHERE key_json='{\"id\":\"U00$i\"}'"))
@@ -3643,13 +3655,13 @@ internal class OrdinarySafetyPlatformTest : PlatformCrossTargetTestSupport() {
                         put("origin_source_id", source); put("origin", "settlement")
                         put("bundle_sequence", 1); put("authoritative_version", 1)
                     }
-                    assertEquals(provenance, Json.parseToJsonElement(scalarText(db, "SELECT server_provenance FROM _sync_row_state WHERE key_json='{\"id\":\"U000\"}'")), "$operation every initial confirmed provenance field")
+                    assertEquals(provenance, logicalServerProvenance(db, "key_json='{\"id\":\"U000\"}'"), "$operation every initial confirmed provenance field")
                     suspend fun assertPublished(count: Int, target: PlatformTestDatabase = db, baseProvenance: JsonObject = provenance, snapshotSequence: Long? = null) {
                         for (i in 0 until count) {
                             val id = "U${i.toString().padStart(3, '0')}"
                             val typed = buildJsonObject { putJsonObject("id") { put("storage", "text"); put("value", id) }; putJsonObject("name") { put("storage", "text"); put("value", "complete payload $i") } }
                             assertEquals(typed, Json.parseToJsonElement(scalarText(target, "SELECT server_payload FROM _sync_row_state WHERE key_json='{\"id\":\"$id\"}'")), "$operation complete A $id")
-                            assertEquals(JsonObject(baseProvenance + mapOf("bundle_sequence" to JsonPrimitive(snapshotSequence ?: (i + 1).toLong()), "authoritative_version" to JsonPrimitive(i + 1))), Json.parseToJsonElement(scalarText(target, "SELECT server_provenance FROM _sync_row_state WHERE key_json='{\"id\":\"$id\"}'")), "$operation full provenance $id")
+                            assertEquals(JsonObject(baseProvenance + mapOf("bundle_sequence" to JsonPrimitive(snapshotSequence ?: (i + 1).toLong()), "authoritative_version" to JsonPrimitive(i + 1))), logicalServerProvenance(target, "key_json='{\"id\":\"$id\"}'"), "$operation full provenance $id")
                             assertEquals((i + 1).toLong(), scalarLong(target, "SELECT row_version FROM _sync_row_state WHERE key_json='{\"id\":\"$id\"}'"))
                             assertEquals("live", scalarText(target, "SELECT server_kind FROM _sync_row_state WHERE key_json='{\"id\":\"$id\"}'"))
                             assertEquals(1L, scalarLong(target, "SELECT relationships_known FROM _sync_row_state WHERE key_json='{\"id\":\"$id\"}'"))
@@ -3697,7 +3709,7 @@ internal class OrdinarySafetyPlatformTest : PlatformCrossTargetTestSupport() {
                         val viewerSource = scalarText(viewer, "SELECT current_source_id FROM _sync_attachment_state")
                         val viewProvenance = JsonObject(provenance + mapOf("origin_source_id" to JsonPrimitive(viewerSource),
                             "origin" to JsonPrimitive("snapshot"), "bundle_sequence" to JsonPrimitive(70)))
-                        assertEquals(viewProvenance, Json.parseToJsonElement(scalarText(viewer, "SELECT server_provenance FROM _sync_row_state WHERE key_json='{\"id\":\"U000\"}'")), "$operation every snapshot provenance field")
+                        assertEquals(viewProvenance, logicalServerProvenance(viewer, "key_json='{\"id\":\"U000\"}'"), "$operation every snapshot provenance field")
                         assertPublished(70, viewer, viewProvenance, snapshotSequence = 70)
                         assertEquals(70L, scalarLong(viewer, "SELECT count(*) FROM _sync_row_state"))
                         assertEquals(0L, scalarLong(viewer, "SELECT count(*) FROM _sync_relationships"))
