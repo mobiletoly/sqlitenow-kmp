@@ -18,7 +18,17 @@ package dev.goquick.sqlitenow.oversqlite
 import dev.goquick.sqlitenow.core.SafeSQLiteConnection
 import dev.goquick.sqlitenow.core.TransactionMode
 import androidx.sqlite.async.step
+import kotlin.coroutines.CoroutineContext
 import kotlinx.coroutines.currentCoroutineContext
+
+/**
+ * Marks the rotated source-recovery rebuild, the one snapshot owner allowed to hold pending intent.
+ * Every other snapshot path keeps the strict clean gate, because only this rebuild carries the
+ * intent onto the installed snapshot instead of settling it under a source the server refuses.
+ */
+internal object SourceRecoveryIntentAdmission : CoroutineContext.Element, CoroutineContext.Key<SourceRecoveryIntentAdmission> {
+    override val key: CoroutineContext.Key<*> get() = this
+}
 
 internal data class SnapshotOutboxFingerprint(
     val state: String,
@@ -141,13 +151,13 @@ internal class OversqliteSnapshotGate(
             dirtyRowCount = guard.dirtyRowCount,
             outboundRowCount = guard.outbox.actualRowCount,
         )
-        if (counts.hasDirtyRows) {
-            throw DirtyStateRejectedException(guard.dirtyRowCount)
-        }
         val attachment = guard.lifecycle.attachment
         val operation = guard.lifecycle.operation
         when (guard.mode) {
             SnapshotRebuildOutboxMode.CLEAN -> {
+                if (counts.hasDirtyRows) {
+                    throw DirtyStateRejectedException(guard.dirtyRowCount)
+                }
                 requireNoOutbox(guard)
                 if (guard.remoteReplace) {
                     if (
@@ -167,7 +177,10 @@ internal class OversqliteSnapshotGate(
             }
 
             SnapshotRebuildOutboxMode.SOURCE_RECOVERY -> {
-                requireNoOutbox(guard)
+                // No pending-work check here: load() already applied the strict clean gate unless
+                // this is the explicit rebuild that carries pending intent. For that rebuild the
+                // pinned fingerprint keeps dirty rows and the outbox immutable while the snapshot
+                // is staged, and the final writer moves them onto the installed snapshot.
                 if (
                     attachment.bindingState != attachmentBindingAttached ||
                     !attachment.rebuildRequired ||
@@ -188,8 +201,17 @@ internal class OversqliteSnapshotGate(
     }
 }
 
-/** Snapshot admission covers the entire scope, including an ack with no outbox. */
+/**
+ * Snapshot admission covers the entire scope, including an ack with no outbox.
+ *
+ * The rotated source-recovery rebuild is the single exception: pending intent stays in place and is
+ * carried onto the installed snapshot, because nothing can settle it under the refused source.
+ */
 internal suspend fun requireCleanSnapshotWork(db: SafeSQLiteConnection) {
+    if (currentCoroutineContext()[SourceRecoveryIntentAdmission] != null && db.scalarLong(
+            "SELECT EXISTS(SELECT 1 FROM _sync_operation_state WHERE singleton_key=1 AND kind='$operationKindSourceRecovery')",
+        ) != 0L
+    ) return
     val dirty = db.scalarLong("SELECT count(*) FROM _sync_dirty_rows")
     if (dirty != 0L) throw DirtyStateRejectedException(dirty)
     val pending = db.withPreparedStatement("""SELECT

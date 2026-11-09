@@ -246,12 +246,7 @@ private fun buildKeepLocalConflictPlan(
 ): ConflictPlanDecision {
     return when (context.localOp) {
         "INSERT" -> buildInsertConflictPlan(requireLocalPayload(context, localPayload), authoritative)
-        "UPDATE" -> buildUpdateConflictPlan(
-            context = context,
-            payload = requireLocalPayload(context, localPayload),
-            authoritative = authoritative,
-            invalidResultName = "KeepLocal",
-        )
+        "UPDATE" -> buildUpdateConflictPlan(requireLocalPayload(context, localPayload), authoritative)
         "DELETE" -> buildDeleteConflictPlan(authoritative)
         else -> error("unsupported local conflict op ${context.localOp}")
     }
@@ -281,12 +276,7 @@ private fun buildKeepMergedConflictPlan(
 
     val decision = when (context.localOp) {
         "INSERT" -> buildInsertConflictPlan(mergedObject, authoritative)
-        "UPDATE" -> buildUpdateConflictPlan(
-            context = context,
-            payload = mergedObject,
-            authoritative = authoritative,
-            invalidResultName = "KeepMerged",
-        )
+        "UPDATE" -> buildUpdateConflictPlan(mergedObject, authoritative)
         else -> error("unsupported local conflict op ${context.localOp}")
     }
     // Resolver payloads use the same wire values exposed by ConflictContext.
@@ -325,22 +315,45 @@ private fun buildInsertConflictPlan(
     }
 }
 
+/**
+ * A kept local UPDATE retries as an UPDATE over the live authoritative row, or re-inserts the
+ * row when the server deleted it meanwhile. The protocol accepts an INSERT whose base is the
+ * tombstone version, so a kept edit never has to be dropped because of a remote delete.
+ */
 private fun buildUpdateConflictPlan(
-    context: ConflictContext,
     payload: JsonObject,
     authoritative: AuthoritativeConflictState,
-    invalidResultName: String,
-): ConflictPlanDecision {
-    val live = authoritative as? AuthoritativeConflictState.Present ?: return ConflictPlanDecision.Invalid(
-        "$invalidResultName is invalid for stale UPDATE on " +
-            "${context.schema}.${context.table}; authoritative row is deleted or missing"
-    )
-    return ConflictPlanDecision.Apply(
+): ConflictPlanDecision = when (authoritative) {
+    is AuthoritativeConflictState.Present -> ConflictPlanDecision.Apply(
         upsertRetryPlan(
             payload = payload,
-            rowVersion = live.rowVersion,
+            rowVersion = authoritative.rowVersion,
             deleted = false,
             retryOp = "UPDATE",
+        )
+    )
+
+    is AuthoritativeConflictState.Deleted -> ConflictPlanDecision.Apply(
+        upsertRetryPlan(
+            payload = payload,
+            rowVersion = authoritative.rowVersion,
+            deleted = true,
+            retryOp = "INSERT",
+        )
+    )
+
+    AuthoritativeConflictState.Missing -> ConflictPlanDecision.Apply(
+        ConflictResolutionPlan(
+            localRowAction = LocalRowAction.Upsert(
+                payload = payload,
+                payloadSource = PayloadSource.LOCAL_STATE,
+            ),
+            rowStateAction = RowStateAction.Delete,
+            requeueIntent = ResolvedDirtyIntent(
+                op = "INSERT",
+                baseRowVersion = 0L,
+                payloadSource = RetryPayloadSource.LocalRow,
+            ),
         )
     )
 }

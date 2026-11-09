@@ -216,8 +216,8 @@ internal class A1LiveSurvivorsTest : RealServerSupport() {
             assertTextPayload(old.payload("server_payload"),mapOf("id" to id,"name" to "original","parent_id" to null))
             assertEquals(old.payload("server_payload"),capture.payload("base_payload"));assertEquals(old.payload("server_provenance"),capture.payload("base_provenance"))
             markSourceRecoveryRequired(db,replacementSourceId=randomRealServerUuid())
-            val guarded=baselineQualificationVector(db,listOf("categories","_sync_upload_journal"))
-            assertTrue(client.rebuild().isFailure);assertEquals(guarded,baselineQualificationVector(db,listOf("categories","_sync_upload_journal")))
+            // Source recovery never retargets the frozen request. Ordinary settlement resolves and
+            // acknowledges it under the original source, without a snapshot.
             assertEquals(originalF,scalarText(db,"SELECT hex(request_body) FROM _sync_upload_journal"));assertEquals(0,snapshots)
             client.pushPending().getOrThrow()
             val settled=baselineLiveVector(db)

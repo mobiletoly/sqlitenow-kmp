@@ -128,6 +128,10 @@ internal class OversqlitePushWorkflow(
         }
         val result = try {
             syncDiagnosticWork("push.exchange") { commitPushOutboundSnapshot(state, snapshot,token) }
+        } catch (_: PushOutcomeMismatchException) {
+            val recovered = recoverRetainedOutcome(state, snapshot, token)
+            db.reportExternalTableChanges(recovered.updatedTables)
+            return recovered
         } catch (_: CancelledUploadOutcomeException) {
             db.transaction(TransactionMode.IMMEDIATE) {
                 val journal=checkNotNull(loadUploadJournal(db));uploadJournal.guard(state,journal)
@@ -329,6 +333,11 @@ internal class OversqlitePushWorkflow(
         val binding=journal.binding.operation
         val generation=checkNotNull(state.validated.generation)
         val outbox=outboxStateStore.loadBundleState()
+        // A journal durably rebound to a retained outcome holds evidence for the server's earlier
+        // request, never for these frozen rows: continue the interrupted lost-freeze recovery.
+        if(journal.phase=="frozen" && journal.outcomeBytes>0 && outbox.state==outboxStatePrepared &&
+            outbox.sourceId==binding.sourceId && outbox.sourceBundleId==binding.sourceBundleId &&
+            outbox.canonicalRequestHash!=binding.canonicalRequestHash) throw PushOutcomeMismatchException(binding)
         check(journal.phase=="frozen" && outbox.state==outboxStatePrepared && outbox.sourceId==binding.sourceId &&
             outbox.sourceBundleId==binding.sourceBundleId && snapshot.sourceBundleId==binding.sourceBundleId &&
             outbox.canonicalRequestHash==binding.canonicalRequestHash && outbox.rowCount==snapshot.rows.size.toLong()) { "frozen upload ownership changed" }
@@ -338,12 +347,7 @@ internal class OversqlitePushWorkflow(
         val base=workspace.add(unit,reservationToken?.let { workspace.reserved(it) } ?: WorkspaceCharge(),WorkspaceCharge(1,2*journal.requestBytes))
         if(reservationToken!=null) workspace.resize(state,reservationToken,base)
         val frozenBody=uploadJournal.requestBody(state,journal)
-        val admit: suspend(Long,Long)->Unit = {bytes,entries ->
-            stageStore.completeWorkPhase("HTTP buffer admission") {
-                if(reservationToken!=null) workspace.resize(state,reservationToken,workspace.add(unit,base,WorkspaceCharge(entries,workspace.scale(unit,bytes,64))))
-                stageStore.chargeBufferWork(unit,16)
-            }
-        }
+        val admit=httpBufferAdmission(state,reservationToken,workspace,unit,base)
         val reply=if(journal.outcomeBytes>0) {
             admit(2*journal.outcomeBytes+65536,32)
             remoteApi.decodeUploadOutcome(uploadJournal.outcomeBody(),binding,generation).also {
@@ -376,6 +380,92 @@ internal class OversqlitePushWorkflow(
         }
         val effect=checkNotNull(reply.outcome.committed)
         return PushCommitResult(CommittedPushBundle(effect.bundleSeq,snapshot.sourceBundleId,effect.rowCount,effect.bundleHash),decoded)
+    }
+
+    private fun httpBufferAdmission(state: RuntimeState,reservationToken: String?,workspace: OversqliteWorkspace,
+        unit: String,base: WorkspaceCharge): suspend (Long,Long)->Unit = {bytes,entries ->
+        stageStore.completeWorkPhase("HTTP buffer admission") {
+            if(reservationToken!=null) workspace.resize(state,reservationToken,workspace.add(unit,base,WorkspaceCharge(entries,workspace.scale(unit,bytes,64))))
+            stageStore.chargeBufferWork(unit,16)
+        }
+    }
+
+    /**
+     * Lost-freeze recovery. The frozen request was never admitted: an earlier freeze at this
+     * sequence reached the server, but its local commit was lost. The retained outcome is this
+     * source's own authoritative evidence, so it settles through the shared final-state engine
+     * with no uploaded rows, while every frozen row stays local intent for the next sequence.
+     */
+    private suspend fun recoverRetainedOutcome(
+        state: RuntimeState,snapshot: PushOutboundSnapshot,reservationToken: String?,
+    ): PushWorkflowResult {
+        val journal=checkNotNull(loadUploadJournal(db)) { "missing frozen upload journal" }
+        uploadJournal.guard(state,journal)
+        val frozen=journal.binding.operation
+        val generation=checkNotNull(state.validated.generation)
+        val outbox=outboxStateStore.loadBundleState()
+        check(journal.phase=="frozen" && outbox.state==outboxStatePrepared && outbox.sourceId==frozen.sourceId &&
+            outbox.sourceBundleId==frozen.sourceBundleId && snapshot.sourceBundleId==frozen.sourceBundleId &&
+            outbox.rowCount==snapshot.rows.size.toLong()) { "frozen upload ownership changed" }
+        check(generation.id==frozen.generationId && generation.fingerprint==frozen.generationFingerprint)
+        val workspace=OversqliteWorkspace(db,config)
+        val unit=applyUnit("push-buffers",0,state.sourceId)
+        val admit=httpBufferAdmission(state,reservationToken,workspace,unit,
+            reservationToken?.let { workspace.reserved(it) } ?: WorkspaceCharge())
+        val reply=if(journal.outcomeBytes>0) {
+            // An interrupted attempt already rebound the journal; settle from the stored evidence.
+            admit(2*journal.outcomeBytes+65536,32)
+            remoteApi.decodeUploadOutcome(uploadJournal.outcomeBody(),frozen,generation).also {
+                check(it.outcome.outcomeHash==journal.outcomeHash) { "retained outcome hash changed" }
+            }
+        } else remoteApi.fetchRetainedOutcome(frozen,generation,
+            state.admittedContract.limits.maxPushOutcomeDecodedBytes,admit).also {
+            uploadJournal.rebindToRetainedOutcome(state,journal,it)
+        }
+        log { "oversqlite pushPending recovering retained outcome sourceBundleId=${frozen.sourceBundleId} status=${reply.outcome.status}" }
+        val effect=reply.outcome.committed
+        if(effect==null) {
+            // Rejected or cancelled evidence binds the lost request, not these rows: keep the
+            // frozen intent pending without invoking rejection policy for it.
+            db.transaction(TransactionMode.IMMEDIATE) {
+                uploadJournal.guard(state,checkNotNull(loadUploadJournal(db)))
+                syncStateStore.requeueSnapshotRows(snapshot)
+                outboxStateStore.clearBundleAndRows(terminalDisposition=true)
+            }
+            acknowledgePending(state)
+            return PushWorkflowResult(PushOutcome.NO_CHANGE,emptySet())
+        }
+        val decoded=decodeCommittedRows(state,reply.rows)
+        val committed=CommittedPushBundle(effect.bundleSeq,frozen.sourceBundleId,effect.rowCount,effect.bundleHash)
+        stageStore.recordConfirmedBundle(state.sourceId,committed.sourceBundleId)
+        val decisionReservationBase=reservationToken?.let { workspace.reserved(it) }
+        val decisionContinuation=ReplayDecisionContinuation()
+        val updatedTables=try { applyExecutor.inApplyModeTransaction(state) { statementCache ->
+            openingMutationAuthority()?.beforeMutation(
+                OversqliteOpeningMutationKind.APPLY_PUSH_RESPONSE,
+            )
+            uploadJournal.guard(state,checkNotNull(loadUploadJournal(db)))
+            // Idempotent across work slices: an existing dirty row keeps its newer op and payload.
+            syncStateStore.requeueSnapshotRows(snapshot,statementCache=statementCache)
+            replayExecutor.applyCommittedBundle(
+                state = state,
+                uploadedRows = emptyList(),
+                committedRows = decoded,
+                committed = committed,
+                statementCache = statementCache,
+                reservationToken=reservationToken,
+                reservationBase=decisionReservationBase,
+                decisionContinuation=decisionContinuation,
+                satisfiedIntentAccepts=true,
+            )
+        } } finally { decisionContinuation.clear() }
+        acknowledgePending(state)
+        log { "oversqlite pushPending settled retained outcome bundleSeq=${committed.bundleSeq} updatedTables=$updatedTables" }
+        return PushWorkflowResult(
+            outcome = PushOutcome.COMMITTED,
+            updatedTables = updatedTables,
+            confirmedBundles = setOf(state.sourceId to committed.sourceBundleId),
+        )
     }
 
     private fun localOutcomeConflict(wire: PushConflictDetails): PushConflictDetails = wire.copy(

@@ -51,9 +51,11 @@ Current kinds:
 For `source_recovery`, the table also preserves:
 
 - the recovery reason
-- the rejected source id
-- the rejected source bundle id
-- whether frozen unsynced intent still lives in `_sync_outbox_*`
+- the reserved replacement source id
+- the staged replacement snapshot, once the server has accepted the replacement
+
+Pending intent itself stays with its ordinary owners while recovery is required: `_sync_dirty_rows`,
+`_sync_outbox_*` and `_sync_upload_journal`.
 
 ### 2.3 `_sync_source_state`
 
@@ -110,6 +112,18 @@ Trigger rules:
 3. validate FK closure and compute table ordering
 4. restore or create the current internal `sourceId`
 5. install triggers for managed tables
+
+`open()` also sets `PRAGMA synchronous = FULL` on the client connection and fails if the driver
+does not honor it. Freeze, settlement, acknowledgement and checkpoint commits are protocol state
+the server records too; a commit lost to power failure after the server accepted the matching
+request cannot be replayed exactly, so every commit must reach storage.
+
+`attach(userId)` against a scope that is already authoritative refuses with
+`AttachResult.BlockedLocalPendingData` while the anonymous database holds dirty rows, a frozen
+outbox or an upload journal. Anonymous data is seeded only into an uninitialized scope; it is never
+merged into existing server data and never discarded implicitly. `discardAnonymousLocalData()` is
+the explicit destructive exit: it clears managed tables, `_sync_row_state`, `_sync_dirty_rows` and
+the outbox of an anonymous database and keeps the current `sourceId`.
 
 Important identity rules:
 
@@ -192,6 +206,9 @@ Oversqlite chooses the internal mode:
   floor advance
 - create-time stale/out-of-order source failures and push-time source-sequence changes use
   rebuild-plus-rotate recovery
+
+Only the rebuild-plus-rotate mode may start with pending intent. It never strands or drops that
+intent; section 8 describes how it is carried. Every other mode keeps the strict clean gate.
 
 ### 5.6 `detach()` / `syncThenDetach()`
 
@@ -299,14 +316,37 @@ The most important recovery invariant is:
 
 - frozen `_sync_outbox_*` is durable unsynced intent
 
-For source-recovery-required cases:
+For source-recovery-required cases the server refuses the current source, so nothing can settle
+under it. Pending intent is every dirty row plus every frozen or rejected outbox row that no newer
+dirty row replaced. Explicit `rebuild()` is the exit:
 
-1. oversqlite freezes local intent into `_sync_outbox_*`
-2. ordinary sync fails closed
-3. explicit `rebuild()` stages and applies the authoritative snapshot
-4. oversqlite rotates to a fresh internal `sourceId`
-5. oversqlite rebinds `_sync_outbox_*` to that fresh source with `source_bundle_id = 1`
-6. later `pushPending()` resumes upload under the new source stream
+1. ordinary sync fails closed and the guard triggers refuse application writes
+2. `rebuild()` first gives the old source its ordinary chance: a frozen upload runs resolve, apply
+   and ack exactly as `pushPending()` would, and a pending acknowledgment is sent
+3. a terminal refusal of the source leaves the frozen request in place; the pinned snapshot guard
+   fingerprints the dirty count and outbox so nothing can change them while the snapshot is staged
+4. the snapshot is requested with `source_replacement`; the server admits it only while the old
+   source holds no unacknowledged outcome, which proves the frozen request was never applied
+5. the final writer installs and verifies the snapshot unchanged, then requeues each pending edit
+   into `_sync_dirty_rows`, writes the local value back to the business row, and deletes the
+   retired source's `_sync_upload_journal` and `_sync_outbox_*` rows. A `DELETE` of a row the
+   snapshot lacks is already satisfied. An edit made from the server state the snapshot still holds
+   is rebased onto the installed row version (`UPDATE`/`DELETE` when the snapshot holds the row,
+   `INSERT` when it does not). An edit whose row another source updated or deleted, or whose key
+   another source created, keeps its original operation and base version instead
+6. oversqlite rotates to the replacement `sourceId` in that same transaction
+7. later `pushPending()` freezes the carried intent as `source_bundle_id = 1` under the new source
+
+An edit that kept its original base is refused by the server as an ordinary `push_conflict`, so
+the configured resolver decides. Rebasing it would upload it over the other source's change with no
+decision. The frozen request is not rebound in place, because its encoded body and canonical hash
+would change. `OversqliteSourceRecoveryIntent` owns steps 5 and the explicit discard.
+
+If a requeued edit violates a foreign key or uniqueness constraint against the snapshot, or a stale
+edit has no valid original base left to keep, the final transaction rolls back and `rebuild()` fails with `PendingIntentUnsatisfiableException`. Intent, the
+staged snapshot and the recovery requirement stay intact. `discardPendingIntentForRecovery()` is
+the only discard: it runs on explicit request, returns the dropped rows, and while an upload journal
+exists requires the staged replacement snapshot from step 4.
 
 For committed-remote replay pruning below the retained floor:
 
@@ -324,7 +364,18 @@ For committed-remote replay pruning below the retained floor:
 - `rebuild()` is the only explicit recovery entry point
 - business-table triggers should never fire while authoritative rows are being applied
 - `last_bundle_seq_seen` advances only after authoritative replay succeeds locally
+- pull rejects a non-contiguous bundle sequence before applying anything, so the checkpoint can
+  never skip a committed bundle even if the server misbehaves
+- a kept local UPDATE that conflicts with a remote DELETE retries as an INSERT whose base is the
+  tombstone version; `KeepLocal` and `KeepMerged` never have to drop an edit because of a remote
+  delete
 - source-recovery-required state survives restart until explicit rebuild succeeds
+- source recovery never strands or silently drops pending intent: `rebuild()` carries it onto the
+  installed snapshot, and only `discardPendingIntentForRecovery()` may drop it
+- a carried edit never overwrites a change another source made while this source was refused: it
+  keeps its original base, and the server answers its upload with an ordinary conflict
+- the retired source's frozen request and acknowledgment obligation are released only inside the
+  final writer, after the server accepted the replacement source
 
 ## 10. Related Documents
 

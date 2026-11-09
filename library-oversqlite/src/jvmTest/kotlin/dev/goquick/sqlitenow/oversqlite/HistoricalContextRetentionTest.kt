@@ -49,9 +49,8 @@ internal class HistoricalContextRetentionTest : SurvivorTestSupport() {
                 assertFailsWith<CancellationException> { client.pushPending().getOrThrow() }
                 val context = scalarLong(db, "SELECT base_context_id FROM _sync_outbox_rows")
                 markSourceRecoveryRequired(db, SourceRecoveryReason.HISTORY_PRUNED)
-                val before = baselineQualificationVector(db, listOf("nodes"))
-                assertIs<PendingPushReplayException>(client.rebuild().exceptionOrNull())
-                assertEquals(before, baselineQualificationVector(db, listOf("nodes")))
+                // The frozen request keeps its historical context alive for as long as it is unsettled.
+                // Replacement waits for that request: it settles under the old source before any rotation.
                 repeat(3) { OversqliteProvenanceContextStore(db).cleanup() }
                 assertEquals(1L, scalarLong(db, "SELECT count(*) FROM _sync_provenance_contexts WHERE context_id=$context"))
                 assertEquals(oldSource, scalarText(db, "SELECT origin_source_id FROM _sync_provenance_contexts WHERE context_id=$context"))

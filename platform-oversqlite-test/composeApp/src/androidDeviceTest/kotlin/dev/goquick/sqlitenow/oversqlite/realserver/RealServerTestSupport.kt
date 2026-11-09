@@ -1010,6 +1010,8 @@ private class CoordinatedAndroidRealServerClient(
     override suspend fun setRecoveryMode(mode: RecoveryMode) = requireDelegate().setRecoveryMode(mode)
     override suspend fun retryRecovery() = requireDelegate().retryRecovery()
     override suspend fun detach() = requireDelegate().detach()
+    override suspend fun discardAnonymousLocalData() = requireDelegate().discardAnonymousLocalData()
+    override suspend fun discardPendingIntentForRecovery() = requireDelegate().discardPendingIntentForRecovery()
     override suspend fun pushPending() = requireDelegate().pushPending()
     override suspend fun pendingConflict() = requireDelegate().pendingConflict()
     override suspend fun readPushDependencyDiagnostic(diagnosticId: String, cursor: String?, pageSize: Int) =

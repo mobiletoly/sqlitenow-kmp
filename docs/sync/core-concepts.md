@@ -86,6 +86,14 @@ JS Node uses the same default provider with transient in-memory storage.
 - authorize a first local seed upload
 - start an authoritative empty scope
 - return `RetryLater`
+- return `BlockedLocalPendingData` when the remote scope is already authoritative but the
+  anonymous database still holds unsynced managed rows
+
+Anonymous local rows are uploaded only as the first seed of a scope that has no server data yet.
+They are never merged into an account that already has data, and `attach(userId)` never discards
+them on its own. When attach returns `BlockedLocalPendingData`, nothing has changed locally or
+remotely; the app must ask the user and then call `discardAnonymousLocalData()`, which permanently
+deletes the sync-managed local rows and pending intent, before attaching again.
 
 Call it whenever an authenticated session exists, not only on the first sign-in gesture.
 
@@ -175,9 +183,27 @@ frozen and uploaded first when safe; an unresolved upload returns a typed action
 preserving the app row, outbox, checkpoint, and rebuild gate. The checkpoint advances only in the
 final atomic snapshot apply.
 
-In source-recovery-required cases, `rebuild()` preserves frozen unsynced intent, rebuilds from the
-snapshot, rotates to a fresh internally generated source, and restores the frozen intent under that
-fresh source stream.
+When the server refuses the current source (`SourceRecoveryRequiredException`, for example after
+the source was retired or its upload sequence can no longer continue), ordinary push and pull stop
+and application writes to managed tables are refused until `rebuild()` succeeds. Unsynced edits are
+never dropped in this state. `rebuild()`:
+
+- first lets the old source settle and acknowledge an upload whose outcome the server still holds
+- installs the authoritative snapshot under a fresh internally generated source
+- keeps every remaining unsynced edit visible in your tables
+- leaves those edits pending, so the next `pushPending()` or `sync()` uploads them under the new
+  source
+- never lets such an edit overwrite another device's change: if another device changed, deleted or
+  created the same row while this device could not sync, or does so later, the upload goes through
+  the configured conflict resolver as usual
+
+An unsynced edit can be impossible to apply to the snapshot, for example a new child row whose
+parent another device deleted. `rebuild()` then fails with `PendingIntentUnsatisfiableException`
+and changes nothing. Oversqlite never discards such edits on its own. After explicit user consent,
+call `discardPendingIntentForRecovery()`: it permanently drops the unsynced edits, returns exactly
+which rows it dropped, and lets the next `rebuild()` install the authoritative state. While an
+upload is still unsettled it requires one earlier `rebuild()` attempt, because only the server's
+acceptance of the new source proves that upload was never applied.
 
 ## Diagnostics
 

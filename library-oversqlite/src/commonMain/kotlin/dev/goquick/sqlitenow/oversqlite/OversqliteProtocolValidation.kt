@@ -146,8 +146,10 @@ internal fun validatePullResponse(
     var previous = afterBundleSeq
     response.bundles.forEachIndexed { index, bundle ->
         validateBundle(bundle)
-        require(bundle.bundleSeq > previous) {
-            "pull response bundle_seq ${bundle.bundleSeq} is not strictly greater than previous $previous"
+        // Committed history is dense per user. The checkpoint advances to each applied bundle,
+        // so a gap here would silently skip remote changes; refuse it instead of trusting the server.
+        require(bundle.bundleSeq == previous + 1) {
+            "pull response bundle_seq ${bundle.bundleSeq} is not contiguous with previous $previous"
         }
         require(bundle.bundleSeq <= response.stableBundleSeq) {
             "pull response bundle_seq ${bundle.bundleSeq} exceeds stable_bundle_seq ${response.stableBundleSeq}"

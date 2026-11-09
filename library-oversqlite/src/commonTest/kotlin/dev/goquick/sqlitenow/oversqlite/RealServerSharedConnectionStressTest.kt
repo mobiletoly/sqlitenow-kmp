@@ -371,6 +371,7 @@ internal class RealServerSharedConnectionStressTest : RealServerSupport() {
             when (val attach = attach(userId).getOrThrow()) {
                 is AttachResult.Connected -> return
                 is AttachResult.RetryLater -> delay(maxOf(attach.retryAfterSeconds, 1L) * 1_000L)
+                is AttachResult.BlockedLocalPendingData -> error("attach(userId) refused: ${attach.pendingRowCount} unsynced anonymous rows")
             }
         }
         error("attach(userId) never reached Connected")

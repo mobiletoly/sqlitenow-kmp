@@ -176,6 +176,9 @@ final class SyncSampleViewModel: ObservableObject {
                 case let .retryLater(retryAfterSeconds):
                     statusText = "Attach retry in \(retryAfterSeconds)s"
                     return
+                case let .blockedLocalPendingData(pendingRowCount):
+                    statusText = "Attach blocked: \(pendingRowCount) unsynced local rows would be discarded"
+                    return
                 case let .unknown(raw):
                     throw SQLiteNowError.unknown(message: "Unknown attach result: \(raw)")
                 }

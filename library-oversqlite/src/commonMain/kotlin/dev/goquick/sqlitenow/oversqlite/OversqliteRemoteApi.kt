@@ -244,7 +244,7 @@ internal const val oversqlitePushResponseBodyHardLimit = 67_112_960L
 internal fun oversqliteResponseBodyHardLimit(path: String, status: Int): Long = when {
     status == HttpStatusCode.OK.value && (path == "/sync/pull" || path.startsWith("/sync/pull?")) ->
         oversqlitePullResponseBodyHardLimit
-    status == HttpStatusCode.OK.value && path in setOf("/sync/push", "/sync/push-outcomes/resolve") ->
+    status == HttpStatusCode.OK.value && path in setOf("/sync/push", "/sync/push-outcomes/resolve", "/sync/push-outcomes/retained") ->
         oversqlitePushResponseBodyHardLimit
     path.startsWith("/sync/push-outcomes/") -> 4096L
     else -> generationControlBodyLimit
@@ -577,9 +577,44 @@ internal class OversqliteRemoteApi(
             decodeJsonResponse<TerminalUploadReply>("push outcome","POST",path,call,maxResponseDecodedBytes,
                 successDecoder={decodeUploadOutcome(it,binding,selected)},
                 customError={status,raw ->
-                    // Nonterminal admission/transport errors cannot certify rejection.
-                    decodeSourceRecoveryRequiredExceptionOrNull(status,raw,binding.sourceId)
+                    // Nonterminal admission/transport errors cannot certify rejection. A mismatch
+                    // names a retained outcome of this source that only a sequence lookup can read.
+                    decodePushOutcomeMismatchExceptionOrNull(status,raw,binding)
+                        ?: decodeSourceRecoveryRequiredExceptionOrNull(status,raw,binding.sourceId)
                 })
+        })
+    }
+
+    /** Hash and token are discovered from the envelope; source, generation and sequence stay frozen. */
+    internal fun decodeRetainedOutcome(raw: String,frozen: PushOperationBinding,selected: SyncGeneration): TerminalUploadReply {
+        val outcome=decodePushOutcome(raw)
+        validateRetainedPushOutcome(outcome,frozen,selected)
+        val rows=outcome.committed?.let { OversqliteCompactCodec.decodeBundleRows(selected,it.rows) }.orEmpty()
+        rows.forEach(::validateBundleRow)
+        return TerminalUploadReply(raw,outcome,rows)
+    }
+
+    /**
+     * Sequence-only read of this source's retained terminal outcome after `push_outcome_mismatch`.
+     * It never consumes, cancels or acknowledges the sequence.
+     */
+    suspend fun fetchRetainedOutcome(frozen: PushOperationBinding,selected: SyncGeneration,maxResponseDecodedBytes: Long,
+        onBufferGrowth: (suspend (Long,Long) -> Unit)? = null): TerminalUploadReply {
+        val raw=recoveryControlJson.encodeToString(PushOutcomeRetainedRequest(frozen.sourceBundleId))
+        decodeOutcomeRetained(raw)
+        val body=prepareBoundedJsonBody(raw,4096L)
+        val path="/sync/push-outcomes/retained"
+        return executeLoggedStreamingCall("push retained outcome","POST",path,prepareCall={
+            http.preparePost(path.removePrefix("/")) {
+                attributes.put(recoveryExchangeKey,RecoveryExchange(beforeRecoveryExchange))
+                generationHeaders(frozen.sourceId,SyncGeneration(frozen.generationId,frozen.generationFingerprint,emptyList()))
+                acceptBoundedJsonResponse();setSelectedJsonBody(body)
+            }
+        },consume={call ->
+            onBufferGrowth?.let { call.call.attributes.put(pushBufferGrowthKey,PushBufferGrowth(it)) }
+            decodeJsonResponse<TerminalUploadReply>("push retained outcome","POST",path,call,maxResponseDecodedBytes,
+                successDecoder={decodeRetainedOutcome(it,frozen,selected)},
+                customError={status,raw -> decodeRetainedOutcomeLookupErrorOrNull(status,raw)})
         })
     }
 

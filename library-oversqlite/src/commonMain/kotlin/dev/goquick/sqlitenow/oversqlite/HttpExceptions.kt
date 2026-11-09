@@ -157,6 +157,58 @@ class PushConflictException(
         get() = response.conflict ?: error("push conflict response is missing conflict details")
 }
 
+/**
+ * The server already retains a terminal outcome at the frozen source sequence for a different
+ * request: an earlier freeze reached the server but its local commit was lost. The frozen request
+ * was never admitted, so recovery reads the retained outcome by sequence instead of failing.
+ */
+internal class PushOutcomeMismatchException(
+    val binding: PushOperationBinding,
+) : RuntimeException("server retains a different terminal outcome for the frozen source sequence"),
+    OversqliteCategorizedException {
+    override val category: OversqliteErrorCategory = OversqliteErrorCategory.STATE
+}
+
+internal fun decodePushOutcomeMismatchExceptionOrNull(
+    status: HttpStatusCode,
+    rawBody: String,
+    binding: PushOperationBinding,
+): PushOutcomeMismatchException? {
+    decodeErrorResponseOrNull(
+        status = status,
+        rawBody = rawBody,
+        expectedStatus = HttpStatusCode.Conflict,
+        expectedError = "push_outcome_mismatch",
+    ) ?: return null
+    return PushOutcomeMismatchException(binding)
+}
+
+private val retainedOutcomeLookupErrorStatuses = mapOf(
+    "push_outcome_absent" to 409,
+    "push_outcome_pending" to 409,
+    "push_outcome_mismatch" to 409,
+    "push_outcome_acknowledged" to 410,
+    "source_sequence_out_of_order" to 409,
+)
+
+/** No lookup error proves noncommit; each keeps the frozen request intact as a typed blocker. */
+internal fun decodeRetainedOutcomeLookupErrorOrNull(
+    status: HttpStatusCode,
+    rawBody: String,
+): OversqliteRemoteContractException? {
+    val error = runCatching { httpErrorJson.decodeFromString<ErrorResponse>(rawBody) }.getOrNull() ?: return null
+    if (retainedOutcomeLookupErrorStatuses[error.error] != status.value) return null
+    return OversqliteRemoteContractException(
+        code = error.error,
+        httpStatus = status.value,
+        operation = "push retained outcome",
+        remediation = "preserve_frozen_upload",
+        retryable = false,
+        generationId = null,
+        message = "retained outcome lookup failed: ${error.error}",
+    )
+}
+
 private val AUTH_HTTP_STATUSES = setOf(401, 403)
 
 internal fun DownloadHttpException.toHistoryPrunedOrNull(): HistoryPrunedException? {

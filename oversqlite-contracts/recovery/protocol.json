@@ -707,6 +707,78 @@
       "accepted": false
     }
   ],
+  "retainedRequests": [
+    {
+      "name": "valid",
+      "raw": "{\"source_bundle_id\":7}",
+      "accepted": true
+    },
+    {
+      "name": "int64-max",
+      "raw": "{\"source_bundle_id\":9223372036854775807}",
+      "accepted": true
+    },
+    {
+      "name": "missing-source_bundle_id",
+      "raw": "{}",
+      "accepted": false
+    },
+    {
+      "name": "null-source_bundle_id",
+      "raw": "{\"source_bundle_id\":null}",
+      "accepted": false
+    },
+    {
+      "name": "supplied-canonical_request_hash",
+      "raw": "{\"source_bundle_id\":7,\"canonical_request_hash\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"}",
+      "accepted": false
+    },
+    {
+      "name": "supplied-initialization_id",
+      "raw": "{\"source_bundle_id\":7,\"initialization_id\":null}",
+      "accepted": false
+    },
+    {
+      "name": "unknown",
+      "raw": "{\"source_bundle_id\":7,\"future\":true}",
+      "accepted": false
+    },
+    {
+      "name": "duplicate",
+      "raw": "{\"source_bundle_id\":7,\"source_bundle_id\":7}",
+      "accepted": false
+    },
+    {
+      "name": "zero",
+      "raw": "{\"source_bundle_id\":0}",
+      "accepted": false
+    },
+    {
+      "name": "negative",
+      "raw": "{\"source_bundle_id\":-1}",
+      "accepted": false
+    },
+    {
+      "name": "fraction",
+      "raw": "{\"source_bundle_id\":1.5}",
+      "accepted": false
+    },
+    {
+      "name": "quoted",
+      "raw": "{\"source_bundle_id\":\"7\"}",
+      "accepted": false
+    },
+    {
+      "name": "overflow",
+      "raw": "{\"source_bundle_id\":9223372036854775808}",
+      "accepted": false
+    },
+    {
+      "name": "array",
+      "raw": "[7]",
+      "accepted": false
+    }
+  ],
   "snapshotRequests": [
     {
       "name": "valid",
@@ -1762,6 +1834,50 @@
         "snapshots": 1,
         "history_commits": 0
       }
+    },
+    {
+      "name": "lost-freeze-mismatch-recovery",
+      "events": [
+        "freeze",
+        "committed",
+        "freeze_lost",
+        "freeze",
+        "mismatch",
+        "retained",
+        "settle",
+        "ack",
+        "freeze"
+      ],
+      "expected": {
+        "next_sequence": 2,
+        "ack_pending": false,
+        "frozen": true,
+        "outcome": false,
+        "snapshots": 0,
+        "history_commits": 1
+      }
+    },
+    {
+      "name": "lost-freeze-cancelled-retained",
+      "events": [
+        "freeze",
+        "cancelled",
+        "freeze_lost",
+        "freeze",
+        "mismatch",
+        "retained",
+        "settle",
+        "ack",
+        "freeze"
+      ],
+      "expected": {
+        "next_sequence": 2,
+        "ack_pending": false,
+        "frozen": true,
+        "outcome": false,
+        "snapshots": 0,
+        "history_commits": 0
+      }
     }
   ],
   "requestCounts": [
@@ -1823,6 +1939,32 @@
       ],
       "count": 2,
       "ackPending": true
+    },
+    {
+      "name": "lost-freeze-mismatch",
+      "events": [
+        "push",
+        "reopen",
+        "push",
+        "retained",
+        "local_disposition",
+        "ack",
+        "push",
+        "local_disposition",
+        "ack",
+        "pull"
+      ],
+      "requests": [
+        "POST /sync/push",
+        "POST /sync/push",
+        "POST /sync/push-outcomes/retained",
+        "POST /sync/push-outcomes/ack",
+        "POST /sync/push",
+        "POST /sync/push-outcomes/ack",
+        "GET /sync/pull"
+      ],
+      "count": 7,
+      "ackPending": false
     }
   ],
   "errors": [
@@ -1845,6 +1987,10 @@
     {
       "code": "push_outcome_too_large",
       "status": 413
+    },
+    {
+      "code": "push_outcome_absent",
+      "status": 409
     },
     {
       "code": "recovery_floor_ahead",

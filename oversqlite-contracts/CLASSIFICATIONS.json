@@ -99,7 +99,7 @@
       "fixture": "recovery/protocol.json",
       "goConsumer": "TestSharedRecoveryProtocolFixtures",
       "jvmConsumer": "SharedRecoveryProtocolFixtureTest",
-      "runtimeQualification": "pending C02-C07; workflow reducers are contract proof only",
+      "runtimeQualification": "pending C02-C07; workflow reducers are contract proof only. The retainedRequests family, the lost-freeze workflow/request-count traces and push_outcome_absent bind the sequence-only retained lookup (r0001 sections 3.2.1 and 6.1); actual lost-freeze convergence is Kotlin/Go runtime evidence.",
       "wireMarker": "v1",
       "legacySupport": false,
       "sourceOwnership": "Client upload and trusted writer source IDs are disjoint per scope; existing source_generation_conflict409 is contract-covered. Actual ownership, zero callback/receipt/effect mutation and cleanup/restart fences are V02server runtime obligations."

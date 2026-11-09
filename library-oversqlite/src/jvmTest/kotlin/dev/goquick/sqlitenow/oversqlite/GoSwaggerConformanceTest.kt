@@ -137,6 +137,13 @@ class GoSwaggerConformanceTest {
         listOf("/sync/capabilities", "/sync/push-sessions", "/sync/committed-bundles/").forEach { path ->
             assertFalse(path in paths, "$path must be absent")
         }
+        listOf("/sync/push-outcomes/resolve", "/sync/push-outcomes/retained", "/sync/push-outcomes/ack").forEach { path ->
+            assertTrue(path in paths, "$path must be a documented durable-outcome route")
+        }
+        val retained = schema("PushOutcomeRetainedRequest")
+        assertEquals(false, retained["additionalProperties"])
+        assertEquals(setOf("source_bundle_id"), properties(retained).keys)
+        assertRequired(retained, "source_bundle_id")
 
         val errorCodes = list(property(schema("ErrorResponse"), "error")["anyOf"], "ErrorResponse.error.anyOf")
             .map { stringMap(it, "ErrorResponse.error variant") }
@@ -153,6 +160,7 @@ class GoSwaggerConformanceTest {
             "push_outcome_pending",
             "push_outcome_acknowledged",
             "push_outcome_too_large",
+            "push_outcome_absent",
             "recovery_floor_ahead",
         ).forEach { code ->
             assertTrue(code in errorCodes, "$code must be a documented typed error")

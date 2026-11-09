@@ -235,6 +235,7 @@ class SQLiteNowSyncRuntimeAttachResult(
     val status: SQLiteNowSyncRuntimeSyncStatus?,
     val retryAfterSeconds: Long,
     val restore: SQLiteNowSyncRuntimeRestoreSummary?,
+    val pendingRowCount: Long = 0,
 )
 
 class SQLiteNowSyncRuntimeDetachOutcome(
@@ -669,6 +670,11 @@ class SQLiteNowSyncRuntimeClient private constructor(
     }
 
     @Throws(SQLiteNowSyncRuntimeException::class, CancellationException::class)
+    suspend fun discardAnonymousLocalData() = mapSyncRuntimeErrors {
+        inRuntimeScope { client.discardAnonymousLocalData().runtimeGet() }
+    }
+
+    @Throws(SQLiteNowSyncRuntimeException::class, CancellationException::class)
     suspend fun pushPending(): SQLiteNowSyncRuntimePushReport = mapSyncRuntimeErrors {
         inRuntimeScope {
             SwiftA3ConflictApplyProbe.aroundPendingUpload(client) {
@@ -1020,6 +1026,14 @@ private fun AttachResult.toRuntimeAttachResult(): SQLiteNowSyncRuntimeAttachResu
             status = null,
             retryAfterSeconds = retryAfterSeconds,
             restore = null,
+        )
+        is AttachResult.BlockedLocalPendingData -> SQLiteNowSyncRuntimeAttachResult(
+            kind = "blockedLocalPendingData",
+            outcome = null,
+            status = null,
+            retryAfterSeconds = 0,
+            restore = null,
+            pendingRowCount = pendingRowCount,
         )
     }
 

@@ -21,7 +21,7 @@ class SharedRecoveryProtocolFixtureTest {
     }
     @Test fun everyDeclaredFamilyAndAuthorityExecutes() {
         assertEquals(setOf("formatVersion", "contract", "hashProjection", "generation", "headers", "bindingCases", "outcomes", "outcomeInvalid",
-            "resolveRequests", "ackRequests", "snapshotRequests", "snapshots", "snapshotInvalid", "snapshotMetadataInvalid", "workflows", "requestCounts", "errors"), fixture.keys)
+            "resolveRequests", "ackRequests", "retainedRequests", "snapshotRequests", "snapshots", "snapshotInvalid", "snapshotMetadataInvalid", "workflows", "requestCounts", "errors"), fixture.keys)
         assertEquals("durable-recovery", fixture.getValue("contract").jsonPrimitive.content)
         assertEquals("protocol-integral-decimal-strings", fixture.getValue("hashProjection").jsonPrimitive.content)
         val file = oversqliteContractFixture("recovery/authority-pins.json")
@@ -67,9 +67,9 @@ class SharedRecoveryProtocolFixtureTest {
             val values = case.getValue("values").jsonArray.map { it.jsonPrimitive.content }
             assertEquals(case.getValue("accepted").jsonPrimitive.boolean, values == listOf(OVERSQLITE_PROTOCOL_VERSION))
         }
-        for (family in listOf("resolveRequests", "ackRequests", "snapshotRequests")) cases(family) { case ->
+        for (family in listOf("resolveRequests", "ackRequests", "retainedRequests", "snapshotRequests")) cases(family) { case ->
             val raw = case.getValue("raw").jsonPrimitive.content
-            val result = runCatching { when (family) { "resolveRequests" -> decodeOutcomeResolve(raw); "ackRequests" -> decodeOutcomeAck(raw); else -> decodeRecoverySnapshotRequest(raw) } }
+            val result = runCatching { when (family) { "resolveRequests" -> decodeOutcomeResolve(raw); "ackRequests" -> decodeOutcomeAck(raw); "retainedRequests" -> decodeOutcomeRetained(raw); else -> decodeRecoverySnapshotRequest(raw) } }
             assertEquals(case.getValue("accepted").jsonPrimitive.boolean, result.isSuccess, "${case.getValue("name")}: ${result.exceptionOrNull()}")
         }
     }
@@ -101,13 +101,18 @@ class SharedRecoveryProtocolFixtureTest {
     @Test fun resolveAckReopenAndSequenceTraces() {
         cases("workflows") { case ->
             var sequence = 1; var frozen = false; var outcome = false; var ack = false; var serverAck = false; var snapshots = 0; var history = 0
+            // The server retains one unacknowledged outcome; a lost local freeze leaves it without local evidence.
+            var serverRetained = false
             for (event in case.getValue("events").jsonArray.map { it.jsonPrimitive.content }) when (event) {
                 "freeze" -> { require(!frozen && !outcome && !ack); frozen = true }
-                "committed", "rejected", "cancelled" -> { require(frozen); outcome = true; if (event == "committed") history++ }
+                "committed", "rejected", "cancelled" -> { require(frozen); outcome = true; serverRetained = true; if (event == "committed") history++ }
+                "freeze_lost" -> { require(frozen); frozen = false; outcome = false }
+                "mismatch" -> require(frozen && !outcome && serverRetained)
+                "retained" -> { require(frozen && !outcome && serverRetained); outcome = true }
                 "settle" -> { require(outcome); frozen = false; outcome = false; ack = true }
-                "ack" -> { require(ack); ack = false; sequence++ }
+                "ack" -> { require(ack); ack = false; serverRetained = false; sequence++ }
                 "ack_lost" -> { require(ack); serverAck = true }
-                "duplicate_ack" -> { require(ack && serverAck); ack = false; sequence++ }
+                "duplicate_ack" -> { require(ack && serverAck); ack = false; serverRetained = false; sequence++ }
                 "snapshot" -> if (!frozen && !outcome && !ack) snapshots++
                 "unsafe", "reopen", "retire_rebind" -> Unit
                 else -> error("unevaluated event $event")
@@ -127,6 +132,7 @@ class SharedRecoveryProtocolFixtureTest {
                 "reopen" -> Unit
                 "push" -> requests += "POST /sync/push"
                 "resolve" -> requests += "POST /sync/push-outcomes/resolve"
+                "retained" -> requests += "POST /sync/push-outcomes/retained"
                 "ack" -> { require(ready); requests += "POST /sync/push-outcomes/ack"; ready = false }
                 "pull" -> requests += "GET /sync/pull"
                 else -> error("unevaluated dispatch $event")
@@ -137,7 +143,7 @@ class SharedRecoveryProtocolFixtureTest {
     }
     @Test fun errorsAndAllExistingCurrentFamiliesExecute() {
         val statuses = mapOf("protocol_version_mismatch" to 426, "push_outcome_mismatch" to 409, "push_outcome_pending" to 409,
-            "push_outcome_acknowledged" to 410, "push_outcome_too_large" to 413, "recovery_floor_ahead" to 409, "source_generation_conflict" to 409)
+            "push_outcome_acknowledged" to 410, "push_outcome_too_large" to 413, "push_outcome_absent" to 409, "recovery_floor_ahead" to 409, "source_generation_conflict" to 409)
         val errors = fixture.getValue("errors").jsonArray
         assertEquals(statuses.keys, errors.map { it.jsonObject.getValue("code").jsonPrimitive.content }.toSet())
         errors.forEach { assertEquals(statuses[it.jsonObject.getValue("code").jsonPrimitive.content], it.jsonObject.getValue("status").jsonPrimitive.int) }

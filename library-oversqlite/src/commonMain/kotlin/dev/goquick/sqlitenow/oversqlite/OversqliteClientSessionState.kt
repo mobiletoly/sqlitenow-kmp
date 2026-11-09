@@ -67,6 +67,15 @@ internal class OversqliteClientSessionState(
             require(db.scalarLong("PRAGMA foreign_keys") == 1L) {
                 "foreign keys must be enabled before opening sync"
             }
+            // Freeze, settlement, acknowledgement and checkpoint commits are protocol state the
+            // server also records. A commit lost to power failure after the server accepted the
+            // matching request cannot be replayed exactly, so every commit must reach storage.
+            // The pragma cannot change inside a transaction, and coordinated opening may already
+            // hold one on this connection: set it whenever possible and always verify.
+            if (!db.inTransaction()) db.execSQL("PRAGMA synchronous = FULL")
+            require(db.scalarLong("PRAGMA synchronous") >= 2L) {
+                "sync requires PRAGMA synchronous = FULL (or EXTRA) on this connection; set it before open()"
+            }
             lateinit var validated: ValidatedConfig
             var attachmentState: OversqliteAttachmentState? = null
             db.transaction(TransactionMode.IMMEDIATE) {

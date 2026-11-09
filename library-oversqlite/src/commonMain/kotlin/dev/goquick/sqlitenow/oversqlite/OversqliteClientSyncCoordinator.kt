@@ -161,32 +161,87 @@ internal class OversqliteClientSyncCoordinator(
         blockedReason = reason,
     )
 
-    internal suspend fun rebuild(): Result<RemoteSyncReport> = executeRebuildOperation("rebuild()")
+    internal suspend fun rebuild(): Result<RemoteSyncReport> =
+        executeRebuildOperation("rebuild()", carryPendingIntent = true)
 
     internal suspend fun rebuildForOpening(
         finalizer: suspend (String) -> Unit,
-    ): Result<RemoteSyncReport> = executeRebuildOperation("coordinated old-source recovery") {
+    ): Result<RemoteSyncReport> = executeRebuildOperation("coordinated old-source recovery", carryPendingIntent = false) {
         finalizer(attachmentStateStore.loadState().currentSourceId)
     }
 
     private suspend fun executeRebuildOperation(
         operationName: String,
+        carryPendingIntent: Boolean,
         finalizer: suspend () -> Unit = {},
     ): Result<RemoteSyncReport> = operations.runSyncOperation(operationName) {
-        downloadWorkflow.requireCleanSnapshotEntry()
+        // Only an explicit rebuild out of source recovery may start with pending intent, which it
+        // carries onto the installed snapshot. Every other rebuild, including coordinated opening,
+        // keeps the strict clean entry.
+        val carriesIntent = carryPendingIntent && operationStateStore.loadState().isSourceRecoveryRequired()
+        if (!carriesIntent) downloadWorkflow.requireCleanSnapshotEntry()
         contractGateway.requireAdmittedRuntime(operationName)
         val plan = selectRebuildPlan()
         operations.withOperationProgress(plan.operation) {
+            val rotatesWithIntent = carriesIntent && plan.outboxMode == SnapshotRebuildOutboxMode.SOURCE_RECOVERY
+            if (rotatesWithIntent) settleUploadUnderRetiringSource(operationName, plan.operation)
             val execution = executeSnapshotRebuild(
                 operationName = operationName,
                 operation = plan.operation,
                 rotatedSourceId = plan.rotatedSourceId,
                 outboxMode = plan.outboxMode,
                 sourceReplacementReason = plan.sourceReplacementReason,
+                carryPendingIntent = rotatesWithIntent,
                 finalizer = finalizer,
             )
             execution.report
         }
+    }
+
+    internal suspend fun discardPendingIntentForRecovery(): Result<DiscardedPendingIntent> =
+        operations.runSyncOperation("discardPendingIntentForRecovery()") {
+            session.requireConnectedRuntimeState("discardPendingIntentForRecovery()")
+            downloadWorkflow.discardPendingIntentForSourceRecovery()
+        }
+
+    /**
+     * Gives the old source one ordinary chance to account for an unsettled upload before rotation.
+     *
+     * A retained outcome settles and acknowledges exactly as pushPending() would. When the server
+     * refuses the source instead, the request stays frozen and the rotated rebuild carries its intent
+     * forward. That is safe because the server admits the replacement only while the old source holds
+     * no unacknowledged outcome.
+     */
+    private suspend fun settleUploadUnderRetiringSource(operationName: String, operation: OversqliteOperation) {
+        val state = session.requireConnectedRuntimeState(operationName)
+        if (pushWorkflow.frozenMayResume(state)) {
+            try {
+                executePush(operationName, operation)
+            } catch (_: SourceRecoveryRequiredException) {
+                // The server no longer accepts this source for the frozen request.
+            } catch (_: RebuildRequiredException) {
+                // The request settled. What it left dirty cannot upload until the rebuild completes.
+            }
+            return
+        }
+        try {
+            pushWorkflow.acknowledgePending(state)
+        } catch (error: Throwable) {
+            // A terminal refusal cannot improve under this source. The obligation stays durable and is
+            // released only once the server accepts the replacement, which proves nothing waits on it.
+            if (!isTerminalRefusalUnderRetiringSource(error)) throw error
+        }
+    }
+
+    private fun isTerminalRefusalUnderRetiringSource(error: Throwable): Boolean {
+        if ((error as? OversqliteCategorizedException)?.category == OversqliteErrorCategory.AUTH) return false
+        val status = when (error) {
+            is OversqliteRemoteContractException -> return !error.retryable
+            is UploadHttpException -> error.status.value
+            is DownloadHttpException -> error.status.value
+            else -> return false
+        }
+        return status in 400..499 && status != 408 && status != 429
     }
 
     private suspend fun executePush(
@@ -445,6 +500,7 @@ internal class OversqliteClientSyncCoordinator(
         rotatedSourceId: String?,
         outboxMode: SnapshotRebuildOutboxMode,
         sourceReplacementReason: String?,
+        carryPendingIntent: Boolean = false,
         finalizer: suspend () -> Unit = {},
     ): ClientRemoteExecution = executeRemoteDownload(operationName, operation) { state, onPhaseChanged ->
         downloadWorkflow.rebuildFromSnapshot(
@@ -454,6 +510,7 @@ internal class OversqliteClientSyncCoordinator(
             outboxMode,
             onPhaseChanged,
             finalizer,
+            carryPendingIntent,
         )
     }
 

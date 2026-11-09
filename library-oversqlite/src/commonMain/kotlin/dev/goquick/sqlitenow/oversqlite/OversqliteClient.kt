@@ -74,6 +74,12 @@ interface OversqliteClient {
      * - authorize the first local seed upload
      * - establish an authoritative empty scope
      * - ask the caller to retry later without treating the condition as auth failure
+     * - refuse with [AttachResult.BlockedLocalPendingData] when the remote scope is already
+     *   authoritative but this anonymous database still holds unsynced managed rows
+     *
+     * Anonymous local data is uploaded only as the first seed of an uninitialized scope. It is
+     * never merged into an existing account and never discarded implicitly; see
+     * [discardAnonymousLocalData].
      *
      * Call [attach] whenever an authenticated user session exists, not only on the initial
      * sign-in gesture.
@@ -81,6 +87,19 @@ interface OversqliteClient {
      * [attach] is account-scoped. It must not be used to change source identity.
      */
     suspend fun attach(userId: String): Result<AttachResult>
+
+    /**
+     * Permanently deletes every sync-managed local row, pending sync intent and sync baseline of
+     * an anonymous database so a following [attach] can use authoritative remote state.
+     *
+     * This is the only supported way past [AttachResult.BlockedLocalPendingData]. It is
+     * destructive and must follow explicit user consent. Unmanaged local tables and the current
+     * source identity are untouched.
+     *
+     * Requires successful [open]. Fails without changes while the database is attached to an
+     * account or a durable lifecycle operation is in progress.
+     */
+    suspend fun discardAnonymousLocalData(): Result<Unit>
 
     /**
      * Returns read-only source diagnostics.
@@ -174,6 +193,23 @@ interface OversqliteClient {
      */
     suspend fun rebuild(): Result<RemoteSyncReport>
 
+    /**
+     * Permanently drops the pending local edits that [rebuild] would otherwise carry across a source
+     * recovery, and reports exactly which rows were dropped.
+     *
+     * The ordinary exit from [SourceRecoveryRequiredException] is [rebuild] alone: it installs the
+     * authoritative snapshot under a replacement source and re-uploads every pending edit. Call this
+     * only when [rebuild] fails with [PendingIntentUnsatisfiableException], or when the user explicitly
+     * chooses to abandon unsynced edits. It is destructive, must follow explicit user consent and never
+     * runs implicitly. Business rows keep their local values until the following [rebuild] replaces
+     * them with authoritative state.
+     *
+     * Requires an attached client in the source-recovery-required state. While an upload is still
+     * unsettled it also requires a previous [rebuild] attempt, because only the server's acceptance of
+     * the replacement source proves that the upload was never applied.
+     */
+    suspend fun discardPendingIntentForRecovery(): Result<DiscardedPendingIntent>
+
     /** Releases client-owned resources. */
     fun close()
 }
@@ -194,6 +230,19 @@ sealed interface AttachResult {
      */
     data class RetryLater(
         val retryAfterSeconds: Long,
+    ) : AttachResult
+
+    /**
+     * Attachment was refused because the server scope is already authoritative while this
+     * anonymous database still holds [pendingRowCount] unsynced managed rows or pending sync
+     * intent. Nothing was changed locally or remotely.
+     *
+     * Oversqlite does not merge anonymous local data into an existing account and never discards
+     * it implicitly. Resolve by calling [OversqliteClient.discardAnonymousLocalData] after explicit
+     * user consent, then call [OversqliteClient.attach] again.
+     */
+    data class BlockedLocalPendingData(
+        val pendingRowCount: Long,
     ) : AttachResult
 }
 
@@ -316,6 +365,22 @@ data class SourceInfo(
     val rebuildRequired: Boolean,
     val sourceRecoveryRequired: Boolean,
     val sourceRecoveryReason: SourceRecoveryReason? = null,
+)
+
+/** Result of [OversqliteClient.discardPendingIntentForRecovery]: every pending edit that was dropped. */
+data class DiscardedPendingIntent(
+    val rows: List<DiscardedIntentRow>,
+)
+
+/**
+ * One dropped pending edit. [keyJson] is the canonical local sync key object of the row and [op] is
+ * `INSERT`, `UPDATE` or `DELETE`.
+ */
+data class DiscardedIntentRow(
+    val schema: String,
+    val table: String,
+    val keyJson: String,
+    val op: String,
 )
 
 enum class SourceRecoveryReason {

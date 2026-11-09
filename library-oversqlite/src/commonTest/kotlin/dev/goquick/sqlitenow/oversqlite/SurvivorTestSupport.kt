@@ -11,25 +11,20 @@ internal abstract class SurvivorTestSupport : CrossTargetSyncTestSupport() {
         BundleRow("main", "nodes", mapOf("id" to "C"), "UPDATE", 2,
             Json.parseToJsonElement("""{"id":"C","name":"child","parent_id":"Q"}""")),
     )
-    // Historical snapshot fixtures first prove F blocks replacement, then use
-    // ordinary resolve/settlement/ack before testing clean S work.
+    // A frozen request whose committed reply was lost settles through ordinary resolve, apply and
+    // ack under its original source. These fixtures then exercise rotated snapshot work on a clean
+    // scope; SourceRecoveryPreservedIntentTest owns the case where that source is refused instead.
     protected suspend fun settleFrozenBeforeCleanRecovery(db: SafeSQLiteConnection,
         client: DefaultOversqliteClient, server: MockSyncServer) {
         markSourceRecoveryRequired(db, SourceRecoveryReason.HISTORY_PRUNED)
-        val tables = listOf("nodes", "_sync_row_state", "_sync_relationships", "_sync_dirty_rows",
-            "_sync_outbox_rows", "_sync_outbox_bundle", "_sync_upload_journal", "_sync_source_state", "_sync_conflict_state")
-        val before = baselineQualificationVector(db, tables)
         val creates = server.snapshotSessionCreateRequestCount
         val resolves = server.resolveRequests.size
         val acks = server.ackRequests.size
-        assertIs<PendingPushReplayException>(client.rebuild().exceptionOrNull())
-        val after = baselineQualificationVector(db, tables)
-        assertEquals(before, after, "blocked S preserves the complete business and protocol vector")
-        assertEquals(creates, server.snapshotSessionCreateRequestCount)
-        assertEquals(resolves, server.resolveRequests.size)
-        assertEquals(acks, server.ackRequests.size)
         server.beforePushResponse = null
         client.pushPending().getOrThrow() // resolve the actual retained committed outcome and settle/ack
+        assertEquals(resolves + 1, server.resolveRequests.size)
+        assertEquals(acks + 1, server.ackRequests.size)
+        assertEquals(creates, server.snapshotSessionCreateRequestCount, "settlement never requests a snapshot")
         assertEquals(0L, scalarLong(db, "SELECT count(*) FROM _sync_dirty_rows"))
         assertEquals(0L, scalarLong(db, "SELECT count(*) FROM _sync_outbox_rows"))
         assertEquals(0L, scalarLong(db, "SELECT count(*) FROM _sync_upload_journal"))

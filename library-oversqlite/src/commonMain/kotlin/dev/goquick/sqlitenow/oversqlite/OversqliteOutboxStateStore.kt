@@ -262,6 +262,18 @@ internal class OversqliteOutboxStateStore(
         db.execSQL("UPDATE _sync_outbox_bundle SET state='rejected' WHERE singleton_key=1")
     }
 
+    /**
+     * Releases the frozen request, its journal and any acknowledgment obligation bound to a source the
+     * server has replaced. Replacement is admitted only while that source holds no unacknowledged
+     * outcome, so none of them can be needed again. The caller has already requeued or dropped the
+     * intent these rows carried.
+     */
+    suspend fun releaseRetiredSourceUpload(statementCache: StatementCache? = null) {
+        db.withPreparedStatement("DELETE FROM _sync_upload_journal WHERE singleton_key=1", statementCache) { it.step() }
+        clearRows(statementCache)
+        persistBundleState(OversqliteOutboxBundleState(), statementCache)
+    }
+
     suspend fun rebindBundleSource(
         sourceId: String,
         sourceBundleId: Long,

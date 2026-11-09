@@ -197,7 +197,10 @@ internal class OversqliteClientLifecycleCoordinator(
                     }
 
                     "remote_authoritative" -> {
-                        beginRemoteReplace(requestedUserId, sourceId)
+                        beginRemoteReplace(requestedUserId, sourceId)?.let { blocked ->
+                            session.sessionConnected = false
+                            return@withOperationProgress blocked
+                        }
                         val result = finalizeRemoteReplace(
                             validated,
                             session.loadDurableLifecycleView(),
@@ -440,19 +443,50 @@ internal class OversqliteClientLifecycleCoordinator(
         remoteApi.deleteSnapshotSessionBestEffort(snapshotId, sourceId)
     }
 
-    private suspend fun beginRemoteReplace(userId: String, sourceId: String) {
-        db.transaction(TransactionMode.IMMEDIATE) {
-            val outboxState = outboxStateStore.loadBundleState()
-            val pendingOutboundCount = outboxStateStore.countRows()
-            if (outboxState.state != outboxStateNone || pendingOutboundCount != 0L) {
-                throw PendingPushReplayException(pendingOutboundCount)
+    /**
+     * Starts replacing anonymous local state with the authoritative remote scope, or returns the
+     * blocker when unsynced local data exists. Replacement cannot merge anonymous intent and must
+     * never discard it implicitly, so the decision is made under the writer lock where no
+     * concurrent application write can slip past it.
+     */
+    private suspend fun beginRemoteReplace(
+        userId: String,
+        sourceId: String,
+    ): AttachResult.BlockedLocalPendingData? {
+        return db.transaction(TransactionMode.IMMEDIATE) {
+            val pendingRowCount = session.pendingLocalChangeCount()
+            if (pendingRowCount > 0L) {
+                return@transaction AttachResult.BlockedLocalPendingData(pendingRowCount)
             }
             attachmentStateStore.persistAnonymousState(sourceId)
             operationStateStore.persistState(
                 OversqliteOperationState(kind = operationKindRemoteReplace, targetUserId = userId),
             )
-            syncStateStore.clearDirtyRows()
+            null
         }
+    }
+
+    internal suspend fun discardAnonymousLocalData(): Result<Unit> = operations.runExclusiveOperation {
+        session.ensureOpened("discardAnonymousLocalData()")
+        val validated = session.requireValidatedConfig()
+        val preview = session.loadDurableLifecycleView()
+        check(!preview.isAttached) {
+            "discardAnonymousLocalData() requires an anonymous database; detach the attached account first"
+        }
+        check(preview.operation.kind == operationKindNone) {
+            "discardAnonymousLocalData() cannot run while ${preview.operation.kind} is in progress"
+        }
+        stageStore.clearPushPlanForLifecycle()
+        db.transaction(TransactionMode.IMMEDIATE) {
+            val state = session.loadDurableLifecycleView()
+            check(!state.isAttached && state.operation.kind == operationKindNone) {
+                "local lifecycle state changed before anonymous data could be discarded"
+            }
+            db.withStatementCache { statementCache ->
+                clearFullLocalSyncState(validated, statementCache)
+            }
+        }
+        notifyUpdatedTables(managedTableNames(validated).toSet())
     }
 
     private suspend fun finalizeRemoteReplace(

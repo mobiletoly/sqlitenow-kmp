@@ -911,13 +911,27 @@ internal class PlatformParityTest : PlatformCrossTargetTestSupport() {
             assertEquals("platform-rotated-device", scalarText(activeDb, "SELECT replacement_source_id FROM _sync_operation_state"))
             assertEquals(sourceBefore, scalarText(activeDb, "SELECT current_source_id FROM _sync_attachment_state"))
 
-            val frozen = retainedDatabaseVector(activeDb.connection())
-            val requests = server.requestCounts.toMap()
-            repeat(2) {
-                assertFailsWith<PendingPushReplayException> { activeClient.rebuild().getOrThrow() }
-                assertEquals(frozen, retainedDatabaseVector(activeDb.connection()))
-                assertEquals(requests, server.requestCounts, "dirty source recovery must not dispatch snapshot or outcome controls")
-            }
+            // The refused request stays frozen with its intent. Rebuild gives the old source one more
+            // ordinary chance, then installs the snapshot under the server-named replacement and keeps
+            // the edit pending there. Source recovery never strands or drops it.
+            assertEquals(1L, scalarLong(activeDb, "SELECT COUNT(*) FROM _sync_upload_journal WHERE phase='frozen'"))
+            activeClient.rebuild().getOrThrow()
+            assertEquals(
+                listOf("platform-rotated-device"),
+                server.requestedSnapshotSourceReplacements.map { it.newSourceId },
+            )
+            assertEquals("platform-rotated-device", scalarText(activeDb, "SELECT current_source_id FROM _sync_attachment_state"))
+            assertEquals("Platform Rotated", scalarText(activeDb, "SELECT name FROM users WHERE id = 'u1'"))
+            assertEquals(1L, scalarLong(activeDb, "SELECT COUNT(*) FROM _sync_dirty_rows"))
+            assertEquals(0L, scalarLong(activeDb, "SELECT COUNT(*) FROM _sync_upload_journal"))
+            assertEquals(0L, scalarLong(activeDb, "SELECT COUNT(*) FROM _sync_outbox_rows"))
+
+            server.sourceRetiredOnPush = null
+            activeClient.pushPending().getOrThrow()
+            assertEquals("platform-rotated-device", server.requestSourceIds.last { it.first == "/sync/push" }.second)
+            assertEquals(0L, scalarLong(activeDb, "SELECT COUNT(*) FROM _sync_dirty_rows"))
+            verifyClient.pullToStable().getOrThrow()
+            assertEquals("Platform Rotated", scalarText(verifyDb, "SELECT name FROM users WHERE id = 'u1'"))
         } finally {
             activeHttp.close()
             verifyHttp.close()
@@ -964,13 +978,10 @@ internal class PlatformParityTest : PlatformCrossTargetTestSupport() {
             assertFailsWith<CancellationException> { activeClient.pushPending().getOrThrow() }
             assertEquals("platform-rotated-device", scalarText(activeDb, "SELECT replacement_source_id FROM _sync_operation_state"))
             assertEquals(sourceBefore, scalarText(activeDb, "SELECT current_source_id FROM _sync_attachment_state"))
-            val frozen = retainedDatabaseVector(activeDb.connection())
-            val requests = server.requestCounts.toMap()
-            assertFailsWith<PendingPushReplayException> { activeClient.rebuild().getOrThrow() }
-            assertEquals(frozen, retainedDatabaseVector(activeDb.connection()))
-            assertEquals(requests, server.requestCounts)
+            // Rotation waits for the frozen request's own outcome: rebuild resolves, settles and
+            // acknowledges it under the original source before it requests the replacement snapshot.
             val direct = server.pushRequestCount
-            activeClient.pushPending().getOrThrow()
+            activeClient.rebuild().getOrThrow()
             assertEquals(direct, server.pushRequestCount, "retained F resolves; it is not retransmitted")
             assertEquals(1, server.requestCounts["/sync/push-outcomes/resolve"])
             assertEquals(1, server.requestCounts["/sync/push-outcomes/ack"])
@@ -978,7 +989,6 @@ internal class PlatformParityTest : PlatformCrossTargetTestSupport() {
             assertEquals(0L, scalarLong(activeDb, "SELECT COUNT(*) FROM _sync_outbox_rows"))
             assertEquals(outboxStateNone, scalarText(activeDb, "SELECT state FROM _sync_outbox_bundle"))
             assertEquals(0L, scalarLong(activeDb, "SELECT COUNT(*) FROM _sync_dirty_rows"))
-            activeClient.rebuild().getOrThrow()
 
             assertEquals(
                 listOf("platform-rotated-device"),

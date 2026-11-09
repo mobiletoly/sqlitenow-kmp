@@ -281,6 +281,8 @@ class DefaultOversqliteClient private constructor(
     override suspend fun attach(userId: String): Result<AttachResult> = diagnosticSyncResult(config, "sync.attach", db) { lifecycleCoordinator.attach(userId) }
     override suspend fun syncStatus(): Result<SyncStatus> = diagnosticSyncResult(config, "sync.syncStatus", db) { syncCoordinator.syncStatus() }
     override suspend fun detach(): Result<DetachOutcome> = diagnosticSyncResult(config, "sync.detach", db) { lifecycleCoordinator.detach() }
+    override suspend fun discardAnonymousLocalData(): Result<Unit> =
+        diagnosticSyncResult(config, "sync.discardAnonymousLocalData", db) { lifecycleCoordinator.discardAnonymousLocalData() }
     override suspend fun pushPending(): Result<PushReport> = diagnosticSyncResult(config, "sync.pushPending", db) { syncCoordinator.pushPending() }
     // Discharge only the already frozen operation before mutable U0 admission.
     internal suspend fun finishExistingUploadForOpening(): Result<Unit> =
@@ -327,6 +329,8 @@ class DefaultOversqliteClient private constructor(
     override suspend fun sync(): Result<SyncReport> = diagnosticSyncResult(config, "sync.sync", db) { syncCoordinator.sync() }
     override suspend fun syncThenDetach(): Result<SyncThenDetachResult> = diagnosticSyncResult(config, "sync.syncThenDetach", db) { syncCoordinator.syncThenDetach() }
     override suspend fun rebuild(): Result<RemoteSyncReport> = diagnosticSyncResult(config, "sync.rebuild", db) { syncCoordinator.rebuild() }
+    override suspend fun discardPendingIntentForRecovery(): Result<DiscardedPendingIntent> =
+        diagnosticSyncResult(config, "sync.discardPendingIntentForRecovery", db) { syncCoordinator.discardPendingIntentForRecovery() }
 
     internal suspend fun rebuildForOpening(finalizer: suspend (String) -> Unit): Result<RemoteSyncReport> =
         syncCoordinator.rebuildForOpening(finalizer)

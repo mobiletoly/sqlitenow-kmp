@@ -362,6 +362,10 @@ private suspend fun attachUntilConnected(
     repeat(sampleAttachMaxAttempts) { attempt ->
         when (val attach = client.attach(user).getOrThrow()) {
             is AttachResult.Connected -> return attach
+            is AttachResult.BlockedLocalPendingData -> throw IllegalStateException(
+                "Attach refused for user=$user: ${attach.pendingRowCount} unsynced anonymous rows " +
+                    "would be discarded; ask the user, then call discardAnonymousLocalData()"
+            )
             is AttachResult.RetryLater -> {
                 if (attempt == sampleAttachMaxAttempts - 1) {
                     throw IllegalStateException(

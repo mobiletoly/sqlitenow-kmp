@@ -224,6 +224,9 @@ final class SyncFixtureRealserverTests: XCTestCase {
         case let .retryLater(retryAfterSeconds):
             XCTFail("Expected connected attach result, got retryLater(\(retryAfterSeconds)).", file: file, line: line)
             throw RealserverSmokeError.unexpectedAttachResult("retryLater(\(retryAfterSeconds))")
+        case let .blockedLocalPendingData(pendingRowCount):
+            XCTFail("Expected connected attach result, got blockedLocalPendingData(\(pendingRowCount)).", file: file, line: line)
+            throw RealserverSmokeError.unexpectedAttachResult("blockedLocalPendingData(\(pendingRowCount))")
         case let .unknown(kind):
             XCTFail("Expected connected attach result, got unknown(\(kind)).", file: file, line: line)
             throw RealserverSmokeError.unexpectedAttachResult("unknown(\(kind))")
@@ -245,6 +248,8 @@ final class SyncFixtureRealserverTests: XCTestCase {
             return restore
         case let .retryLater(retryAfterSeconds):
             throw RealserverSmokeError.unexpectedAttachResult("retryLater(\(retryAfterSeconds))")
+        case let .blockedLocalPendingData(pendingRowCount):
+            throw RealserverSmokeError.unexpectedAttachResult("blockedLocalPendingData(\(pendingRowCount))")
         case let .unknown(kind):
             throw RealserverSmokeError.unexpectedAttachResult("unknown(\(kind))")
         }

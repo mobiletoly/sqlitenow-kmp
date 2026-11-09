@@ -2502,24 +2502,33 @@ internal class OrdinarySafetyPlatformTest : PlatformCrossTargetTestSupport() {
                     OversqliteAttachmentStateStore(db.connection()).setRebuildRequired(true)
                     OversqliteOperationStateStore(db.connection()).persistState(OversqliteOperationState(kind = operationKindSourceRecovery,
                         reason = SourceRecoveryReason.HISTORY_PRUNED.toPersistedOperationReason(), replacementSourceId = replacement))
-                    val frozen = retainedDatabaseVector(db.connection())
-                    val requests = server.requestCounts.toMap()
                     val workspace = OversqliteWorkspace(db.connection(), cfg)
                     val unit = applyUnit("author-prepared-recovery", 0, "")
                     val usage = workspace.usage(unit)
                     assertTrue(usage.entries > 1 && usage.bytes > 536)
                     assertTrue(usage.entries <= cfg.maxSyncWorkspaceEntries && usage.bytes <= cfg.maxSyncWorkspaceBytes)
-                    repeat(2) {
-                        assertIs<PendingPushReplayException>(client.rebuild().exceptionOrNull())
-                        assertEquals(frozen, retainedDatabaseVector(db.connection()), "prepared/committed=$committed full schema, all typed retained owners, F/B/L and recovery reservations stay exact")
-                        assertEquals(requests, server.requestCounts, "no dirty recovery snapshot or hidden upload")
-                        assertEquals(rows, OversqliteOutboxStateStore(db.connection()).loadRows())
-                        assertEquals(bundle, OversqliteOutboxStateStore(db.connection()).loadBundleState())
-                        assertEquals(wire, scalarText(db, "SELECT CAST(request_body AS TEXT) FROM _sync_upload_journal"))
-                        assertEquals(usage, workspace.usage(unit), "blocked recovery retains every charged owner")
+                    // Requiring source recovery leaves the frozen request, its captures and its charges intact.
+                    assertEquals(rows, OversqliteOutboxStateStore(db.connection()).loadRows())
+                    assertEquals(bundle, OversqliteOutboxStateStore(db.connection()).loadBundleState())
+                    assertEquals(wire, scalarText(db, "SELECT CAST(request_body AS TEXT) FROM _sync_upload_journal"))
+                    assertEquals(usage, workspace.usage(unit), "pending recovery retains every charged owner")
+                    println("ORDINARY_SCENARIO ${webRuntimeKind()} preparedOutboxSurvivesSourceRecovery committed=$committed/frozen-intact")
+                    if (!committed) {
+                        // The server never committed this request. Rebuild gives the old source its ordinary
+                        // chance, which cancels the request, then carries the edit onto the snapshot installed
+                        // under the replacement source instead of refusing or dropping it.
+                        assertEquals(RemoteSyncOutcome.APPLIED_SNAPSHOT, client.rebuild().getOrThrow().outcome)
+                        assertEquals(replacement, scalarText(db, "SELECT current_source_id FROM _sync_attachment_state"))
+                        assertEquals("frozen L", scalarText(db, "SELECT name FROM nodes WHERE id='P'"))
+                        assertEquals("UPDATE", scalarText(db, "SELECT op FROM _sync_dirty_rows WHERE key_json='{\"id\":\"P\"}'"))
+                        for (table in listOf("_sync_upload_journal", "_sync_outbox_rows")) assertEquals(0L, scalarLong(db, "SELECT count(*) FROM $table"))
+                        assertEquals(OversqliteOperationState(), OversqliteOperationStateStore(db.connection()).loadState())
+                        client.pushPending().getOrThrow()
+                        assertEquals(replacement, server.requestSourceIds.last { it.first == "/sync/push" }.second)
+                        assertEquals(0L, scalarLong(db, "SELECT count(*) FROM _sync_dirty_rows"))
+                        println("ORDINARY_SCENARIO ${webRuntimeKind()} preparedOutboxSurvivesSourceRecovery committed=false/carried-to-replacement")
+                        continue
                     }
-                    println("ORDINARY_SCENARIO ${webRuntimeKind()} preparedOutboxSurvivesSourceRecovery committed=$committed/full-refusal")
-                    if (!committed) continue
                     client.pushPending().getOrThrow()
                     assertEquals(2, server.pushRequestCount, "settle original C by resolve, with no retransmission")
                     assertEquals(1, server.requestCounts["/sync/push-outcomes/resolve"])

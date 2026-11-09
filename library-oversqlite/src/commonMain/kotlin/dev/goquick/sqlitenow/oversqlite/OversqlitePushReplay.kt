@@ -165,13 +165,16 @@ internal class OversqlitePushReplayExecutor(
         reservationToken: String? = null,
         reservationBase: WorkspaceCharge? = null,
         decisionContinuation: ReplayDecisionContinuation? = null,
+        // Lost-freeze recovery settles a retained outcome that no frozen row produced. Local
+        // intent whose live state already equals the committed effect is satisfied by it.
+        satisfiedIntentAccepts: Boolean = false,
     ): Set<String> {
         require(committedRows.size.toLong() == committed.rowCount) {
             "committed push replay row count ${committedRows.size} does not match expected row_count ${committed.rowCount}"
         }
         requireCommittedEffectCoverage(uploadedRows, committedRows)
 
-        val decisions = buildReplayPlans(state, uploadedRows, committedRows, statementCache,reservationToken,reservationBase,decisionContinuation)
+        val decisions = buildReplayPlans(state, uploadedRows, committedRows, statementCache,reservationToken,reservationBase,decisionContinuation,satisfiedIntentAccepts)
         val plans = decisions.plans
         val acknowledgementOnly = canAcknowledgeWithoutBusinessWrites(state, committedRows, plans, statementCache)
         // Strategy is part of the derived unit: a resumed writer must not reuse
@@ -316,6 +319,7 @@ internal class OversqlitePushReplayExecutor(
         reservationToken: String?,
         reservationBase: WorkspaceCharge?,
         continuation: ReplayDecisionContinuation?,
+        satisfiedIntentAccepts: Boolean,
     ): ReplayDecisionSet {
         val base=reservationBase ?: if(reservationToken!=null) bundleApplier.survivors.reservationCharge(reservationToken) else WorkspaceCharge()
         if (continuation?.plans != null && reservationToken != null) {
@@ -387,6 +391,11 @@ internal class OversqlitePushReplayExecutor(
                 )
                 if (!dirty.exists) continue
                 val desired = localStore.serializeExistingRow(effect.tableName, effect.localPk, statementCache)
+                if (satisfiedIntentAccepts && liveStateEqualsEffect(state, effect, desired)) {
+                    put(ref, UploadedReplayPlan(ref, ReplayRowAction.AcceptAuthoritative,
+                        ReplayPlanDiagnostics(true, false, desired, true, dirty.payload)))
+                    continue
+                }
                 put(
                     ref,
                     UploadedReplayPlan(
@@ -427,6 +436,17 @@ internal class OversqlitePushReplayExecutor(
                 if (primaryFailure != null) primaryFailure.addSuppressed(cleanup) else throw cleanup
             }
         }
+    }
+
+    private fun liveStateEqualsEffect(state: RuntimeState, effect: CommittedReplayRow, livePayload: String?): Boolean {
+        if (effect.op == "DELETE") return livePayload == null
+        if (livePayload == null) return false
+        val tableInfo = state.validated.tableInfoByName[effect.tableName.lowercase()]
+            ?: error("missing validated table info for " + safeSnapshotDiagnosticIdentifier(effect.tableName))
+        return OversqliteValueCodec.equivalentPayloadTexts(
+            tableInfo, livePayload, effect.payload,
+            PayloadSource.LOCAL_STATE, PayloadSource.AUTHORITATIVE_WIRE, json,
+        )
     }
 
     private suspend fun restoreDirtyBusinessRows(

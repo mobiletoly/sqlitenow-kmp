@@ -1995,16 +1995,16 @@ internal class CrossTargetSyncIntegrationTest : CrossTargetSyncTestSupport() {
             val restartedClient = newClient(db, http)
             restartedClient.open().getOrThrow()
             restartedClient.attach("user-1").getOrThrow()
-            val frozen=baselineQualificationVector(db,listOf("users","posts","_sync_upload_journal"))
             val snapshots=server.snapshotSessionCreateRequestCount
             val resolves=server.resolveRequests.size;val acks=server.ackRequests.size
-            assertTrue(restartedClient.rebuild().isFailure)
-            assertEquals(frozen,baselineQualificationVector(db,listOf("users","posts","_sync_upload_journal")))
-            assertEquals(snapshots,server.snapshotSessionCreateRequestCount)
-            assertEquals(resolves,server.resolveRequests.size);assertEquals(acks,server.ackRequests.size)
-            restartedClient.pushPending().getOrThrow()
-            assertEquals(1,server.resolveRequests.size)
+            // Rotation waits for the frozen request's own outcome: rebuild resolves, settles and
+            // acknowledges it under the original source before it requests the replacement snapshot.
             restartedClient.rebuild().getOrThrow()
+            assertEquals(resolves+1,server.resolveRequests.size);assertEquals(acks+1,server.ackRequests.size)
+            assertEquals(1,server.resolveRequests.size)
+            assertEquals(snapshots+1,server.snapshotSessionCreateRequestCount)
+            assertEquals(0L,scalarLong(db,"SELECT count(*) FROM _sync_upload_journal"))
+            assertEquals(0L,scalarLong(db,"SELECT count(*) FROM _sync_outbox_rows"))
 
             assertEquals(
                 listOf("server-rotated-device"),

@@ -47,24 +47,31 @@ internal class SnapshotRecoveryTest : SurvivorTestSupport() {
             assertFailsWith<CancellationException> {client.pushPending().getOrThrow()}
             val rows=OversqliteOutboxStateStore(db).loadRows()
             val hash=scalarText(db,"SELECT canonical_request_hash FROM _sync_outbox_bundle")
+            val sourceBefore=scalarText(db,"SELECT current_source_id FROM _sync_attachment_state")
             markSourceRecoveryRequired(db,SourceRecoveryReason.HISTORY_PRUNED)
-            val before=baselineQualificationVector(db,listOf("nodes","_sync_upload_journal"))
-            val creates=server.snapshotSessionCreateRequestCount
-            assertIs<PendingPushReplayException>(client.rebuild().exceptionOrNull())
-            assertEquals(creates,server.snapshotSessionCreateRequestCount)
-            val after=baselineQualificationVector(db,listOf("nodes","_sync_upload_journal"))
-            assertEquals(before,after,"pending F preserves the complete business and protocol vector")
-            val recovered=OversqliteOutboxStateStore(db).loadRows()
+            // Marking recovery leaves the frozen request, its captures and its identity untouched.
+            val pending=OversqliteOutboxStateStore(db).loadRows()
             assertEquals(rows.map { listOf(it.base,it.wirePayload,it.localPayload,it.keyJson,it.wireKeyJson,it.op,it.baseRowVersion,it.rowOrdinal) },
-                recovered.map { listOf(it.base,it.wirePayload,it.localPayload,it.keyJson,it.wireKeyJson,it.op,it.baseRowVersion,it.rowOrdinal) })
+                pending.map { listOf(it.base,it.wirePayload,it.localPayload,it.keyJson,it.wireKeyJson,it.op,it.baseRowVersion,it.rowOrdinal) })
             assertEquals(hash,scalarText(db,"SELECT canonical_request_hash FROM _sync_outbox_bundle"))
             assertEquals(2L,scalarLong(db,"SELECT source_bundle_id FROM _sync_outbox_bundle"))
             assertEquals("frozen L",scalarText(db,"SELECT name FROM nodes WHERE id='P'"))
             assertEquals("parent",scalarText(db,"SELECT json_extract(server_payload,'$.name.value') FROM _sync_row_state WHERE json_extract(key_json,'$.id')='P'"))
-            client.pushPending().getOrThrow() // retained committed C settles and acknowledges
-            client.rebuild().getOrThrow() // clean replacement only
+            val creates=server.snapshotSessionCreateRequestCount
+            val resolves=server.resolveRequests.size;val acks=server.ackRequests.size
+            // Rebuild first settles the retained committed outcome under the original source, then
+            // installs the rotated snapshot. The snapshot never stands in for that outcome.
+            client.rebuild().getOrThrow()
+            assertEquals(resolves+1,server.resolveRequests.size)
+            assertEquals(acks+1,server.ackRequests.size)
+            assertEquals(creates+1,server.snapshotSessionCreateRequestCount)
+            assertEquals(listOf(sourceBefore),server.requestedSnapshotSourceReplacements.map { it.previousSourceId })
+            assertNotEquals(sourceBefore,scalarText(db,"SELECT current_source_id FROM _sync_attachment_state"))
             assertEquals("frozen L",scalarText(db,"SELECT name FROM nodes WHERE id='P'"))
+            assertEquals("frozen L",scalarText(db,"SELECT json_extract(server_payload,'$.name.value') FROM _sync_row_state WHERE json_extract(key_json,'$.id')='P'"))
             assertEquals(0L,scalarLong(db,"SELECT count(*) FROM _sync_outbox_rows"))
+            assertEquals(0L,scalarLong(db,"SELECT count(*) FROM _sync_dirty_rows"))
+            assertEquals(0L,scalarLong(db,"SELECT count(*) FROM _sync_upload_journal"))
             assertEquals(0L,scalarLong(db,"SELECT count(*) FROM pragma_foreign_key_check"))
         }
     }

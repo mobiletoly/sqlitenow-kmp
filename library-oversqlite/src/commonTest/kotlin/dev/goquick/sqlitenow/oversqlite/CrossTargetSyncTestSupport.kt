@@ -308,6 +308,9 @@ internal open class CrossTargetSyncTestSupport {
         private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
         private val connectJson = Json { ignoreUnknownKeys = true; encodeDefaults = false }
         private val liveRows = linkedMapOf<String, LiveRow>()
+        // Authoritative delete observations: the real server keeps a tombstone version that a
+        // later INSERT must name as its base; a stale UPDATE/DELETE against it conflicts as deleted.
+        private val tombstones = linkedMapOf<String, Long>()
         private val bundles = mutableListOf<StoredBundle>()
         private val committedBySourceBundle = linkedMapOf<String, StoredBundle>()
         private val terminalOutcomes = linkedMapOf<String, TerminalPushOutcome>()
@@ -316,6 +319,7 @@ internal open class CrossTargetSyncTestSupport {
         private val latestAck = linkedMapOf<String, Pair<PushOperationBinding,PushOutcomeAckRequest>>()
         val terminalStatuses = linkedMapOf<String,String>()
         val resolveRequests = mutableListOf<PushOutcomeResolveRequest>()
+        val retainedRequests = mutableListOf<PushOutcomeRetainedRequest>()
         val ackRequests = mutableListOf<PushOutcomeAckRequest>()
         internal var beforeResolve: (suspend () -> Unit)? = null
         internal var beforeAck: (suspend () -> Unit)? = null
@@ -335,6 +339,11 @@ internal open class CrossTargetSyncTestSupport {
         var retainedBundleFloor: Long = 0
         var conflictOverride: ((PushRequestRow, Long, kotlinx.serialization.json.JsonElement?) -> PushConflictDetails?)? = null
         var sourceRetiredOnPush: SourceRetiredResponse? = null
+        // Sources the server no longer accepts for push, resolve or acknowledgment, mapped to the
+        // replacement it names. A replacement source is never refused by these fixtures.
+        val retiredSources = linkedMapOf<String, String>()
+        // Sources whose upload sequence the server cannot continue, mapped to the refusal code.
+        val sequenceRefusedSources = linkedMapOf<String, String>()
         var sourceRetiredOnSnapshotCreate: SourceRetiredResponse? = null
         var sourceReplacementInvalidOnSnapshotCreate: ErrorResponse? = null
         var bundleChangeWatchSupported: Boolean = false
@@ -419,7 +428,9 @@ internal open class CrossTargetSyncTestSupport {
                 val key = liveKey(row.table, row.key)
                 if (row.op == "DELETE") {
                     liveRows.remove(key)
+                    tombstones[key] = row.rowVersion
                 } else {
+                    tombstones.remove(key)
                     liveRows[key] = LiveRow(
                         table = row.table,
                         key = row.key,
@@ -487,6 +498,7 @@ internal open class CrossTargetSyncTestSupport {
 
             request.method.value == "POST" && request.url.encodedPath == "/sync/push" -> handlePush(request)
             request.method.value == "POST" && request.url.encodedPath == "/sync/push-outcomes/resolve" -> handleResolve(request)
+            request.method.value == "POST" && request.url.encodedPath == "/sync/push-outcomes/retained" -> handleRetained(request)
             request.method.value == "POST" && request.url.encodedPath == "/sync/push-outcomes/ack" -> handleAck(request)
 
             request.method.value == "POST" && request.url.encodedPath == "/sync/snapshot-sessions" -> {
@@ -615,6 +627,7 @@ internal open class CrossTargetSyncTestSupport {
                 val push = json.decodeFromString(CompletePushRequest.serializer(), body)
                 val sourceId = request.headers[sourceIdHeaderName].orEmpty()
                 sourceRetiredOnPush?.let { return sourceRetiredResponse(it) }
+                refusedSourceResponse(sourceId)?.let { return it }
                 val selectedGeneration = generationOverride ?: testGeneration(registeredTableSpecs)
                 originalGenerations[selectedGeneration.fingerprint]=selectedGeneration
                 val rows = OversqliteCompactCodec.decodeBundleRows(selectedGeneration, push.rows).map { row ->
@@ -643,13 +656,22 @@ internal open class CrossTargetSyncTestSupport {
                 for (row in rows) {
                     val key = liveKey(row.table, row.key)
                     val liveRow = liveRows[key]
-                    val currentVersion = liveRow?.rowVersion ?: 0L
+                    val tombstoneVersion = if (liveRow == null) tombstones[key] else null
+                    val currentVersion = liveRow?.rowVersion ?: tombstoneVersion ?: 0L
                     val forcedConflict = conflictOverride?.invoke(row, currentVersion, liveRow?.payload)
                     if (forcedConflict != null) {
                         // Conflict observations are authoritative history; subsequent commits must be newer.
-                        nextBundleSeq = maxOf(nextBundleSeq, forcedConflict.serverRowVersion + 1)
+                        // The real server never skips a sequence, so the jump is filled with empty envelopes.
+                        while (nextBundleSeq <= forcedConflict.serverRowVersion) {
+                            val fillerSeq = nextBundleSeq++
+                            bundles += StoredBundle(
+                                bundleSeq = fillerSeq, sourceId = "mock-forced-history", sourceBundleId = fillerSeq,
+                                rows = emptyList(), bundleHash = computeCommittedBundleHash(emptyList()),
+                            )
+                        }
                         if (forcedConflict.serverRowDeleted) {
                             liveRows.remove(key)
+                            tombstones[key] = forcedConflict.serverRowVersion
                         } else if (forcedConflict.serverRow != null) {
                             liveRows[key] = LiveRow(
                                 table = row.table,
@@ -669,7 +691,7 @@ internal open class CrossTargetSyncTestSupport {
                                 op = row.op,
                                 baseRowVersion = row.baseRowVersion,
                                 serverRowVersion = currentVersion,
-                                serverRowDeleted = false,
+                                serverRowDeleted = tombstoneVersion != null,
                                 serverRow = liveRow?.payload,
                             ),
                         )))
@@ -694,7 +716,9 @@ internal open class CrossTargetSyncTestSupport {
                     val key = liveKey(row.table, row.key)
                     if (row.op == "DELETE") {
                         liveRows.remove(key)
+                        tombstones[key] = row.rowVersion
                     } else {
+                        tombstones.remove(key)
                         liveRows[key] = LiveRow(
                             table = row.table,
                             key = row.key,
@@ -757,6 +781,7 @@ internal open class CrossTargetSyncTestSupport {
             val selected=decodeOutcomeResolve(request.bodyText());resolveRequests+=selected
             val source=request.headers[sourceIdHeaderName].orEmpty()
             beforeResolve?.let { beforeResolve=null;it() }
+            refusedSourceResponse(source)?.let { return it }
             if(resolveCapacityUnavailable)return jsonResponse("""{"error":"history_projection_capacity_exceeded","message":"capacity unavailable","retryable":true,"remediation":"retry"}""",HttpStatusCode.ServiceUnavailable)
             latestAck[source]?.let {if(selected.sourceBundleId<=it.second.sourceBundleId)return errorResponse("push_outcome_acknowledged","acked",HttpStatusCode.Gone)}
             val key="$source\u0000${selected.sourceBundleId}"
@@ -769,10 +794,26 @@ internal open class CrossTargetSyncTestSupport {
             return publishOutcome(TerminalPushOutcome(source,generation.id,generation.fingerprint,selected.sourceBundleId,selected.canonicalRequestHash,selected.initializationId,"cancelled",""),generation)
         }
 
+        // Sequence-only, read-only lookup of the owning source's retained outcome (r0001 section 3.2.1).
+        private suspend fun MockRequestHandleScope.handleRetained(request: HttpRequestData): io.ktor.client.request.HttpResponseData {
+            val selected=decodeOutcomeRetained(request.bodyText());retainedRequests+=selected
+            val source=request.headers[sourceIdHeaderName].orEmpty()
+            val acknowledged=latestAck[source]?.second?.sourceBundleId ?: 0L
+            if(selected.sourceBundleId<=acknowledged)return errorResponse("push_outcome_acknowledged","acked",HttpStatusCode.Gone)
+            val retained=terminalOutcomes.values.filter { it.sourceId==source }.minByOrNull { it.sourceBundleId }
+            if(retained==null)return errorResponse(
+                if(selected.sourceBundleId==acknowledged+1)"push_outcome_absent" else "source_sequence_out_of_order","nothing retained",HttpStatusCode.Conflict)
+            if(selected.sourceBundleId!=retained.sourceBundleId)return errorResponse("push_outcome_pending","pending",HttpStatusCode.Conflict)
+            if(request.headers["Oversync-Schema-Generation-ID"]!=retained.generationId || request.headers["Oversync-Schema-Generation-Fingerprint"]!=retained.generationFingerprint)
+                return errorResponse("push_outcome_mismatch","mismatch",HttpStatusCode.Conflict)
+            return jsonResponse(checkNotNull(terminalBytes["$source\u0000${retained.sourceBundleId}"]))
+        }
+
         private suspend fun MockRequestHandleScope.handleAck(request: HttpRequestData): io.ktor.client.request.HttpResponseData {
             val selected=decodeOutcomeAck(request.bodyText());ackRequests+=selected
             val source=request.headers[sourceIdHeaderName].orEmpty()
             beforeAck?.let { beforeAck=null;it() }
+            refusedSourceResponse(source)?.let { return it }
             val key="$source\u0000${selected.sourceBundleId}"
             val outcome=terminalOutcomes[key]
             if(outcome!=null) {
@@ -1039,6 +1080,14 @@ internal open class CrossTargetSyncTestSupport {
             ),
             status = HttpStatusCode.Conflict,
         )
+
+        /** The real server refuses every upload operation of a source it retired or cannot sequence. */
+        private fun MockRequestHandleScope.refusedSourceResponse(sourceId: String): io.ktor.client.request.HttpResponseData? =
+            retiredSources[sourceId]?.let { replacement ->
+                sourceRetiredResponse(SourceRetiredResponse("source_retired", "source is retired", sourceId, replacement))
+            } ?: sequenceRefusedSources[sourceId]?.let { code ->
+                errorResponse(code, "source sequence refused", HttpStatusCode.Conflict)
+            }
 
         private fun MockRequestHandleScope.sourceRetiredResponse(
             retired: SourceRetiredResponse,

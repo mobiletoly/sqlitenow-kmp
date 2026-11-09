@@ -370,6 +370,26 @@ class SourceRecoveryRequiredException(
     override val category: OversqliteErrorCategory = OversqliteErrorCategory.STATE
 }
 
+/**
+ * Thrown when a source-recovery [OversqliteClient.rebuild] cannot apply pending local edits to the
+ * authoritative snapshot, for example because the snapshot no longer holds a parent row that a pending
+ * edit references. Nothing was changed: the edits, the staged snapshot and the recovery requirement
+ * are all intact.
+ *
+ * Oversqlite never drops such edits on its own. The explicit exit is
+ * [OversqliteClient.discardPendingIntentForRecovery] after user consent.
+ */
+class PendingIntentUnsatisfiableException(
+    val tables: Set<String>,
+    cause: Throwable? = null,
+) : RuntimeException(
+    "pending local edits in ${tables.sorted()} cannot be applied to the authoritative snapshot; " +
+        "call discardPendingIntentForRecovery() only after explicit user consent",
+    cause,
+), OversqliteCategorizedException {
+    override val category: OversqliteErrorCategory = OversqliteErrorCategory.STATE
+}
+
 /** Thrown when local and server replacement-source state disagree. */
 class SourceReplacementDivergedException : RuntimeException(
     "replacement source diverged between local and server recovery state",

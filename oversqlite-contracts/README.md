@@ -75,5 +75,9 @@ int64 projection, strict requests and pure lifecycle traces. The original push/s
 envelopes and error/fault/request-count traces are explicitly historical codec/regression
 input. New ordinary terminal upload adds one acknowledgment exchange; no-change Sync adds none.
 The protocol marker is solely `v1`; old payloads/formats have no compatibility path.
+A lost local freeze recovers through the sequence-only `POST /sync/push-outcomes/retained`
+lookup (r0001 section 3.2.1): `retainedRequests` binds its closed request, the lost-freeze
+workflow and request-count traces bind the mismatch → retained → settle → ack order, and
+`push_outcome_absent` is a nonterminal 409 that never proves noncommit.
 Workflow reducers and JVM contract bodies do not qualify persistence, server outcomes,
 Activity runtime cases, platforms or live clients. Those remain C02-C07 obligations.

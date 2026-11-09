@@ -612,6 +612,10 @@ public struct SQLiteNowRestoreSummary: Equatable, Sendable {
 public enum SQLiteNowAttachResult: Equatable, Sendable {
     case connected(outcome: SQLiteNowAttachOutcome, status: SQLiteNowSyncStatus, restore: SQLiteNowRestoreSummary?)
     case retryLater(retryAfterSeconds: Int64)
+    /// The remote scope is already authoritative while this anonymous database still holds
+    /// unsynced managed rows. Nothing changed; call `discardAnonymousLocalData()` after explicit
+    /// user consent, then attach again.
+    case blockedLocalPendingData(pendingRowCount: Int64)
     case unknown(String)
 
     internal init(_ runtime: SQLiteNowSyncRuntimeAttachResult) {
@@ -628,6 +632,8 @@ public enum SQLiteNowAttachResult: Equatable, Sendable {
             )
         case "retryLater":
             self = .retryLater(retryAfterSeconds: runtime.retryAfterSeconds)
+        case "blockedLocalPendingData":
+            self = .blockedLocalPendingData(pendingRowCount: runtime.pendingRowCount)
         default:
             self = .unknown(runtime.kind)
         }
@@ -1004,6 +1010,13 @@ public final class SQLiteNowSyncClient {
             let outcome = try await runtime.detach()
             return SQLiteNowDetachOutcome(outcome.outcome)
         }
+    }
+
+    /// Permanently deletes all sync-managed local rows and pending sync intent of an anonymous
+    /// database. This is the only way past `.blockedLocalPendingData` and must follow explicit
+    /// user consent.
+    public func discardAnonymousLocalData() async throws {
+        _ = try await mapRuntimeErrors { try await runtime.discardAnonymousLocalData() }
     }
 
     public func pushPending() async throws -> SQLiteNowPushReport {

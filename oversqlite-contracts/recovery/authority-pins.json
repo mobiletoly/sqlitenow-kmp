@@ -4,10 +4,10 @@
   "go/specs/p0001-oversqlite-fk-safe-sync-and-automatic-resolution.md": "e0e5e5887d6bae89c4acf5d94891217325169664677a6e315d6f0b1d21e67ea6",
   "go/specs/r0001-oversqlite-durable-recovery-checklist.md": "edea6b16c862621a080563dab063d155932aeff279d4d80a8fdf7bfa52082143",
   "go/specs/r0001-oversqlite-durable-recovery-validation.md": "d76c271edaa7528aa1cb66e03dc9472aca14fbc62c76250dfc9a3315709a2997",
-  "go/specs/r0001-oversqlite-durable-recovery.md": "0ae5cb4ff16b57a8f3dd2623abbc9f41bd43c32d80d36b2e4a56739e09a362e3",
-  "go/swagger/two_way_sync.yaml": "7e08278314caaf670036f803b34076459bad1a65b57a940f4557dd56553671ef",
+  "go/specs/r0001-oversqlite-durable-recovery.md": "95dfdc960eac726dad293eb63cf986184ab177a1e3076e01c9d0df31e912db0d",
+  "go/swagger/two_way_sync.yaml": "65a9bc39e418838a69850f5486105853520bc623a0354b039610e8702e325888",
   "kotlin/AGENTS.md": "dd418852ec1a07bfce46c4631139fdc201d2ca2a86a7710b8af325dd499c64af",
   "kotlin/docs-engineering/oversqlite-validation.md": "2e885cc0adfe27cc322e1e782a0b2c8e9cf4ce50b09d5f3ead1728da40a9e364",
-  "kotlin/specs/oversqlite-durable-recovery.md": "1059348d97e8373bb60e68d04d5a45203a22940458a077753a4d7ba08da79553",
+  "kotlin/specs/oversqlite-durable-recovery.md": "54e2b9399eaf4a0c6770bc807938234bb49c123562874b9941c25498690a3ffa",
   "kotlin/specs/oversqlite-fk-safe-sync-and-automatic-resolution.md": "95469a81179b6ebe32281a4f148862edf788505c480e188195c0b9682c8ca6c8"
 }

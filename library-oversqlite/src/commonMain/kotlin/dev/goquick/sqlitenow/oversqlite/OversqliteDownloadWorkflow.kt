@@ -76,6 +76,14 @@ internal class OversqliteDownloadWorkflow(
 
     private val installation by lazy { OversqliteSnapshotInstallation(db, config, localStore, bundleApplier.survivors, json) }
 
+    private val sourceRecoveryIntent by lazy {
+        OversqliteSourceRecoveryIntent(db, config, localStore, syncStateStore, outboxStateStore,
+            OversqliteConflictStateStore(db, json), operationStateStore, stageStore, json)
+    }
+
+    /** Explicit, consented exit for pending intent a source-recovery rebuild cannot carry. */
+    internal suspend fun discardPendingIntentForSourceRecovery(): DiscardedPendingIntent = sourceRecoveryIntent.discard()
+
     internal fun retainedSnapshotSession(operation: OversqliteOperationState, source: String): SnapshotSession =
         checkNotNull(installation.retained(operation, source)) { "retained snapshot authority changed" }
 
@@ -142,10 +150,22 @@ internal class OversqliteDownloadWorkflow(
         outboxMode: SnapshotRebuildOutboxMode = SnapshotRebuildOutboxMode.CLEAN,
         onPhaseChanged: suspend (OversqlitePhase) -> Unit = {},
         finalizer: suspend () -> Unit = {},
+        carryPendingIntent: Boolean = false,
     ): DownloadWorkflowResult {
+        if (carryPendingIntent && currentCoroutineContext()[SourceRecoveryIntentAdmission] == null) {
+            require(outboxMode == SnapshotRebuildOutboxMode.SOURCE_RECOVERY && rotatedSourceId != null) {
+                "pending intent is carried only across a rotated source-recovery rebuild"
+            }
+            // Pending intent is admissible only inside this rotated rebuild, which carries it forward.
+            return withContext(SourceRecoveryIntentAdmission) {
+                rebuildFromSnapshot(state, rotatedSourceId, sourceReplacementReason, outboxMode, onPhaseChanged, finalizer, true)
+            }
+        }
         requireCleanSnapshotEntry()
         if (rotatedSourceId == null && outboxMode == SnapshotRebuildOutboxMode.CLEAN) markCheckpointRecoveryRequired("explicit_rebuild")
-        tryBootstrapSnapshot(state, outboxMode, rotatedSourceId, sourceReplacementReason,
+        // The typed bootstrap installs into empty managed state and has no place for carried intent.
+        val carriesIntent = carryPendingIntent && sourceRecoveryIntent.hasPending()
+        if (!carriesIntent) tryBootstrapSnapshot(state, outboxMode, rotatedSourceId, sourceReplacementReason,
             onPhaseChanged = onPhaseChanged, finalizer = finalizer)?.let { return it }
         bundleApplier.survivors.inspectSnapshotCapabilities(state)
         val diagnostics = requireNotNull(snapshotDiagnostics()) {
@@ -871,6 +891,12 @@ internal class OversqliteDownloadWorkflow(
                 lifecycle.verifySnapshot(state, session, statementCache)
             }
             bundleApplier.survivors.finish(replayStatementCache = statementCache)
+            // Source recovery keeps pending local intent in place through the installation. The server
+            // accepted the replacement source to produce this snapshot, so the intent now moves onto
+            // the verified authoritative state before the replacement source is published.
+            if (currentCoroutineContext()[SourceRecoveryIntentAdmission] != null) syncDiagnosticWork("snapshot.recovery_intent") {
+                sourceRecoveryIntent.carryOntoInstalledSnapshot(state, statementCache)
+            }
             syncPhase("snapshot.publication", session.rowCount, session.logicalByteCount) {
             attachmentStateStore.persistAttachedState(
                 sourceId = currentSourceId,

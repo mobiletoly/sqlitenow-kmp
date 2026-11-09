@@ -39,6 +39,9 @@ internal data class PushOutcomeAckRequest(
     @SerialName("canonical_request_hash") val canonicalRequestHash: String,
     @SerialName("outcome_hash") val outcomeHash: String,
 )
+/** Sequence-only lookup an owning source sends after `push_outcome_mismatch`; hash and token are discovered. */
+@Serializable
+internal data class PushOutcomeRetainedRequest(@SerialName("source_bundle_id") val sourceBundleId: Long)
 @Serializable
 data class SnapshotRecovery(@SerialName("minimum_bundle_seq") val minimumBundleSeq: Long)
 
@@ -77,6 +80,12 @@ internal fun decodeOutcomeAck(raw: String): PushOutcomeAckRequest {
     val root = recoveryObject(raw)
     root.closed(setOf("source_bundle_id", "canonical_request_hash", "outcome_hash"))
     root.operationTuple(false); require(isCanonicalSha256(root.string("outcome_hash")))
+    return recoveryJson.decodeFromString(raw)
+}
+internal fun decodeOutcomeRetained(raw: String): PushOutcomeRetainedRequest {
+    val root = recoveryObject(raw)
+    root.closed(setOf("source_bundle_id"))
+    root.integer("source_bundle_id", 1)
     return recoveryJson.decodeFromString(raw)
 }
 internal fun decodeRecoverySnapshotRequest(raw: String): SnapshotSessionCreateRequest {
@@ -255,6 +264,18 @@ internal data class PushOperationBinding(
     @SerialName("canonical_request_hash") val canonicalRequestHash: String,
     @SerialName("initialization_id") val initializationId: String?,
 )
+/**
+ * A retained outcome fetched by sequence after a lost local freeze binds the frozen source,
+ * generation and sequence; its request hash and initialization token are discovered from the
+ * envelope and must differ from the frozen request, otherwise exact replay would have applied.
+ */
+internal fun validateRetainedPushOutcome(outcome: TerminalPushOutcome, frozen: PushOperationBinding, generation: SyncGeneration): PushOperationBinding {
+    require(outcome.sourceId == frozen.sourceId && outcome.generationId == frozen.generationId &&
+        outcome.generationFingerprint == frozen.generationFingerprint && outcome.sourceBundleId == frozen.sourceBundleId) { "retained outcome binding mismatch" }
+    require(outcome.canonicalRequestHash != frozen.canonicalRequestHash || outcome.initializationId != frozen.initializationId) { "retained outcome matches the frozen request" }
+    require(outcome.outcomeHash == hashPushOutcome(outcome, generation)) { "retained outcome hash mismatch" }
+    return frozen.copy(canonicalRequestHash = outcome.canonicalRequestHash, initializationId = outcome.initializationId)
+}
 internal fun validatePushOutcomeBinding(outcome: TerminalPushOutcome, binding: PushOperationBinding, generation: SyncGeneration) {
     require(outcome.sourceId == binding.sourceId && outcome.generationId == binding.generationId && outcome.generationFingerprint == binding.generationFingerprint &&
         outcome.sourceBundleId == binding.sourceBundleId && outcome.canonicalRequestHash == binding.canonicalRequestHash && outcome.initializationId == binding.initializationId)

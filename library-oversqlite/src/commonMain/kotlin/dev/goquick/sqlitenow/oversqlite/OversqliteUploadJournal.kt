@@ -105,6 +105,30 @@ internal class OversqliteUploadJournal(
         }
     }
 
+    /**
+     * Lost-freeze recovery: the retained outcome belongs to this source and sequence but to an
+     * earlier request. Replace the frozen request's hash and token with the discovered ones and
+     * persist the complete outcome in one writer, so settlement and ack use the retained binding.
+     */
+    suspend fun rebindToRetainedOutcome(state: RuntimeState, expected: UploadJournal, reply: TerminalUploadReply) = db.transaction(TransactionMode.IMMEDIATE) {
+        val current = checkNotNull(loadUploadJournal(db))
+        guard(state,current)
+        check(current.binding==expected.binding && current.phase=="frozen" && current.outcomeBytes==0L) { "outcome owner changed" }
+        val frozen = current.binding.operation
+        val outcome = reply.outcome
+        check(outcome.sourceId==frozen.sourceId && outcome.generationId==frozen.generationId &&
+            outcome.generationFingerprint==frozen.generationFingerprint && outcome.sourceBundleId==frozen.sourceBundleId) { "retained outcome binding mismatch" }
+        outcome.initializationId?.let(::requireValidOversqliteSessionToken)
+        val rebound = current.binding.copy(operation=frozen.copy(
+            canonicalRequestHash=outcome.canonicalRequestHash,initializationId=outcome.initializationId))
+        val raw = uploadJournalJson.encodeToString(rebound)
+        check(utf8Size(raw)<=4096)
+        OversqliteWorkspace(db,config).check("upload-outcome", WorkspaceCharge(bytes=utf8Size(reply.raw)))
+        db.withPreparedStatement("UPDATE _sync_upload_journal SET binding=?,outcome_body=CAST(? AS BLOB),outcome_hash=? WHERE singleton_key=1") { st ->
+            st.bindText(1,raw);st.bindText(2,reply.raw);st.bindText(3,outcome.outcomeHash);st.step()
+        }
+    }
+
     suspend fun acknowledge(state: RuntimeState, remote: OversqliteRemoteApi) {
         val j = loadUploadJournal(db) ?: return
         if(j.phase!="ack_pending") return
@@ -126,7 +150,10 @@ internal class OversqliteUploadJournal(
         guard(state,journal)
         check(OversqliteOutboxStateStore(db).loadBundleState().state==outboxStatePrepared)
         val operation=OversqliteOperationStateStore(db).loadState()
-        check(operation.kind==operationKindNone || (operation.kind==operationKindSourceRecovery && operation.stagedSnapshotId.isEmpty())) { "upload overlaps a destructive transition" }
+        // Once the replacement snapshot is staged the server has retired this source, so the frozen
+        // request can no longer resume under it. The rotated rebuild carries its intent forward.
+        if(operation.kind==operationKindSourceRecovery && operation.stagedSnapshotId.isNotEmpty()) return false
+        check(operation.kind==operationKindNone || operation.kind==operationKindSourceRecovery) { "upload overlaps a destructive transition" }
         return true
     }
 
