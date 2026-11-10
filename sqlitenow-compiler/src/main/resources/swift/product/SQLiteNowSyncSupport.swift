@@ -1,3 +1,193 @@
+/// Maps the local sync results that carry a typed payload; nil leaves the payload to the generic mapping.
+internal func sqliteNowTypedLocalSyncError(_ payload: SQLiteNowSyncRuntimeErrorPayload) -> SQLiteNowError? {
+    if payload.category == "cancelled" { return .cancelled(message: payload.message) }
+    if let local = payload.localPlanningJson {
+        guard let data = local.data(using: .utf8) else { return .protocol(message: "invalid local planning result") }
+        let decoder = JSONDecoder()
+        do {
+            switch payload.code {
+            case "PushDependencyGroupExceedsAdmittedLimitException":
+                return .pushDependencyGroupExceedsAdmittedLimit(try decoder.decode(SQLiteNowPushDependencyGroupLimit.self, from: data))
+            case "FKReconciliationRequiredException":
+                let result = try decoder.decode(SQLiteNowFKReconciliationRequired.self, from: data)
+                guard payload.category == "state", !payload.remoteContract,
+                      result.reason == "fk_reconciliation_required",
+                      ["relationship_unknown", "dependency_unavailable", "historical_repair_required"].contains(result.detail),
+                      validPlanningUnit(result.unit), validPlanningProgress(result.progress),
+                      validPlanningSample(result.sample),
+                      validPlanningFields(data, ["reason", "detail", "unit", "sample", "hasMore", "progress"])
+                else { return .protocol(message: "invalid local planning result") }
+                return .fkReconciliationRequired(result)
+            case "ResolutionBaseUnavailableException":
+                let result = try decoder.decode(SQLiteNowResolutionBaseUnavailable.self, from: data)
+                guard result.reason == "resolution_base_unavailable", validPlanningUnit(result.unit),
+                      validPlanningProgress(result.progress), validPlanningSample(result.sample)
+                else { return .protocol(message: "invalid local planning result") }
+                return .resolutionBaseUnavailable(result)
+            case "SyncWorkLimitException":
+                let result = try decoder.decode(SQLiteNowSyncWorkLimit.self, from: data)
+                guard payload.category == "state", !payload.remoteContract,
+                      result.reason == "sync_work_limit", validPlanningUnit(result.unit),
+                      result.limit > 0, result.used >= 0, validPlanningProgress(result.progress),
+                      validPlanningFields(data, ["reason", "unit", "limit", "used", "progress"])
+                else { return .protocol(message: "invalid local planning result") }
+                return .syncWorkLimit(result)
+            case "SyncWorkspaceLimitException":
+                let result = try decoder.decode(SQLiteNowSyncWorkspaceLimit.self, from: data)
+                guard payload.category == "state", !payload.remoteContract,
+                      result.reason == "sync_workspace_limit", validPlanningUnit(result.unit),
+                      ["entries", "bytes"].contains(result.dimension),
+                      result.limit > 0, result.used >= 0, result.reserved >= 0, validPlanningProgress(result.progress),
+                      validPlanningFields(data, ["reason", "unit", "dimension", "limit", "used", "reserved", "resumable", "progress"])
+                else { return .protocol(message: "invalid local planning result") }
+                return .syncWorkspaceLimit(result)
+            case "StalePushDependencyDiagnosticException":
+                return .stalePushDependencyDiagnostic(try decoder.decode(SQLiteNowStalePushDependencyDiagnostic.self, from: data))
+            case "PendingIntentUnsatisfiableException":
+                let result = try decoder.decode(SQLiteNowPendingIntentUnsatisfiable.self, from: data)
+                guard payload.category == "state", !payload.remoteContract,
+                      result.reason == "pending_intent_unsatisfiable",
+                      !result.tables.isEmpty, result.tables.allSatisfy({ !$0.isEmpty }),
+                      validPlanningFields(data, ["reason", "tables"])
+                else { return .protocol(message: "invalid local planning result") }
+                return .pendingIntentUnsatisfiable(result)
+            default: return .protocol(message: "unknown local planning result")
+            }
+        } catch { return .protocol(message: "invalid local planning result") }
+    }
+    if payload.code == "SyncIncompleteException" {
+        return .syncIncomplete(
+            reason: SQLiteNowSyncIncompleteReason(payload.incompleteReason ?? ""),
+            dirtyCount: payload.dirtyCount,
+            outboundCount: payload.outboundCount,
+            confirmedBundleCount: payload.confirmedBundleCount,
+            pushAttempts: payload.pushAttempts
+        )
+    }
+    return nil
+}
+
+private func validPlanningUnit(_ value: String) -> Bool {
+    value.utf8.count == 64 && value.utf8.allSatisfy { (48...57).contains($0) || (97...102).contains($0) }
+}
+
+private func validPlanningProgress(_ value: SQLiteNowSyncPendingProgress) -> Bool {
+    value.dirtyRows >= 0 && value.outboundRows >= 0 && value.committedBundles >= 0
+}
+
+private func validPlanningSample(_ sample: [SQLiteNowPushDependencyRecordRef]) -> Bool {
+    guard sample.count <= 16, sample.allSatisfy({ !$0.schema.isEmpty && !$0.table.isEmpty && !$0.key.isEmpty }) else { return false }
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+    guard let encoded = try? encoder.encode(sample) else { return false }
+    return encoded.count <= 4096
+}
+
+private func validPlanningFields(_ data: Data, _ fields: Set<String>) -> Bool {
+    guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any], Set(object.keys) == fields
+    else { return false }
+    var counters = fields.intersection(["limit", "used", "reserved"]).compactMap { object[$0] }
+    // Only results that report progress carry it; the exact field set above already rejects a stray one.
+    if fields.contains("progress") {
+        guard let progress = object["progress"] as? [String: Any],
+              Set(progress.keys) == ["dirtyRows", "outboundRows", "committedBundles"] else { return false }
+        counters += Array(progress.values)
+    }
+    for value in counters {
+        guard let number = value as? NSNumber,
+              ["i", "q", "Q"].contains(String(cString: number.objCType)) else { return false }
+    }
+    return true
+}
+
+public struct SQLiteNowSyncPendingProgress: Codable, Equatable, Sendable {
+    public let dirtyRows: Int64
+    public let outboundRows: Int64
+    public let committedBundles: Int64
+}
+
+public struct SQLiteNowPushDependencyRecordRef: Codable, Equatable, Sendable {
+    public let schema: String
+    public let table: String
+    public let key: [String: String]
+}
+
+public struct SQLiteNowPushDependencyGroupLimit: Codable, Equatable, Sendable {
+    public let reason: String
+    public let dimension: String
+    public let limit: Int64
+    public let actual: Int64
+    public let componentRows: Int64
+    public let componentDecodedBytes: Int64
+    public let diagnosticId: String
+    public let sample: [SQLiteNowPushDependencyRecordRef]
+    public let hasMore: Bool
+    public let progress: SQLiteNowSyncPendingProgress
+}
+
+public struct SQLiteNowFKReconciliationRequired: Codable, Equatable, Sendable {
+    public let reason: String
+    public let detail: String
+    public let unit: String
+    public let sample: [SQLiteNowPushDependencyRecordRef]
+    public let hasMore: Bool
+    public let progress: SQLiteNowSyncPendingProgress
+}
+
+public struct SQLiteNowResolutionBaseUnavailable: Codable, Equatable, Sendable {
+    public let reason: String
+    public let unit: String
+    public let sample: [SQLiteNowPushDependencyRecordRef]
+    public let hasMore: Bool
+    public let progress: SQLiteNowSyncPendingProgress
+}
+
+public struct SQLiteNowSyncWorkLimit: Codable, Equatable, Sendable {
+    public let reason: String
+    public let unit: String
+    public let limit: Int64
+    public let used: Int64
+    public let progress: SQLiteNowSyncPendingProgress
+}
+
+public struct SQLiteNowSyncWorkspaceLimit: Codable, Equatable, Sendable {
+    public let reason: String
+    public let unit: String
+    public let dimension: String
+    public let limit: Int64
+    public let used: Int64
+    public let reserved: Int64
+    public let resumable: Bool
+    public let progress: SQLiteNowSyncPendingProgress
+}
+
+public struct SQLiteNowStalePushDependencyDiagnostic: Codable, Equatable, Sendable {
+    public let reason: String
+    public let diagnosticId: String
+}
+
+/// `rebuild()` could not apply the pending local edits of these tables to the authoritative
+/// snapshot during source recovery and changed nothing. The only exit is
+/// `discardPendingIntentForRecovery()` after explicit user consent.
+public struct SQLiteNowPendingIntentUnsatisfiable: Codable, Equatable, Sendable {
+    public let reason: String
+    public let tables: [String]
+}
+
+public enum SQLiteNowSyncIncompleteReason: Equatable, Sendable {
+    case pushAttemptLimit
+    case noProgress
+    case unknown(String)
+
+    internal init(_ raw: String) {
+        switch raw {
+        case "PUSH_ATTEMPT_LIMIT": self = .pushAttemptLimit
+        case "NO_PROGRESS": self = .noProgress
+        default: self = .unknown(raw)
+        }
+    }
+}
+
 public struct SQLiteNowSyncAuth: @unchecked Sendable {
     internal let accessTokenProvider: @Sendable () -> String
     internal let refreshedAccessTokenProvider: (@Sendable () -> String?)?

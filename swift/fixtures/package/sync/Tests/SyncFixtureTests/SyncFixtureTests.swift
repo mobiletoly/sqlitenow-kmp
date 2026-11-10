@@ -186,6 +186,46 @@ final class SyncFixtureTests: XCTestCase {
         )
     }
 
+    func testLocalSyncResultsRemainTypedAndMalformedFailsClosed() {
+        func payload(_ code: String, _ body: String?, category: String = "state", incompleteReason: String? = nil) -> SQLiteNowSyncRuntimeErrorPayload {
+            SQLiteNowSyncRuntimeErrorPayload(category: category, code: code, message: "local", remoteContract: false,
+                httpStatus: 0, operation: "", remediation: nil, retryable: false, generationId: nil,
+                incompleteReason: incompleteReason, dirtyCount: 3, outboundCount: 2, confirmedBundleCount: 1, pushAttempts: 4,
+                localPlanningJson: body)
+        }
+        let unit = String(repeating: "a", count: 64)
+        let progress = #""progress":{"dirtyRows":3,"outboundRows":2,"committedBundles":1}"#
+        let bodies: [(String, String)] = [
+            ("PushDependencyGroupExceedsAdmittedLimitException", #"{"reason":"push_dependency_group_exceeds_admitted_limit","dimension":"rows","limit":1,"actual":2,"componentRows":2,"componentDecodedBytes":9,"diagnosticId":"diagnostic","sample":[],"hasMore":false,"# + progress + "}"),
+            ("FKReconciliationRequiredException", #"{"reason":"fk_reconciliation_required","detail":"dependency_unavailable","unit":""# + unit + #"","sample":[],"hasMore":false,"# + progress + "}"),
+            ("ResolutionBaseUnavailableException", #"{"reason":"resolution_base_unavailable","unit":""# + unit + #"","sample":[],"hasMore":false,"# + progress + "}"),
+            ("SyncWorkLimitException", #"{"reason":"sync_work_limit","unit":""# + unit + #"","limit":100,"used":99,"# + progress + "}"),
+            ("SyncWorkspaceLimitException", #"{"reason":"sync_workspace_limit","unit":""# + unit + #"","dimension":"entries","limit":100,"used":99,"reserved":2,"resumable":false,"# + progress + "}"),
+            ("StalePushDependencyDiagnosticException", #"{"reason":"stale_push_dependency_diagnostic","diagnosticId":"diagnostic"}"#),
+        ]
+        for (code, body) in bodies {
+            switch SQLiteNowError.from(payload(code, body)) {
+            case .pushDependencyGroupExceedsAdmittedLimit, .fkReconciliationRequired, .resolutionBaseUnavailable,
+                 .syncWorkLimit, .syncWorkspaceLimit, .stalePushDependencyDiagnostic: break
+            default: XCTFail("lost local typed result: \(code)")
+            }
+        }
+        guard case let .pendingIntentUnsatisfiable(unsatisfiable) = SQLiteNowError.from(payload(
+            "PendingIntentUnsatisfiableException", #"{"reason":"pending_intent_unsatisfiable","tables":["posts","users"]}"#
+        )) else { return XCTFail("lost local typed result: PendingIntentUnsatisfiableException") }
+        XCTAssertEqual(unsatisfiable.tables, ["posts", "users"])
+        XCTAssertEqual(
+            SQLiteNowError.from(payload("SyncIncompleteException", nil, incompleteReason: "NO_PROGRESS")),
+            .syncIncomplete(reason: .noProgress, dirtyCount: 3, outboundCount: 2, confirmedBundleCount: 1, pushAttempts: 4)
+        )
+        XCTAssertEqual(SQLiteNowError.from(payload("SyncWorkLimitException", "{}")), .protocol(message: "invalid local planning result"))
+        XCTAssertEqual(
+            SQLiteNowError.from(payload("PendingIntentUnsatisfiableException", #"{"reason":"pending_intent_unsatisfiable","tables":[]}"#)),
+            .protocol(message: "invalid local planning result")
+        )
+        XCTAssertEqual(SQLiteNowError.from(payload("UnknownPlanningException", "{}")), .protocol(message: "unknown local planning result"))
+    }
+
     func testDocsCrudUsesCoreRuntime() async throws {
         try await withOpenDatabase { db in
             let emptyRows = try await db.docs.selectAll().list()

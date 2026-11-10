@@ -268,6 +268,22 @@ internal class SwiftProductSupportEmitter(
             line("case adapter(message: String)")
             if (syncEnabled) {
                 line("case sync(message: String)")
+                line("case syncIncomplete(")
+                indent {
+                    line("reason: SQLiteNowSyncIncompleteReason,")
+                    line("dirtyCount: Int64,")
+                    line("outboundCount: Int64,")
+                    line("confirmedBundleCount: Int32,")
+                    line("pushAttempts: Int32")
+                }
+                line(")")
+                line("case pushDependencyGroupExceedsAdmittedLimit(SQLiteNowPushDependencyGroupLimit)")
+                line("case fkReconciliationRequired(SQLiteNowFKReconciliationRequired)")
+                line("case resolutionBaseUnavailable(SQLiteNowResolutionBaseUnavailable)")
+                line("case syncWorkLimit(SQLiteNowSyncWorkLimit)")
+                line("case syncWorkspaceLimit(SQLiteNowSyncWorkspaceLimit)")
+                line("case stalePushDependencyDiagnostic(SQLiteNowStalePushDependencyDiagnostic)")
+                line("case pendingIntentUnsatisfiable(SQLiteNowPendingIntentUnsatisfiable)")
                 line("case conflictNeedsResolution(message: String)")
                 line("case staleConflictResolution(message: String)")
             }
@@ -298,6 +314,17 @@ internal class SwiftProductSupportEmitter(
                 line("case let .adapter(message): return message")
                 if (syncEnabled) {
                     line("case let .sync(message): return message")
+                    line("case let .syncIncomplete(reason, dirty, outbound, confirmed, attempts):")
+                    indent {
+                        line("return \"Sync incomplete (\\(reason)): dirty=\\(dirty) outbound=\\(outbound) confirmed=\\(confirmed) attempts=\\(attempts)\"")
+                    }
+                    line("case let .pushDependencyGroupExceedsAdmittedLimit(result): return result.reason")
+                    line("case let .fkReconciliationRequired(result): return result.reason")
+                    line("case let .resolutionBaseUnavailable(result): return result.reason")
+                    line("case let .syncWorkLimit(result): return result.reason")
+                    line("case let .syncWorkspaceLimit(result): return result.reason")
+                    line("case let .stalePushDependencyDiagnostic(result): return result.reason")
+                    line("case let .pendingIntentUnsatisfiable(result): return \"\\(result.reason): \\(result.tables.joined(separator: \", \"))\"")
                     line("case let .conflictNeedsResolution(message): return message")
                     line("case let .staleConflictResolution(message): return message")
                 }
@@ -361,6 +388,7 @@ internal class SwiftProductSupportEmitter(
                 line()
                 line("internal static func from(_ payload: SQLiteNowSyncRuntimeErrorPayload) -> SQLiteNowError {")
                 indent {
+                    line("if let typed = sqliteNowTypedLocalSyncError(payload) { return typed }")
                     line("if payload.code == \"ConflictNeedsResolutionException\" { return .conflictNeedsResolution(message: payload.message) }")
                     line("if payload.code == \"StaleConflictResolutionException\" { return .staleConflictResolution(message: payload.message) }")
                     line("if payload.remoteContract {")

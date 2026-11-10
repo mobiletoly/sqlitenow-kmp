@@ -255,6 +255,18 @@ class SqliteNowSwiftProductEmitterTest {
         assertTrue(syncSupportSwift.contains("guard runtime.readyClientOrNull() === runtimeClient else { return }"))
         assertTrue(syncSupportSwift.contains("withTaskCancellationHandler"))
         assertTrue(syncSupportSwift.contains("case blockedLocalPendingData(pendingRowCount: Int64)"))
+        assertTrue(syncSupportSwift.contains("internal func sqliteNowTypedLocalSyncError(_ payload: SQLiteNowSyncRuntimeErrorPayload) -> SQLiteNowError?"))
+        assertTrue(supportSwift.contains("if let typed = sqliteNowTypedLocalSyncError(payload) { return typed }"))
+        listOf(
+            "case syncIncomplete(",
+            "case pushDependencyGroupExceedsAdmittedLimit(SQLiteNowPushDependencyGroupLimit)",
+            "case fkReconciliationRequired(SQLiteNowFKReconciliationRequired)",
+            "case resolutionBaseUnavailable(SQLiteNowResolutionBaseUnavailable)",
+            "case syncWorkLimit(SQLiteNowSyncWorkLimit)",
+            "case syncWorkspaceLimit(SQLiteNowSyncWorkspaceLimit)",
+            "case stalePushDependencyDiagnostic(SQLiteNowStalePushDependencyDiagnostic)",
+            "case pendingIntentUnsatisfiable(SQLiteNowPendingIntentUnsatisfiable)",
+        ).forEach { assertTrue(supportSwift.contains(it), "generated sync error enum should declare $it") }
         assertTrue(syncSupportSwift.contains("self = .blockedLocalPendingData(pendingRowCount: runtime.pendingRowCount)"))
         assertTrue(syncSupportSwift.contains("public func discardAnonymousLocalData() async throws"))
         assertTrue(syncSupportSwift.contains("public func discardPendingIntentForRecovery() async throws -> SQLiteNowDiscardedPendingIntent"))
