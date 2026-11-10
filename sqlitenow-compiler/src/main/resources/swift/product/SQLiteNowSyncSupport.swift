@@ -400,6 +400,30 @@ public struct SQLiteNowSourceInfo: Equatable, Sendable {
     }
 }
 
+/// One pending edit dropped by `discardPendingIntentForRecovery()`. `keyJson` is the canonical local
+/// sync key object of the row and `op` is `INSERT`, `UPDATE` or `DELETE`.
+public struct SQLiteNowDiscardedIntentRow: Equatable, Sendable {
+    public let schema: String
+    public let table: String
+    public let keyJson: String
+    public let op: String
+
+    internal init(_ runtime: SQLiteNowSyncRuntimeDiscardedIntentRow) {
+        schema = runtime.schema
+        table = runtime.table
+        keyJson = runtime.keyJson
+        op = runtime.op
+    }
+}
+
+public struct SQLiteNowDiscardedPendingIntent: Equatable, Sendable {
+    public let rows: [SQLiteNowDiscardedIntentRow]
+
+    internal init(_ runtime: SQLiteNowSyncRuntimeDiscardedPendingIntent) {
+        rows = runtime.rows.map(SQLiteNowDiscardedIntentRow.init)
+    }
+}
+
 public struct SQLiteNowRestoreSummary: Equatable, Sendable {
     public let bundleSeq: Int64
     public let rowCount: Int64
@@ -413,6 +437,10 @@ public struct SQLiteNowRestoreSummary: Equatable, Sendable {
 public enum SQLiteNowAttachResult: Equatable, Sendable {
     case connected(outcome: SQLiteNowAttachOutcome, status: SQLiteNowSyncStatus, restore: SQLiteNowRestoreSummary?)
     case retryLater(retryAfterSeconds: Int64)
+    /// The remote scope is already authoritative while this anonymous database still holds
+    /// unsynced managed rows. Nothing changed; call `discardAnonymousLocalData()` after explicit
+    /// user consent, then attach again.
+    case blockedLocalPendingData(pendingRowCount: Int64)
     case unknown(String)
 
     internal init(_ runtime: SQLiteNowSyncRuntimeAttachResult) {
@@ -429,6 +457,8 @@ public enum SQLiteNowAttachResult: Equatable, Sendable {
             )
         case "retryLater":
             self = .retryLater(retryAfterSeconds: runtime.retryAfterSeconds)
+        case "blockedLocalPendingData":
+            self = .blockedLocalPendingData(pendingRowCount: runtime.pendingRowCount)
         default:
             self = .unknown(runtime.kind)
         }
@@ -1226,6 +1256,24 @@ public final class SQLiteNowSyncClient {
         try await mapRuntimeErrors {
             let outcome = try await runtime.detach()
             return SQLiteNowDetachOutcome(outcome.outcome)
+        }
+    }
+
+    /// Permanently deletes all sync-managed local rows and pending sync intent of an anonymous
+    /// database. This is the only way past `.blockedLocalPendingData` and must follow explicit
+    /// user consent.
+    public func discardAnonymousLocalData() async throws {
+        _ = try await mapRuntimeErrors { try await runtime.discardAnonymousLocalData() }
+    }
+
+    /// Permanently drops the pending local edits that `rebuild()` would otherwise carry across a
+    /// source recovery and reports exactly which rows were dropped. Call it only after `rebuild()`
+    /// fails because those edits cannot be applied to the authoritative snapshot, or when the user
+    /// explicitly abandons unsynced edits; it must follow explicit user consent. Runs only while
+    /// source recovery is required.
+    public func discardPendingIntentForRecovery() async throws -> SQLiteNowDiscardedPendingIntent {
+        try await mapRuntimeErrors {
+            SQLiteNowDiscardedPendingIntent(try await runtime.discardPendingIntentForRecovery())
         }
     }
 

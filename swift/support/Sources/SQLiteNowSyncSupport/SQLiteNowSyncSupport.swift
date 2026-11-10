@@ -122,11 +122,16 @@ private func validPlanningSample(_ sample: [SQLiteNowPushDependencyRecordRef]) -
 }
 
 private func validPlanningFields(_ data: Data, _ fields: Set<String>) -> Bool {
-    guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any], Set(object.keys) == fields,
-          let progress = object["progress"] as? [String: Any],
-          Set(progress.keys) == ["dirtyRows", "outboundRows", "committedBundles"] else { return false }
-    let counters = fields.intersection(["limit", "used", "reserved"])
-    for value in counters.compactMap({ object[$0] }) + Array(progress.values) {
+    guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any], Set(object.keys) == fields
+    else { return false }
+    var counters = fields.intersection(["limit", "used", "reserved"]).compactMap { object[$0] }
+    // Only results that report progress carry it; the exact field set above already rejects a stray one.
+    if fields.contains("progress") {
+        guard let progress = object["progress"] as? [String: Any],
+              Set(progress.keys) == ["dirtyRows", "outboundRows", "committedBundles"] else { return false }
+        counters += Array(progress.values)
+    }
+    for value in counters {
         guard let number = value as? NSNumber,
               ["i", "q", "Q"].contains(String(cString: number.objCType)) else { return false }
     }
