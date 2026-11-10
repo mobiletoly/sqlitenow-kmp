@@ -269,11 +269,20 @@ internal open class CrossTargetSyncTestSupport {
         }
     }
 
-    protected suspend fun scalarText(db: SafeSQLiteConnection, sql: String): String {
+    /**
+     * Reads a single text scalar. SQL NULL reads as the empty string on every driver: the JVM driver
+     * already yields that for NULL, while the native driver yields null, which the non-null return type
+     * turned into a NullPointerException (an empty aggregate such as group_concat over a detached table).
+     * Assertions that must distinguish NULL from '' use [scalarTextOrNull].
+     */
+    protected suspend fun scalarText(db: SafeSQLiteConnection, sql: String): String =
+        scalarTextOrNull(db, sql) ?: ""
+
+    protected suspend fun scalarTextOrNull(db: SafeSQLiteConnection, sql: String): String? {
         return db.withExclusiveAccess {
             db.prepare(sql).use { st ->
                 check(st.step())
-                st.getText(0)
+                if (st.isNull(0)) null else st.getText(0)
             }
         }
     }
