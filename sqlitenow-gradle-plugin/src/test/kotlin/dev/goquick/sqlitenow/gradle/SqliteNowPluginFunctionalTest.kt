@@ -1008,6 +1008,12 @@ class SqliteNowPluginFunctionalTest {
             FROM person
             WHERE id = :id;
         """.trimIndent())
+        // Debug logging is emitted where a statement notifies table changes; query parameters are never logged.
+        writeFixtureFile(
+            projectDir.resolve("src/commonMain/sql/DebugDatabase"),
+            "queries/person/updateName.sql",
+            "UPDATE person SET name = :name WHERE id = :id;",
+        )
 
         runGradle(projectDir, "generateDebugDatabase", "--stacktrace")
 
@@ -1016,7 +1022,11 @@ class SqliteNowPluginFunctionalTest {
         assertTrue(schemaDatabase.exists(), "Configured schema database file should be created")
         assertSqliteHeader(schemaDatabase)
         assertGeneratedTreeContains(generatedRoot, "withContextAndTrace")
-        assertGeneratedTreeContains(generatedRoot, "sqliteNowLogger.d")
+        assertGeneratedTreeContains(generatedRoot, "sqliteNowLogger.d { \"notifyTablesChanged -> \"")
+        assertTrue(
+            generatedRoot.walkTopDown().filter { it.isFile && it.extension == "kt" }.none { it.readText().contains("__paramsLog") },
+            "Debug code must not log query parameter values",
+        )
 
         schemaDatabase.writeText("stale-content")
         runGradle(projectDir, "generateDebugDatabase", "--stacktrace")
