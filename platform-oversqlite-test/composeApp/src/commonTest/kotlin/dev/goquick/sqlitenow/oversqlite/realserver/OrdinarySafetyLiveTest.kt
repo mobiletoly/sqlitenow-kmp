@@ -126,7 +126,8 @@ internal class OrdinarySafetyLiveTest : RealServerHarnessSupport() {
                     assertTrue(vector.getValue(table).isEmpty(), "retired owner $table")
                 assertEquals(OversqliteOperationState(), OversqliteOperationStateStore(target.connection()).loadState())
                 assertEquals(OversqliteOutboxBundleState(), OversqliteOutboxStateStore(target.connection()).loadBundleState())
-                assertEquals(WorkspaceCharge(1, 536 + 6 * scalarLong(target, "SELECT length(CAST(recovery_state AS BLOB)) FROM _sync_operation_state")), OversqliteWorkspace(target.connection(), cfg).usage(applyUnit("author-live-recovery", 0, "")))
+                // Idle charge (2 entries, 1126 bytes, as WorkspaceUsageTest) plus the retained recovery state.
+                assertEquals(WorkspaceCharge(2, 1126 + 6 * scalarLong(target, "SELECT length(CAST(recovery_state AS BLOB)) FROM _sync_operation_state")), OversqliteWorkspace(target.connection(), cfg).usage(applyUnit("author-live-recovery", 0, "")))
                 assertEquals(0L, scalarLong(target, "SELECT count(*) FROM pragma_foreign_key_check"))
             }
             suspend fun exercise(mode: String, sequence: Long, childName: String, parent: String) {
