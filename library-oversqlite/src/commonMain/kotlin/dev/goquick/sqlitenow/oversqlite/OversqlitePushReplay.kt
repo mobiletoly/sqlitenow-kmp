@@ -166,22 +166,24 @@ internal class OversqlitePushReplayExecutor(
         reservationBase: WorkspaceCharge? = null,
         decisionContinuation: ReplayDecisionContinuation? = null,
         // Lost-freeze recovery settles a retained outcome that no frozen row produced. Local
-        // intent whose live state already equals the committed effect is satisfied by it.
+        // intent whose live state already equals the committed effect is satisfied by it, and an
+        // effect that a later pulled version superseded is skipped.
         satisfiedIntentAccepts: Boolean = false,
     ): Set<String> {
         require(committedRows.size.toLong() == committed.rowCount) {
             "committed push replay row count ${committedRows.size} does not match expected row_count ${committed.rowCount}"
         }
         requireCommittedEffectCoverage(uploadedRows, committedRows)
+        val effects = if (satisfiedIntentAccepts) withoutSupersededRetainedEffects(state, committedRows, committed, statementCache) else committedRows
 
-        val decisions = buildReplayPlans(state, uploadedRows, committedRows, statementCache,reservationToken,reservationBase,decisionContinuation,satisfiedIntentAccepts)
+        val decisions = buildReplayPlans(state, uploadedRows, effects, statementCache,reservationToken,reservationBase,decisionContinuation,satisfiedIntentAccepts)
         val plans = decisions.plans
-        val acknowledgementOnly = canAcknowledgeWithoutBusinessWrites(state, committedRows, plans, statementCache)
+        val acknowledgementOnly = canAcknowledgeWithoutBusinessWrites(state, effects, plans, statementCache)
         // Strategy is part of the derived unit: a resumed writer must not reuse
         // a root-only plan if uploaded-row edits or application triggers require closure.
         val unit = applyUnit(if (acknowledgementOnly) "push-ack" else "push", committed.bundleSeq, committed.bundleHash)
-        bundleApplier.survivors.prepare(state, unit, committedRows.size, operationKind = "settlement", workspaceStatementCache = statementCache, replayStatementCache = statementCache, discoverDependents = !acknowledgementOnly) { index ->
-            val row = committedRows[index]
+        bundleApplier.survivors.prepare(state, unit, effects.size, operationKind = "settlement", workspaceStatementCache = statementCache, replayStatementCache = statementCache, discoverDependents = !acknowledgementOnly) { index ->
+            val row = effects[index]
             if (plans[row.toRowRef()]?.action is ReplayRowAction.PreserveLocal) {
                 bundleApplier.survivors.capture(state, row.tableName, row.localPk, workspaceStatementCache = statementCache, replayStatementCache = statementCache)
             } else ApplySurvivor(row.tableName, row.localPk, row.payload, wire = true)
@@ -194,7 +196,7 @@ internal class OversqlitePushReplayExecutor(
         }
         val updatedTables = linkedSetOf<String>()
         bundleApplier.survivors.installUniqueFinalState(state,statementCache)
-        for (row in committedRows) {
+        for (row in effects) {
             val bundleRow = BundleRow(
                 schema = row.schemaName,
                 table = row.tableName,
@@ -243,6 +245,31 @@ internal class OversqlitePushReplayExecutor(
         outboxStateStore.clearBundleAndRows(statementCache, pagedSettlement = true, terminalDisposition = true)
         assertReplayResidualDirtyState(uploadedRows, plans, statementCache)
         return updatedTables
+    }
+
+    /**
+     * A retained outcome recovered after a lost local freeze can meet keys that pull already moved past
+     * it. Once the pull checkpoint is at or past C's bundle, pull installed C itself and every later
+     * version, so a higher authoritative version for one of C's keys is a later server state that
+     * replaced C's effect, and any intent for that key was written after that pull on the higher base.
+     * Such an effect is skipped entirely. Before that checkpoint a higher version is an integrity failure.
+     */
+    private suspend fun withoutSupersededRetainedEffects(
+        state: RuntimeState,
+        rows: List<CommittedReplayRow>,
+        committed: CommittedPushBundle,
+        statementCache: StatementCache,
+    ): List<CommittedReplayRow> {
+        var checkpoint: Long? = null
+        return rows.filter { row ->
+            val current = syncStateStore.loadStructuredRowState(state.validated.schemaForTable(row.tableName), row.tableName, row.keyJson, statementCache)
+            if (!current.exists || current.rowVersion <= row.rowVersion) return@filter true
+            val seen = checkpoint ?: attachmentStateStore.loadState().lastBundleSeqSeen.also { checkpoint = it }
+            check(seen >= committed.bundleSeq) {
+                "committed effect for ${row.schemaName}.${row.tableName} would lower row version from ${current.rowVersion} to ${row.rowVersion}"
+            }
+            false
+        }
     }
 
     private suspend fun canAcknowledgeWithoutBusinessWrites(

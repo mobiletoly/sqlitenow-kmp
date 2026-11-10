@@ -146,6 +146,62 @@ internal class SourceRecoveryPreservedIntentTest : CrossTargetSyncTestSupport() 
         }
     }
 
+    /**
+     * A retained application rejection describes the retired source's request, which the carry releases
+     * after requeueing its intent. The rejection goes with it, so the carried edit uploads under the
+     * replacement source instead of waiting on a decision that can no longer select anything.
+     */
+    @Test
+    fun retainedRejectionIsReleasedWithTheCarriedRequest() = runOwnedWebDatabaseTest {
+        val server = MockSyncServer()
+        val db = newDb()
+        val verifyDb = newDb()
+        val http = server.newHttpClient()
+        val verifyHttp = server.newHttpClient()
+        try {
+            createUsersAndPostsTables(db)
+            createUsersAndPostsTables(verifyDb)
+            val client = newClient(db, http)
+            val verifyClient = newClient(verifyDb, verifyHttp)
+            client.openAndConnect("user-1").getOrThrow()
+            verifyClient.openAndConnect("user-1").getOrThrow()
+            insertUser(db, "u1", "Synced")
+            client.pushPending().getOrThrow()
+            val oldSource = currentSource(db)
+
+            // The server rejects the next upload; the rejection is retained for an explicit decision.
+            updateUserName(db, "u1", "Rejected offline")
+            server.applicationRejectionCode = "application_rejected"
+            assertTrue(client.pushPending().isFailure)
+            server.applicationRejectionCode = null
+            assertEquals("rejected", scalarText(db, "SELECT state FROM _sync_outbox_bundle"))
+            assertEquals("rejected", scalarText(db, "SELECT decision_state FROM _sync_conflict_state"))
+
+            // The server then retires the source, and rebuild carries the rejected request's intent.
+            server.retiredSources[oldSource] = "replacement-source"
+            markSourceRecoveryRequired(db, SourceRecoveryReason.SOURCE_RETIRED, "replacement-source")
+            client.rebuild().getOrThrow()
+
+            assertEquals("replacement-source", currentSource(db))
+            assertEquals("none", scalarText(db, "SELECT decision_state FROM _sync_conflict_state"),
+                "the carry releases the rejection together with the request it described")
+            assertEquals("none", scalarText(db, "SELECT state FROM _sync_outbox_bundle"))
+            assertEquals(listOf("users/u1/UPDATE/1"), pendingIntent(db))
+            assertEquals("Rejected offline", scalarText(db, "SELECT name FROM users WHERE id='u1'"))
+
+            assertEquals(PushOutcome.COMMITTED, client.pushPending().getOrThrow().outcome)
+            assertEquals(0L, scalarLong(db, "SELECT count(*) FROM _sync_dirty_rows"))
+            assertEquals(2L, scalarLong(db, "SELECT next_source_bundle_id FROM _sync_source_state WHERE source_id='replacement-source'"))
+            verifyClient.pullToStable().getOrThrow()
+            assertEquals("Rejected offline", scalarText(verifyDb, "SELECT name FROM users WHERE id='u1'"))
+        } finally {
+            http.close()
+            verifyHttp.close()
+            db.close()
+            verifyDb.close()
+        }
+    }
+
     @Test
     fun editThatCannotApplyToSnapshotBlocksRebuildUntilExplicitDiscard() = runOwnedWebDatabaseTest {
         val server = MockSyncServer()

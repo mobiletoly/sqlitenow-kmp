@@ -294,4 +294,100 @@ internal class LostFreezeRecoveryTest : CrossTargetSyncTestSupport() {
     @Test fun lostFreezeAfterServerCancellationRequeuesFrozenIntent() = runOwnedWebDatabaseTest {
         lostFreezeConverges("cancelled")
     }
+
+    /**
+     * A lost freeze can leave no dirty row behind: when the application deletes the row the lost
+     * freeze inserted, the next push prunes that no-op without consuming the sequence, so pull is
+     * admitted. Pull then installs the source's own lost bundle C and a peer's later version of the
+     * same key. The next freeze reuses C's sequence and recovers C through the retained lookup. C's
+     * effect for that key is history the pulled version already superseded: settlement must neither
+     * lower the row nor refuse, and the new intent must upload under the next sequence.
+     */
+    @Test fun retainedEffectSupersededByPulledVersionSettlesWithoutLoweringIt() = runOwnedWebDatabaseTest {
+        val db = newDb()
+        val peerDb = newDb()
+        val server = MockSyncServer()
+        val http = server.newHttpClient()
+        val peerHttp = server.newHttpClient()
+        createUsersAndPostsTables(db)
+        createUsersAndPostsTables(peerDb)
+        var client = newClient(db, http)
+        val peer = newClient(peerDb, peerHttp)
+        suspend fun adaVersion(): Long = scalarLong(db,
+            "SELECT row_version FROM _sync_row_state WHERE table_name='users' AND json_extract(key_json,'$.id')='ada'")
+        try {
+            client.openAndConnect("user-1").getOrThrow()
+            peer.openAndConnect("user-1").getOrThrow()
+            insertUser(db, "seed", "Seed")
+            client.sync().getOrThrow()
+            val source = scalarText(db, "SELECT current_source_id FROM _sync_attachment_state")
+            val sequence = scalarLong(db, "SELECT next_source_bundle_id FROM _sync_source_state WHERE source_id='$source'")
+
+            insertUser(db, "ada", "Ada")
+            val durableTables = captureDurableSyncState(db)
+            server.beforePushResponse = { throw CancellationException("committed response lost") }
+            assertNotNull(lostExchange(client), "the committed answer must be lost")
+            assertEquals("committed", server.terminalStatuses["$source\u0000$sequence"])
+            client.closeFromCoordinatedOwner()
+            loseSyncCommitsSince(db, durableTables)
+            assertEquals(sequence, scalarLong(db, "SELECT next_source_bundle_id FROM _sync_source_state WHERE source_id='$source'"))
+
+            // A peer replaces C's effect with a later version.
+            peer.pullToStable().getOrThrow()
+            updateUserName(peerDb, "ada", "peer edit")
+            assertEquals(PushOutcome.COMMITTED, peer.pushPending().getOrThrow().outcome)
+
+            // The application deletes the never-published row; the pruned no-op leaves nothing dirty
+            // and the sequence unused, so pull installs C and then the peer's version.
+            db.execSQL("DELETE FROM users WHERE id='ada'")
+            client = newClient(db, http)
+            client.openAndConnect("user-1").getOrThrow()
+            val pushMark = server.pushBodies.size
+            assertEquals(PushOutcome.NO_CHANGE, client.pushPending().getOrThrow().outcome)
+            assertEquals(pushMark, server.pushBodies.size, "a pruned no-op dispatches nothing")
+            assertEquals(0L, scalarLong(db, "SELECT count(*) FROM _sync_dirty_rows"))
+            client.pullToStable().getOrThrow()
+            val pulledVersion = adaVersion()
+            assertEquals("peer edit", scalarText(db, "SELECT name FROM users WHERE id='ada'"))
+
+            // New intent reuses the lost sequence, so the server answers with a mismatch.
+            insertUser(db, "bob", "Bob")
+            // A higher version is history only once pull has passed C; before that it is an integrity failure.
+            val checkpoint = scalarLong(db, "SELECT last_bundle_seq_seen FROM _sync_attachment_state")
+            db.execSQL("UPDATE _sync_attachment_state SET last_bundle_seq_seen=1")
+            val fenced = client.pushPending().exceptionOrNull()
+            assertNotNull(fenced)
+            assertTrue("would lower row version" in fenced.message.orEmpty(), fenced.toString())
+            assertEquals(pulledVersion, adaVersion())
+            db.execSQL("UPDATE _sync_attachment_state SET last_bundle_seq_seen=$checkpoint")
+
+            assertEquals(PushOutcome.COMMITTED, client.pushPending().getOrThrow().outcome)
+            assertEquals(listOf(sequence), server.retainedRequests.map { it.sourceBundleId })
+            assertEquals(sequence, server.ackRequests.last().sourceBundleId)
+            assertEquals(sequence + 1, scalarLong(db, "SELECT next_source_bundle_id FROM _sync_source_state WHERE source_id='$source'"))
+            // The superseded effect changed nothing: the pulled version and value stay authoritative.
+            assertEquals(pulledVersion, adaVersion())
+            assertEquals("peer edit", scalarText(db, "SELECT name FROM users WHERE id='ada'"))
+            assertEquals("users/bob/INSERT/0", scalarText(db,
+                "SELECT group_concat(table_name||'/'||json_extract(key_json,'$.id')||'/'||op||'/'||base_row_version) FROM _sync_dirty_rows"))
+
+            assertEquals(PushOutcome.COMMITTED, client.pushPending().getOrThrow().outcome)
+            assertEquals(setOf("users:INSERT:bob:0"), pushedRows(server, server.pushBodies.last()))
+            assertEquals(sequence + 1, server.ackRequests.last().sourceBundleId)
+            assertEquals(0L, scalarLong(db, "SELECT count(*) FROM _sync_dirty_rows"))
+            assertEquals(0L, scalarLong(db, "SELECT count(*) FROM _sync_outbox_rows"))
+            assertEquals(0L, scalarLong(db, "SELECT count(*) FROM _sync_upload_journal"))
+            assertEquals(sequence + 2, scalarLong(db, "SELECT next_source_bundle_id FROM _sync_source_state WHERE source_id='$source'"))
+            val remote = server.remoteRowsForBaselineTest()
+            assertTrue("peer edit" in remote.getValue("users/id=ada"), remote.toString())
+            assertTrue("Bob" in remote.getValue("users/id=bob"), remote.toString())
+        } finally {
+            client.closeFromCoordinatedOwner()
+            peer.closeFromCoordinatedOwner()
+            http.close()
+            peerHttp.close()
+            db.close()
+            peerDb.close()
+        }
+    }
 }
