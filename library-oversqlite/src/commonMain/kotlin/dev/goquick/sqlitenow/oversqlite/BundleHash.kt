@@ -444,10 +444,78 @@ private fun renderJcsDecimal(value: ExactDecimal, negative: Boolean): String {
     return "$sign$mantissa" + "e${if (exponent >= 0) "+" else ""}$exponent"
 }
 
-private fun multiplyPower(initial: String, multiplier: Int, exponent: Int): String {
-    var result = initial
-    repeat(exponent) { result = multiplySmall(result, multiplier) }
-    return result
+private const val POWER_LIMB_BASE = 10_000
+private const val POWER_LIMB_DIGITS = 4
+// A limb times a factor of at most this, plus the carry, stays below 2^31.
+private const val POWER_FACTOR_LIMIT = 200_000
+
+/**
+ * Decimal digits of `initial × multiplier^exponent`, where [initial] is a non-negative decimal
+ * integer without leading zeros and [multiplier] is 2..10.
+ *
+ * Every finite binary64 number is expanded through this function three times per rendering, with
+ * exponents near 50 for everyday values and up to 1074 for subnormals. The digits are held as
+ * base-10^4 limbs and multiplied by several powers at once, in plain Int arithmetic so the cost is
+ * the same on every target. The result is exactly that of digit-by-digit decimal multiplication.
+ */
+internal fun multiplyPower(initial: String, multiplier: Int, exponent: Int): String {
+    if (exponent == 0) return initial
+    require(exponent > 0 && multiplier in 2..10) { "unsupported power $multiplier^$exponent" }
+
+    // Each multiplication by at most 10 adds at most one decimal digit.
+    val limbs = IntArray((initial.length + exponent) / POWER_LIMB_DIGITS + 2)
+    var used = 0
+    var end = initial.length
+    while (end > 0) {
+        val start = maxOf(0, end - POWER_LIMB_DIGITS)
+        var limb = 0
+        for (index in start until end) {
+            val digit = initial[index] - '0'
+            require(digit in 0..9) { "decimal digits required" }
+            limb = limb * 10 + digit
+        }
+        limbs[used++] = limb
+        end = start
+    }
+
+    var powersPerPass = 1
+    var passFactor = multiplier
+    while (passFactor * multiplier <= POWER_FACTOR_LIMIT) {
+        passFactor *= multiplier
+        powersPerPass++
+    }
+    var remaining = exponent
+    while (remaining > 0) {
+        var factor = passFactor
+        if (remaining < powersPerPass) {
+            factor = 1
+            repeat(remaining) { factor *= multiplier }
+            remaining = 0
+        } else {
+            remaining -= powersPerPass
+        }
+        var carry = 0
+        for (index in 0 until used) {
+            val product = limbs[index] * factor + carry
+            limbs[index] = product % POWER_LIMB_BASE
+            carry = product / POWER_LIMB_BASE
+        }
+        while (carry > 0) {
+            limbs[used++] = carry % POWER_LIMB_BASE
+            carry /= POWER_LIMB_BASE
+        }
+    }
+
+    val out = StringBuilder(used * POWER_LIMB_DIGITS)
+    out.append(limbs[used - 1])
+    for (index in used - 2 downTo 0) {
+        val limb = limbs[index]
+        if (limb < 1000) out.append('0')
+        if (limb < 100) out.append('0')
+        if (limb < 10) out.append('0')
+        out.append(limb)
+    }
+    return out.toString()
 }
 
 private fun multiplySmall(value: String, multiplier: Int): String {
