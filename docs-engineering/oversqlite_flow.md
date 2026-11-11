@@ -310,6 +310,18 @@ continuation or reopen. Other phases and raw callers retain fresh accounting.
 This removes repeated metadata reads, while relationship scans and work charges
 remain unchanged.
 
+Pull indexes only the relationships its dependency walk can read. The walk looks a
+relationship up by a parent row that is already in the plan, and a plan row is either
+a pulled row or a child found through such a lookup. The pulled rows' tables, plus
+every table that holds a foreign key to a reached table, therefore bound the parents
+that matter. Relationships whose parent table is outside that set are not visited:
+a pull of rows that nothing references indexes nothing, and its preparation does not
+grow with unrelated tables. A pull that touches a referenced table still indexes
+every row of the tables below it. The pulled tables are known only to the writer
+that seeded every root; a plan resumed by a later writer indexes every relationship,
+as before. Settlement, conflict resolution and snapshot installation always index
+every relationship.
+
 ## 8. Recovery And Intent Preservation
 
 The most important recovery invariant is:

@@ -215,6 +215,10 @@ internal class OversqliteApplySurvivors(
         fun endAccounting() { accounting?.close(); accounting = null }
         var indexSnapshot: IndexAccountingSnapshot? = null
         var indexSnapshotAttempted = false
+        // Known only when this writer seeds every root itself; a resumed plan indexes everything.
+        var seededRootTables: MutableSet<String>? = null
+        var walkableParentTables: Set<String>? = null
+        var walkableParentTablesResolved = false
         suspend fun checkIndexSpace(entries: Long, bytes: Long) {
             val held = indexSnapshot
             if (held != null) {
@@ -255,14 +259,22 @@ internal class OversqliteApplySurvivors(
                         plan.phase = if (!discoverDependents) (if(hasUnique) "unique" else "ready") else "index"; plan.fk = -1; if(plan.phase=="unique"){plan.root=0;plan.fk=0}
                     } else {
                         endAccounting()
+                        if (plan.root == 0L) seededRootTables = if (operationKind == "pull") linkedSetOf() else null
                         val row = seed(plan.root.toInt())
+                        seededRootTables?.add(row.table.lowercase())
                         // Only the library-owned snapshot provider promises read-only root queries.
                         // Arbitrary callbacks can change schema/trigger eligibility as well as accounting.
                         if (!readOnlySnapshotSeed) accountingEligible = null
                         startAccounting()
                         put(plan, row, workspaceStatementCache, replayStatementCache = replayStatementCache, accounting = accounting); plan.root++
                     }
-                    "index" -> indexStep(state, plan, ::checkIndexSpace, replayStatementCache = replayStatementCache)
+                    "index" -> {
+                        if (!walkableParentTablesResolved) {
+                            walkableParentTables = seededRootTables?.let { walkableParentTables(state, it) }
+                            walkableParentTablesResolved = true
+                        }
+                        indexStep(state, plan, ::checkIndexSpace, replayStatementCache = replayStatementCache, walkableParentTables = walkableParentTables)
+                    }
                     "walk" -> walk(state, plan, workspaceStatementCache, replayStatementCache = replayStatementCache, accounting = accounting)
                     "unique" -> uniqueStep(state,plan,workspaceStatementCache,replayStatementCache,accounting)
                     "unique_schedule" -> uniqueScheduleStep(plan,replayStatementCache)
@@ -490,7 +502,33 @@ internal class OversqliteApplySurvivors(
         else exec("DELETE FROM _sync_apply_plan", replayStatementCache = replayStatementCache)
     }
 
-    private suspend fun indexStep(state: RuntimeState, p: ApplyPlan, admit: suspend (Long, Long) -> Unit, replayStatementCache: StatementCache?) {
+    /**
+     * Tables whose rows the dependency walk can reach from [rootTables]: the roots' own tables
+     * and, transitively, every table holding a foreign key to a reached table.
+     *
+     * The walk reads an indexed relationship only by a parent row that is already in the plan,
+     * and a plan row is either a root or a child found through such a read. Every plan row's
+     * table is therefore in this set, and a relationship whose parent table is outside it can
+     * never be read. Leaving those relationships out of the index changes no walk result.
+     */
+    private fun walkableParentTables(state: RuntimeState, rootTables: Set<String>): Set<String> {
+        val reached = rootTables.toMutableSet()
+        do {
+            var grew = false
+            for (candidate in state.validated.tables) {
+                val name = candidate.tableName.lowercase()
+                if (name in reached) continue
+                val references = state.validated.tableInfoByName.getValue(candidate.tableName).foreignKeys
+                if (references.any { it.refTable.lowercase() in reached }) { reached += name; grew = true }
+            }
+        } while (grew)
+        return reached
+    }
+
+    private suspend fun indexStep(
+        state: RuntimeState, p: ApplyPlan, admit: suspend (Long, Long) -> Unit, replayStatementCache: StatementCache?,
+        walkableParentTables: Set<String>? = null,
+    ) {
         if (p.table >= state.validated.tables.size) {
             p.phase = "walk"; p.table = 0; p.fk = 0; p.cursor = null
             return
@@ -498,9 +536,13 @@ internal class OversqliteApplySurvivors(
         val table = state.validated.tables[p.table.toInt()].tableName
         val info = state.validated.tableInfoByName.getValue(table)
         if (info.foreignKeys.isEmpty()) { p.table++; p.fk = -1; p.cursor = null; return }
+        fun walkable(fk: ForeignKeyInfo) = walkableParentTables == null || fk.refTable.lowercase() in walkableParentTables
+        // No relationship of this table can be read by the walk: do not visit its rows at all.
+        if (info.foreignKeys.none(::walkable)) { p.table++; p.fk = -1; p.cursor = null; return }
         if (p.fk < 0) { nextIndexKey(state, p, table, info, admit, replayStatementCache = replayStatementCache); return }
         if (p.fk >= info.foreignKeys.size) { p.fk = -1; return }
-        indexForeignKey(state, p, table, info, info.foreignKeys[p.fk.toInt()], admit, replayStatementCache = replayStatementCache)
+        val fk = info.foreignKeys[p.fk.toInt()]
+        if (walkable(fk)) indexForeignKey(state, p, table, info, fk, admit, replayStatementCache = replayStatementCache)
         p.fk++
     }
 
