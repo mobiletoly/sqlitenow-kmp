@@ -600,19 +600,10 @@ private fun emitBootstrapTableSql(slot: Int, schema: BootstrapTableSchema, schem
         out.text(" AND a.key_json=s.key_json COLLATE BINARY WHERE s.snapshot_id=? AND (a.key_json IS NULL OR a.server_kind!='live'")
         out.text(" OR a.row_version!=s.row_version OR a.relationships_known!=1 OR a.server_revision!=?+s.row_ordinal OR a.server_context_id!=?")
         out.text(" OR a.server_provenance!="); out.text(baselineProvenanceSql("'snapshot'", "?", "?"))
-        out.text(" COLLATE BINARY OR json_type(a.server_payload)!='object' OR (SELECT count(*) FROM json_each(a.server_payload))!=${schema.columns.size}")
-        for ((index, column) in schema.columns.withIndex()) {
-            val path = literal("$.\"${column.name}\"")
-            val objectExpr = "json_extract(a.server_payload,$path)"
-            out.text(" OR (SELECT count(*) FROM json_each(a.server_payload) WHERE key=${literal(column.name)} COLLATE BINARY)!=1")
-            out.text(" OR COALESCE(json_type(a.server_payload,$path),'')!='object' OR (SELECT count(*) FROM json_each($objectExpr))!=2")
-            out.text(" OR (SELECT count(*) FROM json_each($objectExpr) WHERE key='storage' AND type='text')!=1")
-            out.text(" OR (SELECT count(*) FROM json_each($objectExpr) WHERE key='value')!=1")
-            out.text(" OR json_extract($objectExpr,'$.storage')!=typeof(${scalar(index)}) COLLATE BINARY")
-            out.text(" OR COALESCE(json_type($objectExpr,'$.value'),'')!=CASE WHEN ${scalar(index)} IS NULL THEN 'null' ELSE 'text' END")
-            out.text(" OR NOT (json_extract($objectExpr,'$.value') IS ${scalarText(index)} COLLATE BINARY)")
-        }
-        out.text("))")
+        // The stored payload must be exactly the canonical object the baseline statement builds from this stage row:
+        // equal bytes fix the member set, each member's storage tag and its canonical value text, and reject any other
+        // representation. Regenerating it costs one json_object per row instead of JSON functions per column.
+        out.text(" COLLATE BINARY OR a.server_payload IS NOT "); payload(out); out.text(" COLLATE BINARY))")
     }
     for ((foreignIndex, foreign) in schema.foreignKeys.withIndex()) {
         val parent = schemas[foreign.parentSlot]
