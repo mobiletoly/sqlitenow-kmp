@@ -146,7 +146,7 @@ internal class SnapshotBootstrapInstallerTest : SnapshotBootstrapTestSupport() {
     }
 
     @Test fun independentFinalChecksRejectObservedStateMutations() = runOwnedWebDatabaseTest {
-        for (target in listOf("business_check", "baseline_check", "relationship_check")) exerciseFinalFault(target, "mutation")
+        for (target in listOf("business_check", "baseline_check", "relationship_check", "extra_relationship_check")) exerciseFinalFault(target, "mutation")
     }
 
     private suspend fun exerciseFinalFault(target: String, fault: String) {
@@ -161,7 +161,7 @@ internal class SnapshotBootstrapInstallerTest : SnapshotBootstrapTestSupport() {
                 "baseline" -> childTable.baselineSql
                 "relationship" -> childTable.foreignSql.single().insert
                 "business_check" -> childTable.businessVerificationSql
-                "relationship_check" -> childTable.foreignSql.single().verification
+                "relationship_check", "extra_relationship_check" -> childTable.foreignSql.single().verification
                 else -> childTable.authoritativeVerificationSql
             }
             var reached = false; var secondaryReached = false
@@ -188,6 +188,10 @@ internal class SnapshotBootstrapInstallerTest : SnapshotBootstrapTestSupport() {
                                         connection.execSQL("UPDATE _sync_row_state SET server_payload=json_set(server_payload,'$.amount.value','7') WHERE table_name='bootstrap_children'")
                                     }
                                     "relationship_check" -> connection.execSQL("DELETE FROM _sync_relationships")
+                                    // Every expected edge stays present; only the reverse direction can see this one.
+                                    "extra_relationship_check" -> connection.execSQL("""INSERT INTO _sync_relationships
+                                        SELECT view,child_schema,child_table,'{"id":"stray"}',fk_column,parent_schema,parent_table,parent_key,owner_revision
+                                        FROM _sync_relationships LIMIT 1""")
                                 }
                             }
                             connection.prepare(sql).also { if (matches) watched = it }

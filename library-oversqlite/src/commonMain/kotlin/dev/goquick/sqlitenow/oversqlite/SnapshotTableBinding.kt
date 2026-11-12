@@ -624,9 +624,12 @@ private fun emitBootstrapTableSql(slot: Int, schema: BootstrapTableSchema, schem
             out.text(" p WHERE p.snapshot_id=s.snapshot_id AND p.v${foreign.parentColumn}=s.v${foreign.column} COLLATE ")
             out.identifier(foreign.collation); out.text("))")
         }
-        fun edge(): String = "'server' AS view,${literal(schema.generationTable.schema)} AS child_schema,${literal(schema.generationTable.table)} AS child_table,s.key_json AS child_key," +
-            "${literal(schema.columns[foreign.column].name.lowercase())} AS fk_column,${literal(parent.generationTable.schema)} AS parent_schema," +
-            "${literal(parent.generationTable.table)} AS parent_table,p.key_json AS parent_key,?+s.row_ordinal AS owner_revision"
+        fun edgeColumns(base: String): List<Pair<String, String>> = listOf("view" to "'server'",
+            "child_schema" to literal(schema.generationTable.schema), "child_table" to literal(schema.generationTable.table),
+            "child_key" to "s.key_json", "fk_column" to literal(schema.columns[foreign.column].name.lowercase()),
+            "parent_schema" to literal(parent.generationTable.schema), "parent_table" to literal(parent.generationTable.table),
+            "parent_key" to "p.key_json", "owner_revision" to "$base+s.row_ordinal")
+        fun edge(): String = edgeColumns("?").joinToString(",") { (name, value) -> "$value AS $name" }
         statement("foreign.$foreignIndex.insert") { out ->
             out.text("INSERT INTO _sync_relationships(view,child_schema,child_table,child_key,fk_column,parent_schema,parent_table,parent_key,owner_revision) SELECT ")
             out.text(edge()); out.text(join); range(out, "s."); out.text(" AND s.v${foreign.column} IS NOT NULL")
@@ -636,7 +639,12 @@ private fun emitBootstrapTableSql(slot: Int, schema: BootstrapTableSchema, schem
             out.text(" WHERE s.snapshot_id=? AND s.v${foreign.column} IS NOT NULL) SELECT ")
             val equality = listOf("view", "child_schema", "child_table", "child_key", "fk_column", "parent_schema", "parent_table", "parent_key", "owner_revision").joinToString(" AND ") { "r.$it=e.$it COLLATE BINARY" }
             out.text("EXISTS(SELECT 1 FROM expected e WHERE NOT EXISTS(SELECT 1 FROM _sync_relationships r WHERE $equality)) OR ")
-            out.text("EXISTS(SELECT 1 FROM _sync_relationships r WHERE r.view='server' AND r.child_schema=${literal(schema.generationTable.schema)} AND r.child_table=${literal(schema.generationTable.table)} AND r.fk_column=${literal(schema.columns[foreign.column].name.lowercase())} AND NOT EXISTS(SELECT 1 FROM expected e WHERE $equality)),(SELECT count(*) FROM expected)")
+            // An expected edge's owner revision is base + its child's row ordinal, so the only staged
+            // row that can match a relationship is the one at owner_revision - base: read it by key.
+            // ?1 and ?2 are the base revision and snapshot id bound for the expected set above.
+            val stagedEquality = edgeColumns("?1").joinToString(" AND ") { (name, value) -> "r.$name=($value) COLLATE BINARY" }
+            out.text("EXISTS(SELECT 1 FROM _sync_relationships r WHERE r.view='server' AND r.child_schema=${literal(schema.generationTable.schema)} AND r.child_table=${literal(schema.generationTable.table)} AND r.fk_column=${literal(schema.columns[foreign.column].name.lowercase())} AND NOT EXISTS(SELECT 1")
+            out.text(join); out.text(" WHERE s.snapshot_id=?2 AND s.row_ordinal=r.owner_revision-?1 AND s.v${foreign.column} IS NOT NULL AND $stagedEquality)),(SELECT count(*) FROM expected)")
         }
     }
     statement("create") { out ->
