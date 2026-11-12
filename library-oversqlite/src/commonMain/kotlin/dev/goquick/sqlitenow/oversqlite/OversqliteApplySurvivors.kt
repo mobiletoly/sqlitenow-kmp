@@ -1114,7 +1114,10 @@ internal class OversqliteApplySurvivors(
             ) {
                 it.getLong(0)
             } ?: 0
-        if (edges == 0L && p.kind != "snapshot") return
+        // The cycle working set is built only from unique transfer edges: without one, no
+        // component is ever vacated and preservation has no unresolved rows to close over.
+        // Snapshots reserve their unique install work earlier, so they skip only this charge.
+        if (edges == 0L) return
         val pairs = p.entries + OversqliteWorkspace(db, config).scale(p.unit, p.visit, p.visit)
         checkSpace(
             p,

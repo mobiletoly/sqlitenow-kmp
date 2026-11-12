@@ -322,6 +322,15 @@ that seeded every root; a plan resumed by a later writer indexes every relations
 as before. Settlement, conflict resolution and snapshot installation always index
 every relationship.
 
+The unique-cycle working set (the transfer arcs, their reachability, the vacated
+component and its foreign-key closure) is admitted before business mutation only
+when planning recorded at least one unique transfer edge. Without one, no row waits
+on another, no component is vacated and snapshot preservation has no unresolved rows
+to close over, so every plan kind, snapshot installation included, skips that charge.
+A snapshot still runs its unique-ordered install loop, whose work is reserved at
+admission; its per-row captures and final verification check their own charges.
+With unique transfer edges the existing charge applies unchanged.
+
 ## 8. Recovery And Intent Preservation
 
 The most important recovery invariant is:
