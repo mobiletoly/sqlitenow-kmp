@@ -6,10 +6,10 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 
 /**
- * Canonical binary64 rendering expands a value exactly as significand × 2^e or significand × 5^e.
- * These tests hold that expansion to digit-by-digit decimal arithmetic, the definition it replaced,
- * across every exponent a finite binary64 value can produce. A single differing digit would change
- * a bundle hash.
+ * The reference binary64 renderer ([referenceCanonicalBinary64]), the oracle for production rendering,
+ * expands a value exactly as significand × 2^e or significand × 5^e. These tests hold that expansion to
+ * digit-by-digit decimal arithmetic across every exponent a finite binary64 value can produce, so the
+ * oracle itself stays exact.
  */
 class CanonicalNumberPowerArithmeticTest {
     private fun decimalStringTimes(value: String, multiplier: Int): String {
@@ -44,7 +44,7 @@ class CanonicalNumberPowerArithmeticTest {
             for (significand in listOf(smallestSignificand, largestSignificand)) {
                 var expected = significand
                 for (exponent in 0..last) {
-                    assertEquals(expected, multiplyPower(significand, multiplier, exponent), "$significand × $multiplier^$exponent")
+                    assertEquals(expected, referenceMultiplyPower(significand, multiplier, exponent), "$significand × $multiplier^$exponent")
                     expected = decimalStringTimes(expected, multiplier)
                 }
             }
@@ -62,7 +62,7 @@ class CanonicalNumberPowerArithmeticTest {
             val significand = random.nextLong(1L, 1L shl 53).toString()
             assertEquals(
                 decimalStringTimesPower(significand, multiplier, exponent),
-                multiplyPower(significand, multiplier, exponent),
+                referenceMultiplyPower(significand, multiplier, exponent),
                 "$significand × $multiplier^$exponent",
             )
         }
@@ -76,7 +76,7 @@ class CanonicalNumberPowerArithmeticTest {
             for (multiplier in listOf(2, 5)) for (exponent in listOf(0, 1, 6, 7, 8, 16, 17, 18, 50, 51, 52, 53)) {
                 assertEquals(
                     decimalStringTimesPower(significand, multiplier, exponent),
-                    multiplyPower(significand, multiplier, exponent),
+                    referenceMultiplyPower(significand, multiplier, exponent),
                     "$significand × $multiplier^$exponent",
                 )
             }

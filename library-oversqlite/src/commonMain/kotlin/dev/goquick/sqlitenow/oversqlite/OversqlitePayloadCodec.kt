@@ -57,6 +57,7 @@ private const val HEX_DIGITS = "0123456789abcdef"
 private val payloadJson = Json
 private val JSON_NUMBER_REGEX = Regex("^-?(0|[1-9]\\d*)(\\.\\d+)?([eE][+-]?\\d+)?$")
 private val EXACT_INT64_REGEX = Regex("^-?(0|[1-9][0-9]*)$")
+private val EXACT_DECIMAL_REGEX = Regex("-?(0|[1-9][0-9]*)(\\.[0-9]+)?")
 
 internal fun bytesToHexLower(bytes: ByteArray): String {
     val out = StringBuilder(bytes.size * 2)
@@ -153,7 +154,9 @@ internal fun normalizeLocalUuidAsCanonicalWire(value: String): String {
 
 internal fun canonicalizeFiniteJsonNumber(value: String): String {
 	require(JSON_NUMBER_REGEX.matches(value)) { "invalid JSON number: $value" }
-	return canonicalizeJsonElement(payloadJson.parseToJsonElement(value))
+	// A lexeme the regex accepts parses to a non-string primitive with this exact content, which the
+	// element canonicalizer would pass to the number canonicalizer unchanged; skip the parse.
+	return canonicalizeJsonNumber(value)
 }
 
 private fun requireSignedInt64(value: String): String {
@@ -189,7 +192,7 @@ private fun requirePermittedText(value: String): String {
 }
 
 private fun requireDecimal(value: String): String {
-    require(Regex("-?(0|[1-9][0-9]*)(\\.[0-9]+)?").matches(value)) { "invalid exact decimal" }
+    require(EXACT_DECIMAL_REGEX.matches(value)) { "invalid exact decimal" }
     require(value.count { it in '0'..'9' } <= 1000) { "decimal exceeds 1000 coefficient digits" }
     require(!value.startsWith('-') || value.any { it in '1'..'9' }) { "negative decimal zero is not canonical" }
     return value

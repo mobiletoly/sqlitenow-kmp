@@ -16,6 +16,8 @@
 package dev.goquick.sqlitenow.oversqlite
 
 import kotlin.math.abs
+import kotlin.math.floor
+import kotlin.math.log10
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
@@ -313,7 +315,7 @@ private fun Int.rotateRight(distance: Int): Int =
 
 private const val MAX_SAFE_JSON_INTEGER = 9_007_199_254_740_991L
 
-private fun canonicalizeJsonNumber(raw: String): String {
+internal fun canonicalizeJsonNumber(raw: String): String {
     // Exact integers below2^53 already have their ECMAScript decimal spelling.
     // Equality excludes alternate lexemes; their rounding and signed-zero rules stay on the general path.
     if (raw.length <= 17) {
@@ -325,108 +327,113 @@ private fun canonicalizeJsonNumber(raw: String): String {
     val number = raw.toDoubleOrNull()
         ?: throw IllegalArgumentException("invalid JSON number: $raw")
     require(number.isFinite()) { "JSON number must be finite: $raw" }
-    if (number == 0.0) return "0"
-
-    val absNumber = abs(number)
-    return renderEcmaScriptBinary64(number, absNumber)
+    return canonicalizeBinary64(number)
 }
 
 private data class ExactDecimal(val digits: String, val scale: Int)
 
+private const val BINARY64_FRACTION_MASK = 0x000fffffffffffffL
+private const val BINARY64_MAX_FINITE_BITS = 0x7fefffffffffffffL
+
+/** RFC 8785 rendering (ECMAScript Number::toString) of a finite binary64 value. */
+internal fun canonicalizeBinary64(value: Double): String {
+    require(value.isFinite()) { "JSON number must be finite: $value" }
+    if (value == 0.0) return "0"
+    return renderEcmaScriptBinary64(value, abs(value))
+}
+
+private fun binary64Significand(bits: Long): Long =
+    if (((bits ushr 52) and 0x7ffL) == 0L) bits and BINARY64_FRACTION_MASK else (bits and BINARY64_FRACTION_MASK) or (1L shl 52)
+
+private fun binary64Exponent(bits: Long): Int {
+    val exponentBits = ((bits ushr 52) and 0x7ffL).toInt()
+    return if (exponentBits == 0) -1074 else exponentBits - 1075
+}
+
+/**
+ * Shortest decimal that reads back as [value], choosing the closest such decimal and, on a tie, the
+ * even one. Every quantity is an exact integer, so no decimal string is built until the result.
+ *
+ * The rounding interval is bounded by the midpoints to the neighbouring doubles (inclusive when the
+ * significand is even). For each precision from 1 to 17 the value's round-half-even digits, then one
+ * below and one above, are tried; the first strictly inside the interval is the result.
+ */
 private fun renderEcmaScriptBinary64(value: Double, magnitude: Double): String {
     val bits = magnitude.toBits()
-    val exact = exactDecimal(bits)
-    val previous = exactDecimal(bits - 1)
-    val lower = half(addDecimal(previous, exact))
-    val upper = if (bits == 0x7fefffffffffffffL) {
-        addDecimal(exact, half(subtractDecimal(exact, previous)))
+    val previous = bits - 1
+    val hasNext = bits != BINARY64_MAX_FINITE_BITS
+    // Express the value and both neighbours as integers in units of 2^unit; the extra halving step
+    // keeps the midpoints integral.
+    var unit = minOf(binary64Exponent(previous), binary64Exponent(bits))
+    if (hasNext) unit = minOf(unit, binary64Exponent(bits + 1))
+    unit -= 1
+    fun scaled(of: Long) = ExactInteger().also { it.setLong(binary64Significand(of)); it.shiftLeft(binary64Exponent(of) - unit) }
+    val exact = scaled(bits)
+    val lower = scaled(previous).also { it.add(exact); it.shiftRightOne() }
+    val upper = if (hasNext) {
+        scaled(bits + 1).also { it.add(exact); it.shiftRightOne() }
     } else {
-        half(addDecimal(exact, exactDecimal(bits + 1)))
+        ExactInteger().also { it.copyFrom(exact); it.subtract(scaled(previous)); it.shiftRightOne(); it.add(exact) }
     }
-    val significand = if (((bits ushr 52) and 0x7ffL) == 0L) {
-        bits and 0x000fffffffffffffL
-    } else {
-        (bits and 0x000fffffffffffffL) or (1L shl 52)
-    }
-    val boundariesInclusive = significand and 1L == 0L
-    val scientificExponent = exact.digits.length - exact.scale - 1
+    // A quantity q stands for q / denominator; both sides are integers.
+    val up = maxOf(unit, 0)
+    val denominator = ExactInteger().also { it.setLong(1); it.shiftLeft(maxOf(-unit, 0)) }
+    exact.shiftLeft(up); lower.shiftLeft(up); upper.shiftLeft(up)
+    val boundariesInclusive = binary64Significand(bits) and 1L == 0L
 
+    // Scientific exponent: 10^e <= value < 10^(e+1).
+    val left = ExactInteger(); val right = ExactInteger()
+    fun compareToPowerOfTen(power: Int): Int {
+        left.copyFrom(exact); left.multiplyPowerOfTen(maxOf(-power, 0))
+        right.copyFrom(denominator); right.multiplyPowerOfTen(maxOf(power, 0))
+        return left.compareTo(right)
+    }
+    var scientificExponent = floor(log10(magnitude)).toInt()
+    while (compareToPowerOfTen(scientificExponent) < 0) scientificExponent--
+    while (compareToPowerOfTen(scientificExponent + 1) >= 0) scientificExponent++
+
+    // The first 18 significant digits of the exact value and whether any further digit is non-zero.
+    val digits = IntArray(18)
+    val remainder = ExactInteger().also { it.copyFrom(exact); it.multiplyPowerOfTen(maxOf(-scientificExponent, 0)) }
+    val divisor = ExactInteger().also { it.copyFrom(denominator); it.multiplyPowerOfTen(maxOf(scientificExponent, 0)) }
+    for (index in digits.indices) {
+        var digit = 0
+        while (remainder >= divisor) { remainder.subtract(divisor); digit++ }
+        check(digit <= 9 && (index > 0 || digit > 0)) { "binary64 digit generation failed" }
+        digits[index] = digit
+        remainder.multiplySmall(10)
+    }
+    val sticky = !remainder.isZero()
+
+    val candidateValue = ExactInteger(); val low = ExactInteger(); val high = ExactInteger()
+    var prefix = 0L
     for (precision in 1..17) {
-        val sourceDigits = exact.digits.padEnd(precision + 1, '0')
-        val prefix = sourceDigits.substring(0, precision).toULong()
-        val next = sourceDigits[precision]
-        val remainingNonZero = sourceDigits.drop(precision + 1).any { it != '0' }
-        val roundUp = next > '5' || (next == '5' && (remainingNonZero || prefix and 1uL == 1uL))
-        val nearest = prefix + if (roundUp) 1uL else 0uL
-        for (candidate in listOf(nearest, nearest - 1uL, nearest + 1uL).distinct()) {
-            if (candidate == 0uL) continue
-            val decimal = decimalFromSignificand(candidate.toString(), scientificExponent - precision + 1)
-            val lowerComparison = compareDecimal(decimal, lower)
-            val upperComparison = compareDecimal(decimal, upper)
+        prefix = prefix * 10 + digits[precision - 1]
+        val next = digits[precision]
+        var remainingNonZero = sticky
+        for (index in precision + 1 until digits.size) if (digits[index] != 0) remainingNonZero = true
+        val roundUp = next > 5 || (next == 5 && (remainingNonZero || prefix and 1L == 1L))
+        val nearest = prefix + if (roundUp) 1L else 0L
+        val power = scientificExponent - precision + 1
+        low.copyFrom(lower); low.multiplyPowerOfTen(maxOf(-power, 0))
+        high.copyFrom(upper); high.multiplyPowerOfTen(maxOf(-power, 0))
+        for (candidate in longArrayOf(nearest, nearest - 1, nearest + 1)) {
+            if (candidate == 0L) continue
+            candidateValue.setLong(candidate); candidateValue.multiplyPowerOfTen(maxOf(power, 0))
+            candidateValue.multiplyBy(denominator)
+            val lowerComparison = candidateValue.compareTo(low)
+            val upperComparison = candidateValue.compareTo(high)
             val inside = (lowerComparison > 0 || boundariesInclusive && lowerComparison == 0) &&
                 (upperComparison < 0 || boundariesInclusive && upperComparison == 0)
             if (inside) {
-                return renderJcsDecimal(decimal, value < 0.0)
+                var significand = candidate
+                var scale = -power
+                while (significand % 10 == 0L) { significand /= 10; scale-- }
+                return renderJcsDecimal(ExactDecimal(significand.toString(), scale), value < 0.0)
             }
         }
     }
     error("unable to render finite binary64 value $value")
-}
-
-private fun exactDecimal(bits: Long): ExactDecimal {
-    if (bits == 0L) return ExactDecimal("0", 0)
-    val exponentBits = ((bits ushr 52) and 0x7ffL).toInt()
-    val fraction = bits and 0x000fffffffffffffL
-    val significand: Long
-    val exponent: Int
-    if (exponentBits == 0) {
-        significand = fraction
-        exponent = 1 - 1023 - 52
-    } else {
-        significand = fraction or (1L shl 52)
-        exponent = exponentBits - 1023 - 52
-    }
-    return if (exponent >= 0) {
-        normalizeDecimal(ExactDecimal(multiplyPower(significand.toString(), 2, exponent), 0))
-    } else {
-        normalizeDecimal(ExactDecimal(multiplyPower(significand.toString(), 5, -exponent), -exponent))
-    }
-}
-
-private fun decimalFromSignificand(significand: String, power10: Int): ExactDecimal =
-    normalizeDecimal(if (power10 >= 0) ExactDecimal(significand + "0".repeat(power10), 0) else ExactDecimal(significand, -power10))
-
-private fun normalizeDecimal(value: ExactDecimal): ExactDecimal {
-    var digits = value.digits.trimStart('0').ifEmpty { "0" }
-    var scale = value.scale
-    while (digits.length > 1 && digits.endsWith('0')) {
-        digits = digits.dropLast(1)
-        scale--
-    }
-    return ExactDecimal(digits, scale)
-}
-
-private fun addDecimal(left: ExactDecimal, right: ExactDecimal): ExactDecimal {
-    val scale = maxOf(left.scale, right.scale)
-    return normalizeDecimal(ExactDecimal(addUnsigned(left.digits + "0".repeat(scale - left.scale), right.digits + "0".repeat(scale - right.scale)), scale))
-}
-
-private fun subtractDecimal(left: ExactDecimal, right: ExactDecimal): ExactDecimal {
-    val scale = maxOf(left.scale, right.scale)
-    return normalizeDecimal(ExactDecimal(subtractUnsigned(left.digits + "0".repeat(scale - left.scale), right.digits + "0".repeat(scale - right.scale)), scale))
-}
-
-private fun half(value: ExactDecimal): ExactDecimal = if ((value.digits.last() - '0') % 2 == 0) {
-    normalizeDecimal(ExactDecimal(divideByTwo(value.digits), value.scale))
-} else {
-    normalizeDecimal(ExactDecimal(multiplySmall(value.digits, 5), value.scale + 1))
-}
-
-private fun compareDecimal(left: ExactDecimal, right: ExactDecimal): Int {
-    val scale = maxOf(left.scale, right.scale)
-    val leftDigits = (left.digits + "0".repeat(scale - left.scale)).trimStart('0').ifEmpty { "0" }
-    val rightDigits = (right.digits + "0".repeat(scale - right.scale)).trimStart('0').ifEmpty { "0" }
-    return leftDigits.length.compareTo(rightDigits.length).takeIf { it != 0 } ?: leftDigits.compareTo(rightDigits)
 }
 
 private fun renderJcsDecimal(value: ExactDecimal, negative: Boolean): String {
@@ -444,131 +451,123 @@ private fun renderJcsDecimal(value: ExactDecimal, negative: Boolean): String {
     return "$sign$mantissa" + "e${if (exponent >= 0) "+" else ""}$exponent"
 }
 
-private const val POWER_LIMB_BASE = 10_000
-private const val POWER_LIMB_DIGITS = 4
-// A limb times a factor of at most this, plus the carry, stays below 2^31.
-private const val POWER_FACTOR_LIMIT = 200_000
+private const val WORD_MASK = 0xffffffffL
+private val SMALL_POWERS_OF_TEN = intArrayOf(1, 10, 100, 1_000, 10_000, 100_000, 1_000_000, 10_000_000, 100_000_000, 1_000_000_000)
 
-/**
- * Decimal digits of `initial × multiplier^exponent`, where [initial] is a non-negative decimal
- * integer without leading zeros and [multiplier] is 2..10.
- *
- * Every finite binary64 number is expanded through this function three times per rendering, with
- * exponents near 50 for everyday values and up to 1074 for subnormals. The digits are held as
- * base-10^4 limbs and multiplied by several powers at once, in plain Int arithmetic so the cost is
- * the same on every target. The result is exactly that of digit-by-digit decimal multiplication.
- */
-internal fun multiplyPower(initial: String, multiplier: Int, exponent: Int): String {
-    if (exponent == 0) return initial
-    require(exponent > 0 && multiplier in 2..10) { "unsupported power $multiplier^$exponent" }
+/** Non-negative integer in little-endian base-2^32 words, mutated in place to keep rendering allocation small. */
+private class ExactInteger {
+    private var words = IntArray(4)
+    private var size = 0
 
-    // Each multiplication by at most 10 adds at most one decimal digit.
-    val limbs = IntArray((initial.length + exponent) / POWER_LIMB_DIGITS + 2)
-    var used = 0
-    var end = initial.length
-    while (end > 0) {
-        val start = maxOf(0, end - POWER_LIMB_DIGITS)
-        var limb = 0
-        for (index in start until end) {
-            val digit = initial[index] - '0'
-            require(digit in 0..9) { "decimal digits required" }
-            limb = limb * 10 + digit
-        }
-        limbs[used++] = limb
-        end = start
+    fun setLong(value: Long) {
+        require(value >= 0)
+        words[0] = value.toInt(); words[1] = (value ushr 32).toInt(); size = 2; trim()
     }
 
-    var powersPerPass = 1
-    var passFactor = multiplier
-    while (passFactor * multiplier <= POWER_FACTOR_LIMIT) {
-        passFactor *= multiplier
-        powersPerPass++
+    fun copyFrom(other: ExactInteger) {
+        ensure(other.size); other.words.copyInto(words, 0, 0, other.size); size = other.size
     }
-    var remaining = exponent
-    while (remaining > 0) {
-        var factor = passFactor
-        if (remaining < powersPerPass) {
-            factor = 1
-            repeat(remaining) { factor *= multiplier }
-            remaining = 0
+
+    fun isZero(): Boolean = size == 0
+
+    fun shiftLeft(bits: Int) {
+        require(bits >= 0)
+        if (size == 0 || bits == 0) return
+        val wordShift = bits ushr 5
+        val bitShift = bits and 31
+        ensure(size + wordShift + 1)
+        if (bitShift == 0) {
+            for (index in size - 1 downTo 0) words[index + wordShift] = words[index]
+            words[size + wordShift] = 0
         } else {
-            remaining -= powersPerPass
+            words[size + wordShift] = words[size - 1] ushr (32 - bitShift)
+            for (index in size - 1 downTo 1) words[index + wordShift] = (words[index] shl bitShift) or (words[index - 1] ushr (32 - bitShift))
+            words[wordShift] = words[0] shl bitShift
         }
-        var carry = 0
-        for (index in 0 until used) {
-            val product = limbs[index] * factor + carry
-            limbs[index] = product % POWER_LIMB_BASE
-            carry = product / POWER_LIMB_BASE
+        for (index in 0 until wordShift) words[index] = 0
+        size += wordShift + 1
+        trim()
+    }
+
+    fun shiftRightOne() {
+        for (index in 0 until size) {
+            val high = if (index + 1 < size) words[index + 1] shl 31 else 0
+            words[index] = (words[index] ushr 1) or high
         }
-        while (carry > 0) {
-            limbs[used++] = carry % POWER_LIMB_BASE
-            carry /= POWER_LIMB_BASE
+        trim()
+    }
+
+    /** Multiplies by 1..10^9. */
+    fun multiplySmall(factor: Int) {
+        require(factor in 1..1_000_000_000)
+        var carry = 0L
+        for (index in 0 until size) {
+            val product = (words[index].toLong() and WORD_MASK) * factor + carry
+            words[index] = product.toInt()
+            carry = product ushr 32
         }
+        if (carry != 0L) { ensure(size + 1); words[size++] = carry.toInt() }
     }
 
-    val out = StringBuilder(used * POWER_LIMB_DIGITS)
-    out.append(limbs[used - 1])
-    for (index in used - 2 downTo 0) {
-        val limb = limbs[index]
-        if (limb < 1000) out.append('0')
-        if (limb < 100) out.append('0')
-        if (limb < 10) out.append('0')
-        out.append(limb)
+    fun multiplyPowerOfTen(power: Int) {
+        require(power >= 0)
+        var remaining = power
+        while (remaining >= 9) { multiplySmall(1_000_000_000); remaining -= 9 }
+        if (remaining > 0) multiplySmall(SMALL_POWERS_OF_TEN[remaining])
     }
-    return out.toString()
-}
 
-private fun multiplySmall(value: String, multiplier: Int): String {
-    val out = StringBuilder(value.length + 1)
-    var carry = 0
-    for (index in value.indices.reversed()) {
-        val product = (value[index] - '0') * multiplier + carry
-        out.append(('0'.code + product % 10).toChar())
-        carry = product / 10
+    /** Multiplies by a power of two held as an [ExactInteger]. */
+    fun multiplyBy(powerOfTwo: ExactInteger) {
+        val top = powerOfTwo.size - 1
+        check(top >= 0 && (0 until top).all { powerOfTwo.words[it] == 0 } && powerOfTwo.words[top].countOneBits() == 1)
+        shiftLeft(top * 32 + powerOfTwo.words[top].countTrailingZeroBits())
     }
-    while (carry > 0) {
-        out.append(('0'.code + carry % 10).toChar())
-        carry /= 10
-    }
-    return out.reverse().toString()
-}
 
-private fun addUnsigned(left: String, right: String): String {
-    val out = StringBuilder(maxOf(left.length, right.length) + 1)
-    var carry = 0
-    var li = left.lastIndex
-    var ri = right.lastIndex
-    while (li >= 0 || ri >= 0 || carry != 0) {
-        val sum = (if (li >= 0) left[li--] - '0' else 0) + (if (ri >= 0) right[ri--] - '0' else 0) + carry
-        out.append(('0'.code + sum % 10).toChar())
-        carry = sum / 10
+    fun add(other: ExactInteger) {
+        val length = maxOf(size, other.size)
+        ensure(length + 1)
+        var carry = 0L
+        for (index in 0 until length) {
+            val sum = (if (index < size) words[index].toLong() and WORD_MASK else 0L) +
+                (if (index < other.size) other.words[index].toLong() and WORD_MASK else 0L) + carry
+            words[index] = sum.toInt()
+            carry = sum ushr 32
+        }
+        size = length
+        if (carry != 0L) words[size++] = carry.toInt()
     }
-    return out.reverse().toString()
-}
 
-private fun subtractUnsigned(left: String, right: String): String {
-    require(left.length > right.length || left.length == right.length && left >= right)
-    val paddedRight = right.padStart(left.length, '0')
-    val out = StringBuilder(left.length)
-    var borrow = 0
-    for (index in left.indices.reversed()) {
-        var digit = (left[index] - '0') - (paddedRight[index] - '0') - borrow
-        if (digit < 0) { digit += 10; borrow = 1 } else borrow = 0
-        out.append(('0'.code + digit).toChar())
+    /** Subtracts a value no larger than this one. */
+    fun subtract(other: ExactInteger) {
+        require(this >= other)
+        var borrow = 0L
+        for (index in 0 until size) {
+            var difference = (words[index].toLong() and WORD_MASK) - borrow -
+                (if (index < other.size) other.words[index].toLong() and WORD_MASK else 0L)
+            borrow = if (difference < 0) { difference += 1L shl 32; 1L } else 0L
+            words[index] = difference.toInt()
+        }
+        check(borrow == 0L)
+        trim()
     }
-    return out.reverse().toString().trimStart('0').ifEmpty { "0" }
-}
 
-private fun divideByTwo(value: String): String {
-    val out = StringBuilder(value.length)
-    var carry = 0
-    for (char in value) {
-        val current = carry * 10 + (char - '0')
-        out.append(('0'.code + current / 2).toChar())
-        carry = current % 2
+    operator fun compareTo(other: ExactInteger): Int {
+        if (size != other.size) return size.compareTo(other.size)
+        for (index in size - 1 downTo 0) {
+            val mine = words[index].toLong() and WORD_MASK
+            val theirs = other.words[index].toLong() and WORD_MASK
+            if (mine != theirs) return mine.compareTo(theirs)
+        }
+        return 0
     }
-    require(carry == 0)
-    return out.toString().trimStart('0').ifEmpty { "0" }
+
+    private fun ensure(capacity: Int) {
+        if (words.size < capacity) words = words.copyOf(maxOf(capacity, words.size * 2))
+    }
+
+    private fun trim() {
+        while (size > 0 && words[size - 1] == 0) size--
+    }
 }
 
 private val SHA256_K = intArrayOf(
