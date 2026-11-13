@@ -56,6 +56,19 @@ internal class OversqliteClientOperationController(
 
     fun usedSyncWork(): Long = syncWorkUsed
 
+    internal class WorkAccountingMark(val used: Long, val readyAtomic: Boolean, val total: Long, val measurements: Long)
+
+    /** Captures work charged so far, so work charged inside a rolled-back savepoint is not counted twice. */
+    fun markWorkAccounting() = WorkAccountingMark(syncWorkUsed, readyAtomicUnitDispatched, workSliceDiagnostics.totalWork,
+        workSliceDiagnostics.pushMetadataMeasurements)
+
+    fun restoreWorkAccounting(mark: WorkAccountingMark) {
+        syncWorkUsed = mark.used
+        readyAtomicUnitDispatched = mark.readyAtomic
+        workSliceDiagnostics.totalWork = mark.total
+        workSliceDiagnostics.pushMetadataMeasurements = mark.measurements
+    }
+
     suspend fun ensureSyncWorkAvailable(unit: String) {
         currentCoroutineContext().ensureActive()
         if (syncWorkUsed >= config.maxSyncWorkUnitsPerInvocation) {

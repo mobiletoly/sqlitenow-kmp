@@ -47,11 +47,17 @@ internal class OversqlitePushWorkflow(
 ) {
     private companion object {
         const val MAX_PUSH_CONFLICT_AUTO_RETRIES = 2
+        // Covers what reading a response of up to 64 KiB admits (two 64 KiB pages plus 64 KiB of
+        // headroom) and the container shape of a few-row response (a one-row reply admits 228-327).
+        // The entries stay small enough that a one-row push, conflict included, keeps its buffer
+        // reservation under 512 entries. Larger responses grow as they are read.
+        const val typicalPushResponseBytes = 3L * 65536
+        const val typicalPushResponseEntries = 384L
     }
 
     private val uploadJournal = OversqliteUploadJournal(db,config)
 
-    suspend fun acknowledgePending(state: RuntimeState) = syncDiagnosticWork("push.acknowledge") { uploadJournal.acknowledge(state,remoteApi) }
+    suspend fun acknowledgePending(state: RuntimeState) = syncDiagnosticWork("push.acknowledge") { uploadJournal.acknowledge(state,remoteApi); Unit }
     suspend fun frozenMayResume(state: RuntimeState)=uploadJournal.frozenMayResume(state)
 
     private val replayExecutor = OversqlitePushReplayExecutor(
@@ -109,11 +115,10 @@ internal class OversqlitePushWorkflow(
         }
         val workspace=OversqliteWorkspace(db,config)
         val unit=applyUnit("push-buffers",0,state.sourceId)
-        val token=if(initialDirtyCount>0 || initialOutboundCount>0) workspace.reserve(state,unit,
-            WorkspaceCharge(64,256*1024)) else null
+        val reservation=if(initialDirtyCount>0 || initialOutboundCount>0) PushBufferReservation(workspace,state,unit) else null
         var primaryFailure: Throwable? = null
         try {
-        val snapshot = syncDiagnosticWork("push.freeze") { ensurePushOutboundSnapshot(state,token) }
+        val snapshot = syncDiagnosticWork("push.freeze") { ensurePushOutboundSnapshot(state,reservation) }
         if (snapshot.rows.isEmpty()) {
             log { "oversqlite pushPending no-op: no rows ready for upload" }
             return PushWorkflowResult(
@@ -121,14 +126,18 @@ internal class OversqlitePushWorkflow(
                 updatedTables = emptySet(),
             )
         }
+        val token=reservation?.ensure()
 
         log {
             "oversqlite pushPending snapshot sourceBundleId=${snapshot.sourceBundleId} " +
                 "rows=${snapshot.rows.size}"
         }
         val result = try {
-            syncDiagnosticWork("push.exchange") { commitPushOutboundSnapshot(state, snapshot,token) }
+            syncDiagnosticWork("push.exchange") { commitPushOutboundSnapshot(state, snapshot,token,reservation) }
         } catch (_: PushOutcomeMismatchException) {
+            // The unused response allowance must not stay charged while the retained outcome settles.
+            val admitted = reservation?.admittedUpload
+            if (token != null && admitted != null) db.transaction(TransactionMode.IMMEDIATE) { workspace.trimInWriter(token, admitted) }
             val recovered = recoverRetainedOutcome(state, snapshot, token)
             db.reportExternalTableChanges(recovered.updatedTables)
             return recovered
@@ -193,7 +202,7 @@ internal class OversqlitePushWorkflow(
                 decisionContinuation=decisionContinuation,
             )
         } } finally { decisionContinuation.clear() }
-        acknowledgePending(state)
+        acknowledgeAndRelease(state, reservation)
         db.reportExternalTableChanges(updatedTables)
         log { "oversqlite pushPending finished updatedTables=$updatedTables" }
         return PushWorkflowResult(
@@ -205,11 +214,50 @@ internal class OversqlitePushWorkflow(
             primaryFailure=failure
             throw failure
         } finally {
+            val token=reservation?.takeUnless { it.releasedAtAcknowledgement }?.token
             if(token!=null) try { workspace.release(token) } catch(cleanup: Throwable) {
                 if(primaryFailure!=null) primaryFailure.addSuppressed(cleanup) else throw cleanup
             }
         }
     }
+
+    /**
+     * The push-buffer reservation, created in the first writer transaction that needs it so that
+     * it commits with planning and freeze instead of alone. A writer that rolls back takes the
+     * reservation with it; the next use creates it again.
+     */
+    private class PushBufferReservation(
+        private val workspace: OversqliteWorkspace,
+        private val state: RuntimeState,
+        val unit: String,
+    ) {
+        var token: String? = null; private set
+        var uploadCharge: FrozenUploadCharge? = null
+        /** While the freeze-time charge is in use: request plus response buffers actually admitted, without the allowance. */
+        var admittedUpload: WorkspaceCharge? = null
+        var releasedAtAcknowledgement = false
+
+        suspend fun ensureInWriter(): String = liveToken() ?: workspace.reserveInWriter(state,unit,initialCharge).also { token=it }
+
+        suspend fun ensure(): String = liveToken() ?: workspace.reserve(state,unit,initialCharge).also { token=it }
+
+        private suspend fun liveToken(): String? = token?.takeIf { workspace.isLive(it) }
+
+        companion object { val initialCharge = WorkspaceCharge(64,256*1024) }
+    }
+
+    /** The upload buffers charged in the freeze's writer, for the frozen request of that size. */
+    private class FrozenUploadCharge(val sourceBundleId: Long, val requestBytes: Long, val base: WorkspaceCharge)
+
+    /** Acknowledges a settled upload and releases this push's buffers in the same writer transaction. */
+    private suspend fun acknowledgeAndRelease(state: RuntimeState, reservation: PushBufferReservation?) =
+        syncDiagnosticWork("push.acknowledge") {
+            val token = reservation?.token
+            val committed = uploadJournal.acknowledge(state, remoteApi) {
+                if (token != null) OversqliteWorkspace(db, config).releaseInWriter(token)
+            }
+            if (committed && reservation != null && token != null) reservation.releasedAtAcknowledgement = true
+        }
 
     suspend fun pendingConflict(): PendingConflict? = conflictStateStore.load()?.pending
 
@@ -287,34 +335,35 @@ internal class OversqlitePushWorkflow(
         ) throw StaleConflictResolutionException()
     }
 
-    private suspend fun ensurePushOutboundSnapshot(state: RuntimeState, reservationToken: String?): PushOutboundSnapshot =
-        stageStore.completeWorkPhase("outbox freeze") { ensurePushOutboundSnapshotSlice(state, reservationToken) }
+    private suspend fun ensurePushOutboundSnapshot(state: RuntimeState, reservation: PushBufferReservation?): PushOutboundSnapshot =
+        stageStore.completeWorkPhase("outbox freeze") { ensurePushOutboundSnapshotSlice(state, reservation) }
 
-    private suspend fun ensurePushOutboundSnapshotSlice(state: RuntimeState, reservationToken: String?): PushOutboundSnapshot {
+    private suspend fun ensurePushOutboundSnapshotSlice(state: RuntimeState, reservation: PushBufferReservation?): PushOutboundSnapshot {
         val outboxState = outboxStateStore.loadBundleState()
         if (outboxState.state != outboxStateNone) {
-            val existing = loadPersistedOutboxSnapshot(state, outboxState,reservationToken)
+            val existing = loadPersistedOutboxSnapshot(state, outboxState,reservation?.ensure())
             log {
                 "oversqlite reusing frozen outbound snapshot sourceBundleId=${existing.sourceBundleId} rows=${existing.rows.size}"
             }
             return existing
         }
 
-        val plan=stageStore.preparePushPlan(state)
-        val frozen = db.transaction(TransactionMode.IMMEDIATE) {
+        // The final planning group freezes in its own writer when it can, so reservation,
+        // planning, freeze, upload buffers and plan cleanup reach storage in one commit.
+        val writerSteps = OversqliteStageStore.PushPlanWriterSteps(
+            beforePlanning = { reservation?.ensureInWriter() },
+            freeze = { plan -> freezeAndChargeUploadInWriter(state, plan, reservation) },
+        )
+        val plan=stageStore.preparePushPlan(state, writerSteps)
+        // A freeze rolled back to its savepoint left no upload charge behind.
+        if (writerSteps.frozen == null) reservation?.uploadCharge = null
+        val frozen = writerSteps.frozen ?: db.transaction(TransactionMode.IMMEDIATE) {
+            val reservationToken = reservation?.ensureInWriter()
             val currentOutbox = outboxStateStore.loadBundleState()
             if (currentOutbox.state != outboxStateNone)
                 return@transaction loadPersistedOutboxSnapshot(state,currentOutbox,reservationToken)
             if (plan == null) return@transaction PushOutboundSnapshot(0,emptyList(),emptyList(),"")
-            openingMutationAuthority()?.beforeMutation(
-                OversqliteOpeningMutationKind.FREEZE_OUTBOUND,
-            )
-            val prepared = stageStore.preparePush(
-                state,
-                plan,
-                reservationToken,
-            )
-            persistPreparedOutboxSnapshot(state, prepared)
+            freezeInWriter(state, plan, reservationToken)
         }
         if (frozen.rows.isNotEmpty()) {
             log {
@@ -324,9 +373,50 @@ internal class OversqlitePushWorkflow(
         return frozen
     }
 
+    private suspend fun freezeInWriter(state: RuntimeState, plan: PushPlan, reservationToken: String?): PushOutboundSnapshot {
+        openingMutationAuthority()?.beforeMutation(
+            OversqliteOpeningMutationKind.FREEZE_OUTBOUND,
+        )
+        val prepared = stageStore.preparePush(
+            state,
+            plan,
+            reservationToken,
+        )
+        return persistPreparedOutboxSnapshot(state, prepared)
+    }
+
+    /**
+     * The freeze, plus what would otherwise commit on its own before and after the upload: the
+     * request buffers, an allowance for a typical response when it fits, and the first cleanup
+     * batch of the plan the freeze invalidated. Any failure rolls all of it back to the planning
+     * savepoint, and the separate freeze then runs exactly as before.
+     */
+    private suspend fun freezeAndChargeUploadInWriter(
+        state: RuntimeState, plan: PushPlan, reservation: PushBufferReservation?,
+    ): PushOutboundSnapshot {
+        val token = reservation?.ensureInWriter()
+        val frozen = freezeInWriter(state, plan, token)
+        if (reservation != null && token != null && frozen.rows.isNotEmpty()) {
+            val workspace = OversqliteWorkspace(db, config)
+            val requestBytes = checkNotNull(loadUploadJournal(db)) { "missing frozen upload journal" }.requestBytes
+            val base = workspace.add(reservation.unit, workspace.reserved(token), WorkspaceCharge(1, 2*requestBytes))
+            workspace.resizeInWriter(state, token, base)
+            try {
+                workspace.resizeInWriter(state, token, workspace.add(reservation.unit, base,
+                    WorkspaceCharge(typicalPushResponseEntries, workspace.scale(reservation.unit, typicalPushResponseBytes, 64))))
+            } catch (_: SyncWorkspaceLimitException) {
+                // No room for the allowance: each response buffer is charged when it is read, as before.
+            }
+            reservation.uploadCharge = FrozenUploadCharge(frozen.sourceBundleId, requestBytes, base)
+        }
+        stageStore.clearFrozenPushPlanInWriter()
+        return frozen
+    }
+
     private suspend fun commitPushOutboundSnapshot(
-        state: RuntimeState,snapshot: PushOutboundSnapshot,reservationToken: String?,
+        state: RuntimeState,snapshot: PushOutboundSnapshot,reservationToken: String?,reservation: PushBufferReservation?,
     ): PushCommitResult {
+        val uploadCharge=reservation?.uploadCharge
         require(snapshot.canonicalRows.isNotEmpty()) { "outbound push snapshot is empty" }
         val journal=checkNotNull(loadUploadJournal(db)) { "missing frozen upload journal" }
         uploadJournal.guard(state,journal)
@@ -344,10 +434,25 @@ internal class OversqlitePushWorkflow(
         check(generation.id==binding.generationId && generation.fingerprint==binding.generationFingerprint)
         val workspace=OversqliteWorkspace(db,config)
         val unit=applyUnit("push-buffers",0,state.sourceId)
-        val base=workspace.add(unit,reservationToken?.let { workspace.reserved(it) } ?: WorkspaceCharge(),WorkspaceCharge(1,2*journal.requestBytes))
-        if(reservationToken!=null) workspace.resize(state,reservationToken,base)
+        // Request buffers charged in the freeze's writer are used only while the live reservation
+        // still covers them; otherwise they are charged here, as for a resumed upload.
+        val charged=uploadCharge?.takeIf { charge -> reservationToken!=null && charge.sourceBundleId==snapshot.sourceBundleId &&
+            charge.requestBytes==journal.requestBytes && workspace.reserved(reservationToken).let {
+                it.entries>=charge.base.entries && it.bytes>=charge.base.bytes } }
+        val base=charged?.base ?: workspace.add(unit,reservationToken?.let { workspace.reserved(it) } ?: WorkspaceCharge(),WorkspaceCharge(1,2*journal.requestBytes))
+        if(reservationToken!=null && charged==null) workspace.resize(state,reservationToken,base)
         val frozenBody=uploadJournal.requestBody(state,journal)
-        val admit=httpBufferAdmission(state,reservationToken,workspace,unit,base)
+        val admitBuffers=httpBufferAdmission(state,reservationToken,workspace,unit,base)
+        // With the freeze-time charge, remember what the buffers really need so the outcome's writer
+        // can give back the unused allowance: settlement then sees the same charge as without it.
+        if(charged!=null) reservation.admittedUpload=base
+        val admit: suspend (Long,Long)->Unit = { bytes,entries ->
+            admitBuffers(bytes,entries)
+            reservation?.admittedUpload?.let { held ->
+                val need=workspace.add(unit,base,WorkspaceCharge(entries,workspace.scale(unit,bytes,64)))
+                reservation.admittedUpload=WorkspaceCharge(maxOf(held.entries,need.entries),maxOf(held.bytes,need.bytes))
+            }
+        }
         val reply=if(journal.outcomeBytes>0) {
             admit(2*journal.outcomeBytes+65536,32)
             remoteApi.decodeUploadOutcome(uploadJournal.outcomeBody(),binding,generation).also {
@@ -363,7 +468,10 @@ internal class OversqlitePushWorkflow(
         }
         val decoded=decodeCommittedRows(state,reply.rows)
         if(reply.outcome.committed!=null) replayExecutor.requireCommittedEffectCoverage(snapshot.rows,decoded)
-        if(journal.outcomeBytes==0L) uploadJournal.persistOutcome(state,journal,reply)
+        if(journal.outcomeBytes==0L) uploadJournal.persistOutcome(state,journal,reply) {
+            val admitted=reservation?.admittedUpload
+            if(reservationToken!=null && admitted!=null) workspace.trimInWriter(reservationToken,admitted)
+        }
         when(reply.outcome.status) {
             "cancelled" -> throw CancelledUploadOutcomeException()
             "rejected" -> {

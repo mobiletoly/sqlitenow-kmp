@@ -616,21 +616,43 @@ internal class OversqliteStageStore(
         pushSpace(p);savePushPlan(p);return p to (p.phase=="ready")
     }
 
-    suspend fun preparePushPlan(state: RuntimeState): PushPlan? {
+    /**
+     * Writer steps that share the planning transactions. [beforePlanning] runs first in each one.
+     * When a group finishes a plan with rows to send, [freeze] runs in that same transaction under
+     * a savepoint, so planning and freeze commit once. If the freeze fails, only the savepoint rolls
+     * back: planning progress commits as before and the caller freezes in its own transaction.
+     */
+    internal class PushPlanWriterSteps<T : Any>(
+        val beforePlanning: suspend () -> Unit,
+        val freeze: suspend (PushPlan) -> T,
+    ) {
+        var frozen: T? = null
+    }
+
+    suspend fun preparePushPlan(state: RuntimeState, writerSteps: PushPlanWriterSteps<*>? = null): PushPlan? {
         var measuredWork: Long? = null
         return operations.completeWorkPhase("push preparation") {
-            preparePushPlanSlice(state) { plan ->
+            preparePushPlanSlice(state, writerSteps) { plan ->
                 measuredWork ?: pushStepWork(state, plan).also { measuredWork = it }
             }
         }
     }
 
-    internal suspend fun preparePushPlanSlice(state: RuntimeState, stepWork: (PushPlan) -> Long): PushPlan? {
+    internal suspend fun preparePushPlanSlice(state: RuntimeState, stepWork: (PushPlan) -> Long): PushPlan? =
+        preparePushPlanSlice(state, null, stepWork)
+
+    private suspend fun preparePushPlanSlice(state: RuntimeState, writerSteps: PushPlanWriterSteps<*>?,
+        stepWork: (PushPlan) -> Long): PushPlan? {
         while(true) {
             operations.workSliceDiagnostics.pushPlanningTransactions++
             val group=db.transaction(TransactionMode.IMMEDIATE) {
-                if (currentCoroutineContext()[OversqliteWorkSlice] == null) advancePushPreparationGroup(state, stepWork)
+                writerSteps?.beforePlanning?.invoke()
+                val advanced = if (currentCoroutineContext()[OversqliteWorkSlice] == null) advancePushPreparationGroup(state, stepWork)
                 else kotlinx.coroutines.withContext(PushPlanningWorkspaceSnapshot(db)) { advancePushPreparationGroup(state, stepWork) }
+                val plan = advanced.plan
+                if (writerSteps != null && advanced.pending == null && advanced.ready && plan != null && plan.candidateRows > 0L)
+                    freezeUnderSavepoint(writerSteps, plan)
+                advanced
             }
             commitWorkStep()
             group.pending?.let { throw it }
@@ -644,6 +666,43 @@ internal class OversqliteStageStore(
                 }
                 return p
             }
+        }
+    }
+
+    private suspend fun <T : Any> freezeUnderSavepoint(writerSteps: PushPlanWriterSteps<T>, plan: PushPlan) {
+        val mark = operations.markWorkAccounting()
+        db.execSQL("SAVEPOINT oversqlite_push_freeze")
+        val frozen = try {
+            writerSteps.freeze(plan)
+        } catch (cancellation: kotlin.coroutines.cancellation.CancellationException) {
+            throw cancellation
+        } catch (failure: Exception) {
+            // The separate freeze repeats this attempt from the committed plan and reports its outcome.
+            try {
+                db.execSQL("ROLLBACK TO SAVEPOINT oversqlite_push_freeze")
+                db.execSQL("RELEASE SAVEPOINT oversqlite_push_freeze")
+            } catch (rollback: Throwable) {
+                rollback.addSuppressed(failure)
+                throw rollback
+            }
+            operations.restoreWorkAccounting(mark)
+            return
+        }
+        db.execSQL("RELEASE SAVEPOINT oversqlite_push_freeze")
+        writerSteps.frozen = frozen
+    }
+
+    /**
+     * One bounded cleanup batch of the plan a freeze just invalidated, in the freeze's writer.
+     * Whatever a work limit leaves stays in `clear` for the completion cleanup to finish.
+     */
+    suspend fun clearFrozenPushPlanInWriter() {
+        val p = loadPushPlan(forCleanup = true) ?: return
+        if (p.phase != "clear") return
+        try {
+            advancePushCleanupBatch(p, null)
+        } catch (limit: SyncWorkLimitException) {
+            if (limit.suppressedExceptions.isNotEmpty()) throw limit
         }
     }
 

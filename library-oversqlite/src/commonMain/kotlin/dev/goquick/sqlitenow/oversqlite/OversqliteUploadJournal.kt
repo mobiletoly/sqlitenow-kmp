@@ -95,10 +95,16 @@ internal class OversqliteUploadJournal(
 
     suspend fun outcomeBody(): String = db.queryRequiredSingle("SELECT CAST(outcome_body AS TEXT) FROM _sync_upload_journal", "missing terminal evidence") { it.getText(0) }
 
-    suspend fun persistOutcome(state: RuntimeState, expected: UploadJournal, reply: TerminalUploadReply) = db.transaction(TransactionMode.IMMEDIATE) {
+    /**
+     * Stores the terminal outcome. [beforeCharge] runs in the same writer transaction before the
+     * outcome is charged, so headroom it gives back is not counted against the outcome.
+     */
+    suspend fun persistOutcome(state: RuntimeState, expected: UploadJournal, reply: TerminalUploadReply,
+        beforeCharge: suspend () -> Unit = {}) = db.transaction(TransactionMode.IMMEDIATE) {
         val current = checkNotNull(loadUploadJournal(db))
         guard(state,current)
         check(current.binding==expected.binding && current.phase=="frozen" && current.outcomeBytes==0L) { "outcome owner changed" }
+        beforeCharge()
         OversqliteWorkspace(db,config).check("upload-outcome", WorkspaceCharge(bytes=utf8Size(reply.raw)))
         db.withPreparedStatement("UPDATE _sync_upload_journal SET outcome_body=CAST(? AS BLOB),outcome_hash=? WHERE singleton_key=1") { st ->
             st.bindText(1,reply.raw);st.bindText(2,reply.outcome.outcomeHash);st.step()
@@ -129,9 +135,13 @@ internal class OversqliteUploadJournal(
         }
     }
 
-    suspend fun acknowledge(state: RuntimeState, remote: OversqliteRemoteApi) {
-        val j = loadUploadJournal(db) ?: return
-        if(j.phase!="ack_pending") return
+    /**
+     * Acknowledges a settled upload and deletes its journal. [inWriter] runs in that same writer
+     * transaction. Returns true only when that transaction committed.
+     */
+    suspend fun acknowledge(state: RuntimeState, remote: OversqliteRemoteApi, inWriter: suspend () -> Unit = {}): Boolean {
+        val j = loadUploadJournal(db) ?: return false
+        if(j.phase!="ack_pending") return false
         guard(state,j)
         remote.acknowledgeOutcome(j.binding.operation,j.outcomeHash)
         db.transaction(TransactionMode.IMMEDIATE) {
@@ -141,7 +151,9 @@ internal class OversqliteUploadJournal(
             if(j.binding.operation.initializationId!=null && status!="committed")
                 db.execSQL("UPDATE _sync_attachment_state SET initialization_reconnect_required=1 WHERE singleton_key=1")
             db.execSQL("DELETE FROM _sync_upload_journal WHERE singleton_key=1")
+            inWriter()
         }
+        return true
     }
 
     suspend fun frozenMayResume(state: RuntimeState): Boolean {

@@ -148,6 +148,21 @@ Key rule:
 
 - if durable rebuild or source-recovery state is active, ordinary push fails closed
 
+Commit points, in order (the Kotlin client):
+
+1. freeze, before the upload: outbox, upload journal and moved dirty rows. The buffer reservation,
+   the final planning group, the request buffers, a response allowance when it fits the workspace
+   and the first cleanup batch of the invalidated plan commit with it. A freeze that fails rolls
+   back to a savepoint after planning, so planning progress still commits and the freeze retries
+   in its own transaction
+2. outcome, before settlement: the terminal outcome in the upload journal
+3. settlement, before the acknowledgement: authoritative rows, cleared outbox, advanced source
+4. acknowledgement, after the server accepts it: the journal is deleted and the buffer reservation
+   released
+
+Larger pushes may add earlier planning groups and response-buffer growth; none of those commits
+holds protocol state. A one-row push makes exactly these four.
+
 ### 5.2 `pullToStable()`
 
 Purpose:

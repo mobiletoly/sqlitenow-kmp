@@ -65,6 +65,12 @@ internal class OversqliteWorkspace(
 
     @OptIn(kotlin.uuid.ExperimentalUuidApi::class)
     suspend fun reserve(state: RuntimeState, unit: String, requested: WorkspaceCharge): String = db.transaction(TransactionMode.IMMEDIATE) {
+        reserveInWriter(state, unit, requested)
+    }
+
+    /** Same admission as [reserve], inside the caller's writer transaction; it rolls back with it. */
+    @OptIn(kotlin.uuid.ExperimentalUuidApi::class)
+    suspend fun reserveInWriter(state: RuntimeState, unit: String, requested: WorkspaceCharge): String {
         currentCoroutineContext().ensureActive()
         require(isCanonicalSha256(unit)) { "invalid workspace unit" }
         val binding=contextGuard(state,unit)
@@ -75,16 +81,24 @@ internal class OversqliteWorkspace(
         records+=Reservation(token,unit,binding,charge.entries,charge.bytes)
         storeReservations(records)
         check(unit)
-        token
+        return token
     }
+
+    /** True while [token] is in the committed or current-writer ledger; false after its writer rolled back. */
+    suspend fun isLive(token: String): Boolean = loadReservations().any { it.token == token }
 
     // Called only after all structured request/consumer jobs and their buffer
     // scopes finish. Cancellation cannot skip the once-only writer release.
     suspend fun release(token: String) = withContext(NonCancellable) {
         db.transaction(TransactionMode.IMMEDIATE) {
-            val records=loadReservations()
-            storeReservations(records.filter { it.token!=token })
+            releaseInWriter(token)
         }
+    }
+
+    /** Same release as [release], inside the caller's writer transaction; it rolls back with it. */
+    suspend fun releaseInWriter(token: String) {
+        val records=loadReservations()
+        storeReservations(records.filter { it.token!=token })
     }
 
     suspend fun resize(state: RuntimeState, token: String, requested: WorkspaceCharge) = db.transaction(TransactionMode.IMMEDIATE) {
@@ -113,10 +127,33 @@ internal class OversqliteWorkspace(
         val next=WorkspaceCharge(maxOf(old.entries,proposed.entries),maxOf(old.bytes,proposed.bytes))
         check(old.unit,WorkspaceCharge(maxOf(0,next.entries-old.entries),maxOf(0,next.bytes-old.bytes)))
         val context = binding?.context ?: contextGuard(state,old.unit)
-        records[index]=old.copy(context=context,entries=next.entries,bytes=next.bytes)
-        storeReservations(records)
+        val updated=old.copy(context=context,entries=next.entries,bytes=next.bytes)
+        // An unchanged ledger needs no write, so an admission already covered by an
+        // earlier charge adds no durable commit.
+        if(updated!=old) {
+            records[index]=updated
+            storeReservations(records)
+        }
         check(old.unit)
         return binding ?: writer?.let { WorkspaceReservationBinding(db,state,it,token,old.unit,context) }
+    }
+
+    /**
+     * Gives back headroom charged ahead of need: lowers the reservation to [requested], never below it
+     * and never above its current size. The caller passes everything still held by live copies.
+     */
+    suspend fun trimInWriter(token: String, requested: WorkspaceCharge) {
+        currentCoroutineContext().ensureActive()
+        val records=loadReservations().toMutableList()
+        val index=records.indexOfFirst {it.token==token}
+        check(index>=0) { "live reservation is missing" }
+        val old=records[index]
+        val proposed=add(old.unit,requested,WorkspaceCharge(1,4096))
+        val updated=old.copy(entries=minOf(old.entries,proposed.entries),bytes=minOf(old.bytes,proposed.bytes))
+        if(updated!=old) {
+            records[index]=updated
+            storeReservations(records)
+        }
     }
 
     suspend fun reserved(token: String): WorkspaceCharge = checkNotNull(loadReservations().find {it.token==token}).let {
