@@ -16,7 +16,9 @@
 package dev.goquick.sqlitenow.oversqlite
 
 import io.ktor.client.HttpClient
+import io.ktor.client.plugins.HttpTimeout
 import io.ktor.client.plugins.HttpTimeoutConfig
+import io.ktor.client.plugins.pluginOrNull
 import io.ktor.client.plugins.timeout
 import io.ktor.client.request.prepareDelete
 import io.ktor.client.request.prepareGet
@@ -314,6 +316,10 @@ internal class OversqliteRemoteApi(
         const val sourceIdHeaderName = "Oversync-Source-ID"
         // Allow 20–25-second heartbeats while bounding recovery from a stalled connection.
         const val bundleChangeWatchSocketTimeoutMillis = 90_000L
+        // The server builds the whole snapshot before it answers the create request, which takes
+        // longer than a transport's default read timeout for a large account. Used only when the
+        // application has not installed the HttpTimeout plugin.
+        const val snapshotSessionCreateSocketTimeoutMillis = 120_000L
         const val snapshotControlBodyLimit = 64L * 1024L
         val snapshotSessionLimitDimensions = setOf("row_count", "logical_byte_count", "row_decoded_body_bytes")
         val snapshotCapacityErrorCodes = setOf("snapshot_build_capacity", "snapshot_chunk_capacity")
@@ -669,6 +675,13 @@ internal class OversqliteRemoteApi(
                         // source owns the resulting snapshot only after creation succeeds.
                         generationHeaders(sourceId)
                         acceptBoundedJsonResponse()
+                        // A client without the HttpTimeout plugin runs on its engine's default
+                        // read timeout, so the library supplies one. An application that
+                        // installed the plugin owns its timeouts and keeps them, as does the
+                        // caller's connect timeout in either case.
+                        if (http.pluginOrNull(HttpTimeout) == null) {
+                            timeout { socketTimeoutMillis = snapshotSessionCreateSocketTimeoutMillis }
+                        }
                         if (selectedBody == null) {
                             contentType(ContentType.Application.Json)
                         } else {

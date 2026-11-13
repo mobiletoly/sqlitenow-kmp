@@ -610,6 +610,7 @@ internal class OversqliteDownloadWorkflow(
         session: SnapshotSession, guard: SnapshotApplyGuard, source: String): SnapshotApplyGuard {
         val lifecycle = OversqliteApplyLifecycle(db, config, localStore, bundleApplier.survivors, json)
         try {
+            requireGeneralSnapshotWithinEntryQuota(session)
             val operation = operations.completeWorkPhase("snapshot publication") { db.transaction(TransactionMode.IMMEDIATE) {
                 syncDiagnosticWork("snapshot.final_guard") { snapshotGate.validateFinal(guard) }
                 stageStore.clearAllSnapshotStages()
@@ -631,6 +632,22 @@ internal class OversqliteDownloadWorkflow(
                 if (cleanup !== error) error.addSuppressed(cleanup)
             }
             throw error
+        }
+    }
+
+    // Capacity preflight for the general route. A snapshot whose provable lower bound of retained
+    // entries leaves no room to admit a row can never be applied under this quota. It is refused
+    // here, before any chunk is requested and before anything is staged, with the same quota
+    // error the apply would end in after the whole download; the caller then releases the server
+    // session.
+    private fun requireGeneralSnapshotWithinEntryQuota(session: SnapshotSession) {
+        val limit = config.maxSyncWorkspaceEntries
+        val retained = generalSnapshotRetainedEntriesLowerBound(session.rowCount)
+        if (retained > limit || generalSnapshotRowAdmissionEntries > limit - retained) {
+            throw SyncWorkspaceLimitException(
+                applyUnit("snapshot-stage", session.snapshotBundleSeq, session.snapshotId),
+                "entries", limit, retained, generalSnapshotRowAdmissionEntries, false,
+            )
         }
     }
 
@@ -1142,4 +1159,22 @@ private fun saturatingMultiply(left: Long, right: Long): Long =
 internal fun bootstrapCeilDiv(value: Long, divisor: Long): Long {
     require(value >= 0 && divisor > 0)
     return value / divisor + if (value % divisor == 0L) 0 else 1
+}
+
+/**
+ * Entries a general-route apply reserves to admit one snapshot row. This mirrors the charge in
+ * `OversqliteApplyLifecycle.withSnapshotRow`; if that charge is ever lowered, lower this with it,
+ * or the preflight would refuse snapshots that fit.
+ */
+internal const val generalSnapshotRowAdmissionEntries: Long = 8
+
+/**
+ * Entries the general snapshot route certainly retains for a snapshot of [rowCount] rows: the
+ * operation and apply-plan owners, one stage row and one snapshot reference per row. Local rows,
+ * dependency edges and unique work only add to it. Saturates instead of overflowing.
+ */
+internal fun generalSnapshotRetainedEntriesLowerBound(rowCount: Long): Long {
+    require(rowCount >= 0) { "snapshot row count must be non-negative" }
+    val fixedOwners = 2L
+    return if (rowCount > (Long.MAX_VALUE - fixedOwners) / 2) Long.MAX_VALUE else fixedOwners + 2 * rowCount
 }

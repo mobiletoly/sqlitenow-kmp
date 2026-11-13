@@ -151,6 +151,50 @@ class BundleChangeWatchSocketTimeoutTest {
         }
     }
 
+    @Test
+    fun snapshotSessionCreateGetsALibraryReadTimeoutWhenTheCallerSetNone() = runBlocking {
+        // The response body arrives after the delay; the fixture's body is not a session, so the
+        // call fails on its content, and only after the whole delayed body was read.
+        LoopbackSseServer { response ->
+            Thread.sleep(600)
+            response.chunk("not a snapshot session")
+            response.finish()
+        }.use { server ->
+            withWatchApi(server) { api, _, _, observations ->
+                val started = System.nanoTime()
+                val failure = withTimeout(5_000) {
+                    runCatching { api.createSnapshotSession("source-a") }.exceptionOrNull()
+                }
+                val elapsedMillis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started)
+                println("snapshot create elapsed=${elapsedMillis}ms failure=$failure")
+                assertEquals("/sync/snapshot-sessions", server.requestTarget.await())
+                assertEquals(120_000, observations.single().readMillis)
+                assertEquals(10_000, observations.single().connectMillis)
+                assertNotNull(failure)
+                assertTrue(generateSequence(failure) { it.cause }.none { it is SocketTimeoutException }, "unexpected timeout: $failure")
+                assertTrue(elapsedMillis >= 600, "the delayed body was not waited for: ${elapsedMillis}ms")
+                withTimeout(2_000) { server.finished.await() }
+            }
+        }
+    }
+
+    @Test
+    fun snapshotSessionCreateKeepsTheTimeoutsOfACallerThatInstalledThePlugin() = runBlocking {
+        LoopbackSseServer { response ->
+            response.chunk("not a snapshot session")
+            response.finish()
+        }.use { server ->
+            // A caller may have set a read timeout longer than the library's on purpose.
+            withWatchApi(server, socketMillis = 300_000, connectMillis = 1_234) { api, _, _, observations ->
+                withTimeout(5_000) { runCatching { api.createSnapshotSession("source-a") } }
+                assertEquals("/sync/snapshot-sessions", server.requestTarget.await())
+                assertEquals(300_000, observations.single().readMillis)
+                assertEquals(1_234, observations.single().connectMillis)
+                withTimeout(2_000) { server.finished.await() }
+            }
+        }
+    }
+
     private suspend fun withWatchApi(
         server: LoopbackSseServer,
         socketMillis: Long? = null,
