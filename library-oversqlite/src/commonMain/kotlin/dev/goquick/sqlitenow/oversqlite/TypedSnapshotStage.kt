@@ -117,7 +117,8 @@ internal suspend fun bootstrapReceiptScope(db: SafeSQLiteConnection, workspace: 
 
 /**
  * One logical receiving lifetime. Only bounded provider state and immutable
- * expectations cross commits; every page owns a new transaction/cache/quota base.
+ * expectations cross commits; every chunk owns a new transaction and statement cache, and every
+ * page within it reads a fresh quota base.
  */
 internal class TypedSnapshotStage private constructor(
     private val db: SafeSQLiteConnection,
@@ -291,19 +292,36 @@ internal class TypedSnapshotStage private constructor(
         poison()
     }
 
+    /**
+     * Stages one downloaded chunk. Its pages are admitted, hashed and proved one at a time, and
+     * share one transaction and one statement cache: they commit or roll back together, so durable
+     * progress advances a whole chunk at a time. A failure anywhere poisons this lifetime; resume
+     * reads the committed prefix from SQL again.
+     */
     suspend fun receive(rows: List<BootstrapWireRow>) {
         requireOwner()
-        var offset = 0
+        if (rows.isEmpty()) return
+        // A chunk is staged whole or not at all, so a chunk that cannot be staged beside its own
+        // transport tree is refused before anything is written and before this lifetime is
+        // touched. The caller answers a transport refusal by requesting the same ordinal with
+        // fewer rows; a refusal in the middle of staging would instead roll the chunk back and
+        // repeat on every later call. The reserve is the one request sizing leaves:
+        // `bootstrapChunkRowsForQuota` in OversqliteDownloadWorkflow.kt.
+        workspace.check("bootstrap-transport", WorkspaceCharge(entries = bootstrapChunkStagingEntries(
+            rows.size, descriptor.tables.maxOfOrNull { it.columns.size } ?: 0)))
         try {
-            while (offset < rows.size) {
-                val used = syncPhase("snapshot.bootstrap.staging") { operations.completeWorkPhase("typed snapshot receipt") {
-                    db.transaction(TransactionMode.IMMEDIATE) {
-                        db.withStatementCache(cleanupTimeoutMillis = 5_000) { cache -> receivePage(rows, offset, cache) }
+            syncPhase("snapshot.bootstrap.staging") { operations.completeWorkPhase("typed snapshot receipt") {
+                db.transaction(TransactionMode.IMMEDIATE) {
+                    db.withStatementCache(cleanupTimeoutMillis = 5_000) { cache ->
+                        var offset = 0
+                        while (offset < rows.size) {
+                            val used = receivePage(rows, offset, cache)
+                            check(used > 0)
+                            offset += used
+                        }
                     }
-                } }
-                check(used > 0)
-                offset += used
-            }
+                }
+            } }
         } catch (failure: Throwable) { poison(); throw failure }
     }
 
@@ -1117,4 +1135,15 @@ internal class BootstrapSnapshotRetirement private constructor(
             } } finally { retirement.active = false; scope.close() }
         }
     }
+}
+
+
+/**
+ * Entries that staging a chunk of [rows] rows needs beside the chunk's transport tree: one staged
+ * row and at most one page record per row, two receipt pages of the widest table, and the fixed
+ * shape reserve. This is the reserve `bootstrapChunkRowsForQuota` leaves when it sizes a request.
+ */
+internal fun bootstrapChunkStagingEntries(rows: Int, maxColumns: Int): Long {
+    require(rows >= 0 && maxColumns >= 0)
+    return 2L * rows + 2 * (32 + 4L * maxColumns) + 256
 }

@@ -207,6 +207,81 @@ internal class TypedSnapshotStageTest : SnapshotBootstrapTestSupport() {
         } } finally { deleteTempSqliteNowTestDbArtifacts(path) }
     }
 
+    @Test fun aChunkWhoseWorkExceedsTheTargetIsStillStagedWhole() = runOwnedWebDatabaseTest {
+        // Every page reserves its work inside the chunk's one work phase. A target of one unit is
+        // crossed by the first page; the second page of the same chunk must still be staged.
+        withBootstrapFixture(chunkRows = 1) { original ->
+            val fixture = original.copy(config = original.config.copy(maxSyncWorkUnitsPerInvocation = 1))
+            val transfer = prepareBootstrapTransfer(fixture)
+            useBootstrapTransfer(fixture, transfer) { stage, _ ->
+                stage.receive(transfer.rows)
+                stage.seal()
+            }
+            assertEquals(2L, fixture.db.scalarLong("SELECT bootstrap_page_count FROM _sync_operation_state"))
+            assertEquals(2L, fixture.db.scalarLong("SELECT count(*) FROM _sync_bootstrap_wire"))
+        }
+    }
+    @Test fun aChunkOfSeveralPagesIsStagedSealedAndVerified() = runOwnedWebDatabaseTest {
+        // A one-row page target makes the two-row chunk two pages.
+        withBootstrapFixture(chunkRows = 1) { fixture ->
+            val transfer = prepareBootstrapTransfer(fixture)
+            useBootstrapTransfer(fixture, transfer) { stage, _ ->
+                stage.receive(transfer.rows)
+                assertEquals(2L, OversqliteOperationStateStore(fixture.db).loadState().snapshotStagedRowCount)
+                assertEquals(2L, fixture.db.scalarLong("SELECT count(*) FROM _sync_bootstrap_pages"))
+                stage.seal()
+                fixture.db.transaction(dev.goquick.sqlitenow.core.TransactionMode.DEFERRED) {
+                    fixture.db.withStatementCache(cleanupTimeoutMillis = 5_000) { stage.verifyForApply(it) }
+                }
+            }
+            assertEquals(2L, fixture.db.scalarLong("SELECT count(*) FROM _sync_bootstrap_wire"))
+            assertEquals(2L, fixture.db.scalarLong("SELECT bootstrap_page_count FROM _sync_operation_state"))
+            // One entry per staged row (2) plus one per page proof (2).
+            assertEquals(4L, fixture.db.scalarLong("SELECT snapshot_stage_entries FROM _sync_operation_state"))
+            assertEquals("CURRENT", inspectRetainedRuntime(fixture.db, fixture.config))
+        }
+    }
+    @Test fun aFailureInALaterPageRollsBackEveryPageOfThatChunk() = runOwnedWebDatabaseTest {
+        val path = createTempSqliteNowTestDbPath("bootstrap-chunk-rollback")
+        try { withBootstrapFixture(dbPath = path, chunkRows = 1) { fixture ->
+            val transfer = prepareBootstrapTransfer(fixture)
+            val before = useBootstrapTransfer(fixture, transfer) { stage, _ ->
+                val before = OversqliteOperationStateStore(fixture.db).loadState()
+                // With one row per page the first page is admitted, hashed and written; the second
+                // page repeats its row and violates the stage's unique index.
+                val failure = assertFails { stage.receive(listOf(transfer.rows[0], transfer.rows[0])) }
+                assertTrue(generateSequence(failure) { it.cause }.any { it.message.orEmpty().contains("constraint", ignoreCase = true) })
+                val poisoned = assertFails { stage.receive(transfer.rows) }
+                assertTrue(poisoned.message.orEmpty().contains("verify the committed prefix"))
+                before
+            }
+            // Some drivers quarantine the failed connection during cleanup, so persistence is
+            // checked after a physical reopen.
+            fixture.client.closeFromCoordinatedOwner(); fixture.db.close()
+            val reopened = newFileBackedDb(path)
+            val client = newClient(reopened, fixture.http, syncTables = fixture.config.syncTables, schema = fixture.config.serviceId,
+                maxSnapshotChunkRows = 1)
+            try {
+                client.open().getOrThrow()
+                // Nothing of the failed chunk is durable, not even its first, valid page.
+                assertEquals(before, OversqliteOperationStateStore(reopened).loadState())
+                assertEquals(0L, reopened.scalarLong("SELECT count(*) FROM _sync_bootstrap_wire"))
+                assertEquals(0L, reopened.scalarLong("SELECT count(*) FROM _sync_bootstrap_pages"))
+                assertEquals(0L, reopened.scalarLong("SELECT snapshot_stage_entries+snapshot_stage_bytes FROM _sync_operation_state"))
+                val resumedFixture = fixture.copy(db = reopened, client = client)
+                val resumed = freshBootstrapTransfer(resumedFixture, transfer)
+                useBootstrapTransfer(resumedFixture, resumed, resume = true) { stage, _ ->
+                    stage.receive(resumed.rows); stage.seal()
+                    reopened.transaction(dev.goquick.sqlitenow.core.TransactionMode.DEFERRED) {
+                        reopened.withStatementCache(cleanupTimeoutMillis = 5_000) { stage.verifyForApply(it) }
+                    }
+                }
+                assertEquals(2L, reopened.scalarLong("SELECT count(*) FROM _sync_bootstrap_pages"))
+                assertEquals("CURRENT", inspectRetainedRuntime(reopened, fixture.config))
+            } finally { client.closeFromCoordinatedOwner(); reopened.close() }
+        } } finally { deleteTempSqliteNowTestDbArtifacts(path) }
+    }
+
     @Test fun zeroRowReceiptSealsVerifiesAndCleansWithoutRowAllocation() = runOwnedWebDatabaseTest {
         withBootstrapFixture { fixture ->
             val transfer = prepareBootstrapTransfer(fixture, empty = true)

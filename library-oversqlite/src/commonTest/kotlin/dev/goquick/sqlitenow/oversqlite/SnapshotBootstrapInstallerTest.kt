@@ -433,6 +433,43 @@ internal class SnapshotBootstrapInstallerTest : SnapshotBootstrapTestSupport() {
         } finally { client.closeFromCoordinatedOwner(); http.close(); db.close() }
     }
 
+    @Test fun aFirstChunkThatFitsItsTransportButNotItsStagingIsRequestedAgainSmaller() = runOwnedWebDatabaseTest {
+        // The first chunk of a call is requested before the transport cost per row is known. Around
+        // 86k to 89k entries the transport tree of all 900 rows fits and staging them beside it
+        // does not. Such a chunk must be refused before staging and requested again with fewer
+        // rows; staging part of it and then failing would repeat on every later call.
+        for (entries in 85_000L..90_000L step 500L) {
+            val server = MockSyncServer()
+            val columns = listOf(GenerationColumn("id", "text", false), GenerationColumn("name", "text", false))
+            server.generationOverride = SyncGeneration("1", "", listOf(GenerationTable("main", "quota_rows", listOf("id"), columns, emptyList())))
+                .let { it.copy(fingerprint = it.computeFingerprint()) }
+            val db = newDb(); val http = server.newHttpClient()
+            val tables = listOf(SyncTable("quota_rows", syncKeyColumnName = "id"))
+            val client = newClient(db, http, syncTables = tables, workspaceEntries = entries, workUnits = 100_000_000)
+            try {
+                db.execSQL("CREATE TABLE quota_rows(id TEXT PRIMARY KEY NOT NULL,name TEXT NOT NULL)")
+                client.openAndConnect("user-1").getOrThrow()
+                server.addRemoteBundleForTest((0 until 900).map { row ->
+                    BundleRow("main", "quota_rows", mapOf("id" to "row-$row"), "INSERT", 1, buildJsonObject { put("id", "row-$row"); put("name", "name-$row") })
+                })
+                val result = client.rebuild()
+                assertTrue(result.isSuccess, "entries=$entries: ${result.exceptionOrNull()}")
+                assertEquals(900L, db.scalarLong("SELECT count(*) FROM quota_rows"), "entries=$entries")
+                assertEquals(0L, db.scalarLong("SELECT reserved_entries+reserved_bytes+snapshot_stage_entries+snapshot_stage_bytes FROM _sync_operation_state"))
+            } finally { client.closeFromCoordinatedOwner(); http.close(); db.close() }
+        }
+    }
+
+    @Test fun chunkStagingReserveMatchesWhatRequestSizingLeaves() {
+        // Sizing 397 rows from 39,709 free entries at 97 transport entries per row leaves exactly
+        // the reserve that staging those rows is checked against.
+        val rows = bootstrapChunkRowsForQuota(39_709, 97, 2, 1000)
+        assertEquals(397, rows)
+        assertEquals(2L * 397 + 2 * (32 + 4 * 2) + 256, bootstrapChunkStagingEntries(rows, 2))
+        assertTrue(39_709 - 97L * rows >= bootstrapChunkStagingEntries(rows, 2))
+        assertEquals(256L + 2 * 32, bootstrapChunkStagingEntries(0, 0))
+    }
+
     @Test fun chunkSizingLeavesRoomForReceiptAndStaging() {
         // Each row costs its measured transport share plus one durable staged-row entry and at most one
         // page record; one 2-column receipt page and the shape constant take 2*(32+8)+256 entries.
