@@ -30,6 +30,58 @@ internal class SnapshotDigestTest {
             }
         }
     }
+    @Test fun mixedSmallAndLargeAppendsMatchThePortableDigest() {
+        // The platform digests may gather small appends before hashing; every way of cutting the
+        // same input, across and around any internal buffer size, must give the portable result.
+        val bytes = ByteArray(40_000) { (it * 31 % 127).toByte() }
+        val expected = PortableSnapshotDigest().also { it.append(bytes) }.finishHex()
+        for (segment in listOf(4095, 4096, 4097, 8191, 8192, 8193, 12_289)) {
+            val digest = newSnapshotDigest()
+            var offset = 0
+            while (offset < bytes.size) {
+                val end = minOf(bytes.size, offset + segment)
+                digest.append(bytes.copyOfRange(offset, end)); offset = end
+            }
+            assertEquals(expected, digest.finishHex(), "segment=$segment")
+        }
+        var seed = 0x2545F491L
+        repeat(40) { round ->
+            val digest = newSnapshotDigest()
+            var offset = 0
+            while (offset < bytes.size) {
+                seed = seed * 6364136223846793005L + 1442695040888963407L
+                val pick = (seed ushr 33).toInt()
+                when (pick.mod(4)) {
+                    0 -> { digest.appendAscii(bytes[offset].toInt().toChar()); offset++ }
+                    1 -> { digest.append(byteArrayOf()); val end = minOf(bytes.size, offset + 1 + pick.mod(40)); digest.append(bytes.copyOfRange(offset, end)); offset = end }
+                    2 -> { val end = minOf(bytes.size, offset + 1 + pick.mod(700)); digest.append(bytes.copyOfRange(offset, end)); offset = end }
+                    else -> { val end = minOf(bytes.size, offset + 3_000 + pick.mod(6_000)); digest.append(bytes.copyOfRange(offset, end)); offset = end }
+                }
+            }
+            assertEquals(expected, digest.finishHex(), "round=$round")
+        }
+    }
+    @Test fun singleByteAppendsAcrossABufferBoundaryMatchThePortableDigest() {
+        // Sizes chosen around 4096, a typical gathering buffer: finishing with it exactly full,
+        // an ASCII append arriving when it is full, and long runs of ASCII appends alone.
+        fun digestOf(factory: () -> SnapshotDigest, bytes: Int, asciiAfter: Int, viaAscii: Boolean): String {
+            val digest = factory()
+            repeat(bytes) { index ->
+                val value = index % 90 + 32 // printable ASCII
+                if (viaAscii) digest.appendAscii(value.toChar()) else digest.append(byteArrayOf(value.toByte()))
+            }
+            repeat(asciiAfter) { digest.appendAscii(']') }
+            return digest.finishHex()
+        }
+        for (bytes in listOf(4095, 4096, 4097, 8192)) for (asciiAfter in listOf(0, 1, 2)) for (viaAscii in listOf(false, true)) {
+            assertEquals(
+                digestOf(::PortableSnapshotDigest, bytes, asciiAfter, viaAscii),
+                digestOf(::newSnapshotDigest, bytes, asciiAfter, viaAscii),
+                "bytes=$bytes asciiAfter=$asciiAfter viaAscii=$viaAscii",
+            )
+        }
+        assertEquals(digestOf(::PortableSnapshotDigest, 5000, 5000, true), digestOf(::newSnapshotDigest, 5000, 5000, true))
+    }
     @Test fun asciiFinalizationAndIndependentWriters() {
         for (factory in listOf(::newSnapshotDigest, ::PortableSnapshotDigest)) {
             val digest = factory(); val other = factory()
