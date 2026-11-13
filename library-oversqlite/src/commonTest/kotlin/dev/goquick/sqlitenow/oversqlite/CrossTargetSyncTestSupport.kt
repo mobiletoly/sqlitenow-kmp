@@ -307,6 +307,7 @@ internal open class CrossTargetSyncTestSupport {
         internal var beforePushCommit: (suspend () -> Unit)? = null
         internal var beforePullResponse: (suspend () -> Unit)? = null
         internal var remainingTransientPullFailures: Int = 0
+        internal var oversizedPullErrorBodyOnceForTest: Boolean = false
         internal var beforeSnapshotChunkResponse: (suspend () -> Unit)? = null
         internal var snapshotChunkTooSmallOnceForTest: Boolean = false
         internal var beforeSnapshotChunkRequest: (suspend () -> Unit)? = null
@@ -367,6 +368,7 @@ internal open class CrossTargetSyncTestSupport {
         var registeredTableSpecs: List<RegisteredTableSpec> = testRegisteredTableSpecs("users", "posts")
         var connectRequestCount: Int = 0
         var pullRequestCount: Int = 0
+        val pullMaxBundleRequests = mutableListOf<Int>()
         var pushRequestCount: Int = 0
         val snapshotChunkRequests = mutableListOf<Pair<String, Long>>()
         fun expireSnapshotSessionForTest(id: String) { snapshotSessions.remove(id) }
@@ -923,6 +925,7 @@ internal open class CrossTargetSyncTestSupport {
                 pullRequestCount++
                 val afterBundleSeq = request.url.parameters["after_bundle_seq"]?.toLongOrNull() ?: 0L
                 val maxBundles = request.url.parameters["max_bundles"]?.toIntOrNull() ?: 1000
+                pullMaxBundleRequests += maxBundles
                 val targetBundleSeq = request.url.parameters["target_bundle_seq"]?.toLongOrNull() ?: 0L
                 val stableBundleSeq = bundles.lastOrNull()?.bundleSeq ?: 0L
                 if (stableBundleSeq > afterBundleSeq && afterBundleSeq < retainedBundleFloor) {
@@ -943,6 +946,10 @@ internal open class CrossTargetSyncTestSupport {
                     .toList()
                 val lastReturned = selected.lastOrNull()?.bundleSeq ?: afterBundleSeq
                 beforePullResponse?.let { hook -> beforePullResponse = null; hook() }
+                if (oversizedPullErrorBodyOnceForTest) {
+                    oversizedPullErrorBodyOnceForTest = false
+                    return errorResponse("bad_gateway", "x".repeat(70_000), HttpStatusCode.BadGateway)
+                }
                 if (remainingTransientPullFailures > 0) {
                     remainingTransientPullFailures--
                     return errorResponse(

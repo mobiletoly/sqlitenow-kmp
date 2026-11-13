@@ -736,15 +736,28 @@ internal class OversqliteDownloadWorkflow(
         val initialBundleSeq = attachmentStateStore.loadState().lastBundleSeqSeen
         var afterBundleSeq = initialBundleSeq
         val maxBundles = minOf(config.transferTargets.maxPullBundles, state.admittedContract.limits.maxPullBundles)
+        val admittedDecodedBytes = state.admittedContract.limits.maxPullDecodedBytes
+        val pages = OversqlitePullPageSizing(maxBundles)
         var targetBundleSeq = 0L
         val updatedTables = linkedSetOf<String>()
 
         while (true) {
-            val response = remoteApi.sendPullRequest(
-                afterBundleSeq, maxBundles, targetBundleSeq, state.sourceId,
-                state.admittedContract.limits.maxPullDecodedBytes,
-            )
+            val decodedByteLimit = pages.responseDecodedByteLimit(admittedDecodedBytes)
+            var decodedBytes = 0L
+            val response = try {
+                remoteApi.sendPullRequest(
+                    afterBundleSeq, pages.requestBundles, targetBundleSeq, state.sourceId, decodedByteLimit,
+                ) { decodedBytes = it }
+            } catch (oversized: SnapshotResponseBodyTooLargeException) {
+                // Only a page refused at this client's own byte target is asked for again with
+                // fewer bundles. A response above what the server advertised stays a failure, and
+                // so does an oversized error body, which is refused at a different limit.
+                val refusedAtOwnTarget = oversized.limit == decodedByteLimit && decodedByteLimit < admittedDecodedBytes
+                if (!refusedAtOwnTarget || !pages.shrinkAfterOversizedPage()) throw oversized
+                continue
+            }
             validatePullResponse(response, afterBundleSeq)
+            pages.pageDecoded(response.bundles.size, decodedBytes)
             response.bundles.forEach { bundle ->
                 bundle.rows.forEach { row ->
                     require(row.schema == state.validated.schemaForTable(row.table)) {

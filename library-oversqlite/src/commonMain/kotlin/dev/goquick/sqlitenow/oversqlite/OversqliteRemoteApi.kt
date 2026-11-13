@@ -1157,6 +1157,7 @@ internal class OversqliteRemoteApi(
         targetBundleSeq: Long,
         sourceId: String,
         maxResponseDecodedBytes: Long,
+        onResponseDecodedBytes: (Long) -> Unit = {},
     ): PullResponse {
         val path = buildString {
             append("/sync/pull?after_bundle_seq=")
@@ -1173,6 +1174,7 @@ internal class OversqliteRemoteApi(
             method = "GET",
             path = path,
             successLimit = maxResponseDecodedBytes,
+            onSuccessBodyBytes = onResponseDecodedBytes,
             prepareCall = {
                 http.prepareGet("sync/pull") {
                     generationHeaders(sourceId)
@@ -1226,9 +1228,10 @@ internal class OversqliteRemoteApi(
         successLimit: Long? = null,
         noinline successValidator: ((String) -> Unit)? = null,
         noinline successDecoder: ((String) -> T)? = null,
+        noinline onSuccessBodyBytes: ((Long) -> Unit)? = null,
         noinline customError: ((HttpStatusCode, String) -> Throwable?)? = null,
     ): T = executeLoggedStreamingCall(operation, method, path, prepareCall) { response ->
-        decodeJsonResponse(operation, method, path, response, successLimit, successValidator, successDecoder, customError)
+        decodeJsonResponse(operation, method, path, response, successLimit, successValidator, successDecoder, customError, onSuccessBodyBytes)
     }
 
     private suspend inline fun <reified T> decodeJsonResponse(
@@ -1240,6 +1243,7 @@ internal class OversqliteRemoteApi(
         noinline successValidator: ((String) -> Unit)? = null,
         noinline successDecoder: ((String) -> T)? = null,
         noinline customError: ((HttpStatusCode, String) -> Throwable?)? = null,
+        noinline onSuccessBodyBytes: ((Long) -> Unit)? = null,
     ): T {
         call.rejectRedirect(operation, method, path, log)
         if (call.status != HttpStatusCode.OK) {
@@ -1295,11 +1299,13 @@ internal class OversqliteRemoteApi(
             throw DownloadHttpException(call.status, "")
         }
         return try {
-            val raw = readBoundedJsonBody(
+            val body = readBoundedJsonBody(
                 operation,
                 call,
                 minOf(successLimit ?: Long.MAX_VALUE, oversqliteResponseBodyHardLimit(path, call.status.value)),
-            ) { RemoteResponseDecodeException(operation) }.raw
+            ) { RemoteResponseDecodeException(operation) }
+            onSuccessBodyBytes?.invoke(body.byteCount)
+            val raw = body.raw
             requireUniqueSnapshotJsonObjectMembers(raw)
             successValidator?.invoke(raw)
             syncDiagnosticAggregate("http.json_decode") { successDecoder?.invoke(raw) ?: json.decodeFromString<T>(raw) }
