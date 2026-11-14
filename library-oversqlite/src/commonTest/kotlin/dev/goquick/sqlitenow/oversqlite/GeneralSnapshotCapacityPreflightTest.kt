@@ -1,5 +1,7 @@
 package dev.goquick.sqlitenow.oversqlite
 
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlin.test.Test
@@ -16,11 +18,14 @@ internal class GeneralSnapshotCapacityPreflightTest : CrossTargetSyncTestSupport
         assertEquals(Long.MAX_VALUE, generalSnapshotRetainedEntriesLowerBound(Long.MAX_VALUE / 2))
     }
 
+    // Runs on a real dispatcher: under runTest's virtual time the client's bounded best-effort
+    // session release can time out at once while the mock engine answers on another thread,
+    // which leaves the server session open and fails the release assertions under load.
     private suspend fun withRebuildClient(
         entryQuota: Long,
         remoteRows: Int,
         block: suspend (dev.goquick.sqlitenow.core.SafeSQLiteConnection, DefaultOversqliteClient, MockSyncServer) -> Unit,
-    ) {
+    ) = withContext(Dispatchers.Default) {
         val server = MockSyncServer()
         val db = newDb()
         val http = server.newHttpClient()
