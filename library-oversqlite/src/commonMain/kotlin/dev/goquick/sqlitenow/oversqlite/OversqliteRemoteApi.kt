@@ -41,6 +41,7 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.withContext
@@ -281,6 +282,7 @@ internal class OversqliteRemoteApi(
     private val log: ((() -> String)) -> Unit,
     private val beforeRecoveryExchange: suspend () -> Unit = {},
     private val diagnostics: dev.goquick.sqlitenow.core.SqliteNowDiagnostics? = null,
+    private val historyCapacityRetryPolicy: HistoryCapacityRetryPolicy = HistoryCapacityRetryPolicy(),
 ) {
     private val strictJson = Json(json) { ignoreUnknownKeys = false }
     private val recoveryControlJson=Json { explicitNulls=true;encodeDefaults=true }
@@ -572,7 +574,8 @@ internal class OversqliteRemoteApi(
         val raw=if(fresh) frozenBody else recoveryControlJson.encodeToString(
             PushOutcomeResolveRequest(binding.sourceBundleId,binding.canonicalRequestHash,binding.initializationId))
         val body=prepareBoundedJsonBody(raw,if(fresh)maxRequestDecodedBytes else 4096L)
-        return executeLoggedStreamingCall("push outcome","POST",path,prepareCall={
+        // A capacity refusal re-sends this exact frozen request; it never restarts the operation.
+        return withHistoryCapacityWindow("push outcome") { executeLoggedStreamingCall("push outcome","POST",path,prepareCall={
             http.preparePost(path.removePrefix("/")) {
                 if(!fresh) attributes.put(recoveryExchangeKey,RecoveryExchange(beforeRecoveryExchange))
                 generationHeaders(binding.sourceId,SyncGeneration(binding.generationId,binding.generationFingerprint,emptyList()))
@@ -588,7 +591,7 @@ internal class OversqliteRemoteApi(
                     decodePushOutcomeMismatchExceptionOrNull(status,raw,binding)
                         ?: decodeSourceRecoveryRequiredExceptionOrNull(status,raw,binding.sourceId)
                 })
-        })
+        }) }
     }
 
     /** Hash and token are discovered from the envelope; source, generation and sequence stay frozen. */
@@ -610,7 +613,7 @@ internal class OversqliteRemoteApi(
         decodeOutcomeRetained(raw)
         val body=prepareBoundedJsonBody(raw,4096L)
         val path="/sync/push-outcomes/retained"
-        return executeLoggedStreamingCall("push retained outcome","POST",path,prepareCall={
+        return withHistoryCapacityWindow("push retained outcome") { executeLoggedStreamingCall("push retained outcome","POST",path,prepareCall={
             http.preparePost(path.removePrefix("/")) {
                 attributes.put(recoveryExchangeKey,RecoveryExchange(beforeRecoveryExchange))
                 generationHeaders(frozen.sourceId,SyncGeneration(frozen.generationId,frozen.generationFingerprint,emptyList()))
@@ -621,7 +624,7 @@ internal class OversqliteRemoteApi(
             decodeJsonResponse<TerminalUploadReply>("push retained outcome","POST",path,call,maxResponseDecodedBytes,
                 successDecoder={decodeRetainedOutcome(it,frozen,selected)},
                 customError={status,raw -> decodeRetainedOutcomeLookupErrorOrNull(status,raw)})
-        })
+        }) }
     }
 
     suspend fun acknowledgeOutcome(binding: PushOperationBinding,outcomeHash: String) {
@@ -1164,6 +1167,35 @@ internal class OversqliteRemoteApi(
         return SourceReplacementInvalidException()
     }
 
+    /**
+     * Re-sends one push, push-outcome or pull request refused with HTTP 503
+     * `history_projection_capacity_exceeded` within its elapsed-time window (p0001 history-projection
+     * retry timing, amended 2026-11-14). The refusals do not consume the generic transient attempts;
+     * every dispatch of a recovery exchange is still charged before it is sent. Exhaustion surfaces
+     * the generic retryable [TransientRetryExhaustedException]; a disabled window leaves the refusal
+     * to the generic attempts.
+     */
+    private suspend fun <T> withHistoryCapacityWindow(operation: String, block: suspend () -> T): T {
+        val window = HistoryCapacityRetryWindow(historyCapacityRetryPolicy)
+        var dispatches = 0
+        while (true) {
+            dispatches++
+            try {
+                return block()
+            } catch (error: OversqliteRemoteContractException) {
+                if (!window.governs(error)) throw error
+                val wait = window.nextDelayMillis(error)
+                if (wait == null) {
+                    log { "oversqlite capacity retry window exhausted op=$operation dispatches=$dispatches" }
+                    throw TransientRetryExhaustedException(operation, dispatches)
+                }
+                log { "oversqlite capacity retry op=$operation dispatch=$dispatches wait_ms=$wait" }
+                delay(wait)
+                window.recordWait(wait)
+            }
+        }
+    }
+
     suspend fun sendPullRequest(
         afterBundleSeq: Long,
         maxBundles: Int,
@@ -1182,7 +1214,7 @@ internal class OversqliteRemoteApi(
                 append(targetBundleSeq)
             }
         }
-        val wire = requestJson<CompactPullResponseWire>(
+        val wire = withHistoryCapacityWindow("pull") { requestJson<CompactPullResponseWire>(
             operation = "pull",
             method = "GET",
             path = path,
@@ -1212,7 +1244,7 @@ internal class OversqliteRemoteApi(
                 "checkpoint_ahead" -> CheckpointAheadException("local checkpoint is ahead of the server")
                 else -> null
             }
-        }
+        } }
         val selectedGeneration = generation()
         return PullResponse(
             stableBundleSeq = wire.stableBundleSeq,
