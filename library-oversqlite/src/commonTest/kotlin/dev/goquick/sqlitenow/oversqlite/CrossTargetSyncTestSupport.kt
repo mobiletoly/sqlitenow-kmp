@@ -858,6 +858,16 @@ internal open class CrossTargetSyncTestSupport {
             sourceRetiredOnSnapshotCreate?.let { retired ->
                 return sourceRetiredResponse(retired)
             }
+            // The real server admits a replacement only for the authenticated source, and refuses it while
+            // that source still retains an unacknowledged push outcome (r0001 sections 5 and 6.4 step 3).
+            // Neither refusal creates a session. This mock models the refusals only; it does not retire the
+            // previous source when it admits the replacement.
+            createRequest?.sourceReplacement?.let { replacement ->
+                if (replacement.previousSourceId != request.headers[sourceIdHeaderName])
+                    return errorResponse("snapshot_session_invalid", "previous_source_id must match authenticated source_id")
+                if (terminalOutcomes.values.any { it.sourceId == replacement.previousSourceId })
+                    return errorResponse("push_outcome_pending", "previous source retains an unacknowledged push outcome", HttpStatusCode.Conflict)
+            }
             val snapshotRows = currentSnapshotRows()
             val snapshotId = "snapshot-${nextSnapshotId++}"
             val stableBundleSeq = bundles.lastOrNull()?.bundleSeq ?: if (scopeInitialized) 0L else 0L

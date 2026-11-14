@@ -451,6 +451,87 @@ internal class SourceRecoveryPreservedIntentTest : CrossTargetSyncTestSupport() 
         }
     }
 
+    /**
+     * A frozen upload that committed on the server while its response was lost keeps the server's outcome
+     * until it is acknowledged. When the old source refuses that settlement, the server refuses the
+     * replacement source with push_outcome_pending, so the rebuild fails with every local owner intact and
+     * discard stays unavailable. Once settlement is possible, the next rebuild acknowledges and replaces.
+     */
+    @Test
+    fun replacementIsRefusedWhileOldSourceHoldsUnacknowledgedOutcome() = runOwnedWebDatabaseTest {
+        val server = MockSyncServer()
+        val db = newDb()
+        val http = server.newHttpClient()
+        try {
+            createUsersAndPostsTables(db)
+            val client = newClient(db, http)
+            client.openAndConnect("user-1").getOrThrow()
+            insertUser(db, "u1", "Synced")
+            client.pushPending().getOrThrow()
+            val oldSource = currentSource(db)
+
+            // The upload commits on the server and its response is lost, so it stays frozen locally.
+            updateUserName(db, "u1", "Frozen")
+            server.beforePushResponse = { throw CancellationException("lost response") }
+            assertFailsWith<CancellationException> { client.pushPending().getOrThrow() }
+            assertEquals(1L, scalarLong(db, "SELECT count(*) FROM _sync_upload_journal WHERE phase='frozen' AND length(outcome_body)=0"))
+            assertEquals(2L, scalarLong(db, "SELECT source_bundle_id FROM _sync_outbox_bundle"))
+            assertTrue(server.remoteRowsForBaselineTest().values.single().contains("Frozen"), "the frozen upload committed")
+            val frozenHash = scalarText(db, "SELECT canonical_request_hash FROM _sync_outbox_bundle")
+
+            // The old source cannot settle: push, resolve and acknowledgment are refused.
+            server.sequenceRefusedSources[oldSource] = "source_sequence_changed"
+            markSourceRecoveryRequired(db, SourceRecoveryReason.SOURCE_SEQUENCE_CHANGED, "replacement-source")
+            val before = baselineQualificationVector(db)
+            val journalBefore = uploadJournalBytes(db)
+            val traceStart = server.requestTrace.size
+
+            val refused = assertFailsWith<SnapshotHttpException> { client.rebuild().getOrThrow() }
+            assertEquals("push_outcome_pending", refused.errorCode)
+            assertEquals(
+                listOf("POST /sync/push-outcomes/resolve", "POST /sync/snapshot-sessions"),
+                server.requestTrace.drop(traceStart),
+                "one refused settlement attempt, then the replacement request the server refuses",
+            )
+            assertEquals(listOf(oldSource to "replacement-source"),
+                server.requestedSnapshotSourceReplacements.map { it.previousSourceId to it.newSourceId })
+            assertTrue(server.snapshotSessionIdsForTest().isEmpty(), "the refused replacement creates no session")
+            assertEquals(before, baselineQualificationVector(db), "a refused replacement changes no local byte")
+            assertEquals(journalBefore, uploadJournalBytes(db))
+            assertEquals(oldSource, currentSource(db))
+            assertEquals(frozenHash, scalarText(db, "SELECT canonical_request_hash FROM _sync_outbox_bundle"))
+            assertEquals(oldSource, scalarText(db, "SELECT source_id FROM _sync_outbox_bundle"))
+            assertEquals(2L, scalarLong(db, "SELECT source_bundle_id FROM _sync_outbox_bundle"))
+
+            // Nothing proves the frozen upload has no outcome, so it cannot be discarded.
+            val discardRefusal = assertIs<IllegalStateException>(client.discardPendingIntentForRecovery().exceptionOrNull())
+            assertTrue(discardRefusal.message.orEmpty().contains("after the server accepts the replacement source"), discardRefusal.message)
+            assertEquals(before, baselineQualificationVector(db), "a refused discard changes no local byte")
+            assertEquals(journalBefore, uploadJournalBytes(db))
+
+            // Once the old source can settle, the rebuild resolves, acknowledges and then replaces it.
+            server.sequenceRefusedSources.remove(oldSource)
+            val retryStart = server.requestTrace.size
+            client.rebuild().getOrThrow()
+            val retried = server.requestTrace.drop(retryStart)
+            val ack = retried.indexOf("POST /sync/push-outcomes/ack")
+            assertTrue(retried.indexOf("POST /sync/push-outcomes/resolve") in 0 until ack, "$retried")
+            assertTrue(retried.indexOf("POST /sync/snapshot-sessions") > ack, "$retried")
+            assertTrue("POST /sync/push" !in retried, "the frozen request is resolved, never re-sent: $retried")
+            assertEquals(2L, server.ackRequests.last().sourceBundleId)
+            assertEquals("replacement-source", currentSource(db))
+            assertEquals("none", scalarText(db, "SELECT kind FROM _sync_operation_state"))
+            assertEquals(0L, scalarLong(db, "SELECT count(*) FROM _sync_upload_journal"))
+            assertEquals(0L, scalarLong(db, "SELECT count(*) FROM _sync_outbox_rows"))
+            assertEquals(0L, scalarLong(db, "SELECT count(*) FROM _sync_dirty_rows"))
+            assertEquals("Frozen", scalarText(db, "SELECT name FROM users WHERE id='u1'"))
+            assertEquals(PushOutcome.NO_CHANGE, client.pushPending().getOrThrow().outcome)
+        } finally {
+            http.close()
+            db.close()
+        }
+    }
+
     @Test
     fun discardIsRefusedOutsideSourceRecovery() = runOwnedWebDatabaseTest {
         val server = MockSyncServer()
@@ -551,6 +632,12 @@ internal class SourceRecoveryPreservedIntentTest : CrossTargetSyncTestSupport() 
     private suspend fun createUniqueNameUsersAndPostsTables(db: SafeSQLiteConnection) {
         db.execSQL("CREATE TABLE users (id TEXT PRIMARY KEY NOT NULL, name TEXT NOT NULL UNIQUE)")
         db.execSQL("CREATE TABLE posts (id TEXT PRIMARY KEY NOT NULL, user_id TEXT NOT NULL REFERENCES users(id), title TEXT NOT NULL)")
+    }
+
+    private suspend fun uploadJournalBytes(db: SafeSQLiteConnection): String {
+        val columns = db.queryList("PRAGMA table_xinfo(\"_sync_upload_journal\")") { it.getText(1) }
+        return scalarText(db, "SELECT COALESCE(group_concat(r, ';'), '') FROM (SELECT " +
+            columns.joinToString("||','||") { "quote(\"$it\")" } + " AS r FROM _sync_upload_journal)")
     }
 
     private suspend fun currentSource(db: SafeSQLiteConnection): String =
